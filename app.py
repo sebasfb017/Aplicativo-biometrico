@@ -22,8 +22,15 @@ DEVICES_YAML = os.path.join(APP_DIR, "devices.yaml")
 # because DATA_DIR can be monkeypatched in tests).
 def default_schedules_path():
     return os.path.join(DATA_DIR, "default_schedules.csv")
-
 ROLES = ("admin", "nomina")
+
+AREA_MAPPING = {
+    "Administrativo": ["Talento humano", "Calidad", "SST", "Dirección Administrativa", "Sistemas", "Servicios Generales", "Gerencia", "administrativa", "siau"],
+    "Financiera": ["Facturación", "Glosas", "Cartera", "Nomina", "Contabilidad"],
+    "Asistencial": ["Enfermería", "Farmacia"],
+    "Medico": ["Medico"],
+    "Rayos X": ["Tecnólogo Rayos X"]
+}
 
 
 # -----------------------------
@@ -194,6 +201,17 @@ def init_db():
     );
     """)
 
+    # Auditoría (Registra acciones importantes en el sistema)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        details TEXT NOT NULL,
+        timestamp TEXT NOT NULL
+    );
+    """)
+
     # create default admin if no users
     cur.execute("SELECT COUNT(*) FROM users_app;")
     n = cur.fetchone()[0]
@@ -235,10 +253,205 @@ def init_db():
 
     # run schema migration for schedules in case older DB misses new columns
     ensure_schedules_columns()
+    migrate_schema_attendance_flags()
     # Schema migration for employees and shifts to add new columns
     migrate_schema_for_profiles()
+    # Migration for coordinator role and managed_department
+    migrate_schema_coordinators()
+    # Migration for multi-level leave approvals (jefe_area)
+    migrate_schema_multilevel()
     # if a default schedule file exists, load it now
     maybe_load_default_schedules()
+
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+def send_notification_email(to_email, subject, body):
+    """Envía correos automáticos simulando un servidor SMTP."""
+    if not to_email:
+        return
+    
+    sender_email = "nomina@dolormed.com"
+    # sender_password = "TU_PASSWORD" # TODO: Configurar credenciales reales
+    
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'html'))
+        
+        # Como no hay credenciales reales configuradas, solo imprimimos el log en consola
+        print(f"📧 [EMAIL] Enviando a {to_email} | Asunto: {subject}")
+        # server = smtplib.SMTP('smtp.office365.com', 587)
+        # server.starttls()
+        # server.login(sender_email, sender_password)
+        # server.send_message(msg)
+        # server.quit()
+    except Exception as e:
+        print(f"Error enviando correo: {e}")
+
+def generate_fth012_html(req, df_audit):
+    
+    approvers_html = ""
+    if not df_audit.empty:
+        approvers_html = "<h4>Firmas / Aprobaciones Digitales:</h4><ul>"
+        for _, r in df_audit.iterrows():
+            level = "Jefatura" if r['action'] == "APPROVE_LEAVE_L1" else "Gestión Humana"
+            date_f = r['timestamp'].replace('T', ' ')
+            approvers_html += f"<li><strong>{level} ({r['user_id']})</strong> - <em>{date_f}</em></li>"
+        approvers_html += "</ul>"
+
+    html_content = f"""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>F-TH-012 - Permiso {req['id']}</title>
+        <style>
+            body {{ font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }}
+            h1 {{ color: #0D6EFD; text-align: center; border-bottom: 2px solid #0D6EFD; padding-bottom: 10px; }}
+            h3 {{ color: #1E293B; text-align: center; margin-top: -10px; }}
+            .box {{ border: 1px solid #E9ECEF; padding: 15px; margin-bottom: 15px; border-radius: 8px; background: #F8F9FA; }}
+            .footer {{ margin-top: 40px; border-top: 1px solid #ccc; padding-top: 10px; font-size: 12px; color: #555; text-align: center; }}
+        </style>
+    </head>
+    <body>
+        <h1>DOLORMED</h1>
+        <h3>FORMATO F-TH-012: Solicitud de Novedad Oficial</h3>
+        
+        <div class="box">
+            <p><strong>Radicado:</strong> #{req['id']}</p>
+            <p><strong>Fecha de Solicitud:</strong> {req['request_date']}</p>
+            <p><strong>Estado Final:</strong> {req['status']}</p>
+        </div>
+        
+        <div class="box">
+            <p><strong>Motivo/Clasificación:</strong> {req['reason_type']}</p>
+            <p><strong>Justificación Adicional:</strong> {req['reason_description']}</p>
+            <p><strong>Fechas de Ausencia:</strong> Del {req['leave_date_start']} al {req['leave_date_end']}</p>
+            <p><strong>Remunerado:</strong> {'Sí' if req['is_paid'] else 'No'}</p>
+        </div>
+        
+        <div class="box">
+            {approvers_html}
+        </div>
+        
+        <div class="footer">
+            <p>Documento generado digitalmente por el Portal de Nómina Dolormed. Válido sin firma manuscrita para control interno y RRHH.</p>
+        </div>
+    </body>
+    </html>
+    """
+    return html_content
+
+def log_audit(action, details):
+    """Registra una acción en la tabla de auditoría."""
+    conn = db_conn()
+    cur = conn.cursor()
+    user_id = "SISTEMA"
+    if "user" in st.session_state and st.session_state["user"]:
+        user_id = st.session_state["user"].get("username", "SISTEMA")
+        
+    try:
+        cur.execute("""
+            INSERT INTO audit_logs (user_id, action, details, timestamp)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, action, details, datetime.now().isoformat(timespec="seconds")))
+        conn.commit()
+    except Exception as e:
+        print(f"Error escribiendo log de auditoria: {e}")
+    finally:
+        conn.close()
+
+def migrate_schema_attendance_flags():
+    """Agrega las banderas para la modificación de marcaciones y auditoría."""
+    conn = db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("PRAGMA table_info(attendance_raw)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "is_ignored" not in columns:
+            cur.execute("ALTER TABLE attendance_raw ADD COLUMN is_ignored INTEGER NOT NULL DEFAULT 0")
+        if "is_manual" not in columns:
+            cur.execute("ALTER TABLE attendance_raw ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    except Exception as e:
+        print(f"Error en migrate_schema_attendance_flags: {e}")
+    finally:
+        conn.close()
+
+def migrate_schema_multilevel():
+    """Migración para soportar el flujo multinivel de permisos (jefe_area)."""
+    conn = db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("PRAGMA table_info(users_app)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "managed_area" not in columns:
+            cur.execute("ALTER TABLE users_app ADD COLUMN managed_area TEXT DEFAULT ''")
+            conn.commit()
+    except Exception as e:
+        print(f"Error en migrate_schema_multilevel: {e}")
+    finally:
+        conn.close()
+
+def migrate_schema_coordinators():
+    """Migración para agregar managed_department y eliminar la restricción CHECK de roles antiguos."""
+    conn = db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("PRAGMA table_info(users_app)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "managed_department" not in columns:
+            cur.execute("ALTER TABLE users_app ADD COLUMN managed_department TEXT DEFAULT ''")
+            conn.commit()
+            
+        if "emp_area" not in columns:
+            cur.execute("ALTER TABLE users_app ADD COLUMN emp_area TEXT DEFAULT ''")
+            conn.commit()
+            
+        if "emp_subarea" not in columns:
+            cur.execute("ALTER TABLE users_app ADD COLUMN emp_subarea TEXT DEFAULT ''")
+            conn.commit()
+            
+        if "emp_phone" not in columns:
+            cur.execute("ALTER TABLE users_app ADD COLUMN emp_phone TEXT DEFAULT ''")
+            conn.commit()
+            
+        if "emp_email" not in columns:
+            cur.execute("ALTER TABLE users_app ADD COLUMN emp_email TEXT DEFAULT ''")
+            conn.commit()
+
+        # Re-crear la tabla para quitar el constraint CHECK(role IN ('admin','nomina')) antiguo
+        cur.execute("PRAGMA foreign_keys=off;")
+        cur.execute("BEGIN TRANSACTION;")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users_app_new (
+                username TEXT PRIMARY KEY,
+                full_name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                password_hash BLOB NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                managed_department TEXT DEFAULT '',
+                emp_area TEXT DEFAULT '',
+                emp_subarea TEXT DEFAULT '',
+                emp_phone TEXT DEFAULT '',
+                emp_email TEXT DEFAULT ''
+            );
+        """)
+        cur.execute("""
+            INSERT INTO users_app_new (username, full_name, role, password_hash, active, created_at, managed_department, emp_area, emp_subarea, emp_phone, emp_email)
+            SELECT username, full_name, role, password_hash, active, created_at, managed_department, COALESCE(emp_area, ''), COALESCE(emp_subarea, ''), COALESCE(emp_phone, ''), COALESCE(emp_email, '') FROM users_app;
+        """)
+        cur.execute("DROP TABLE users_app;")
+        cur.execute("ALTER TABLE users_app_new RENAME TO users_app;")
+        cur.execute("COMMIT;")
+        cur.execute("PRAGMA foreign_keys=on;")
+    except Exception:
+        pass
+    finally:
+        conn.close()
 
 # -----------------------------
 # Auth
@@ -247,7 +460,7 @@ def get_user(username: str):
     conn = db_conn()
     cur = conn.cursor()
     cur.execute("""
-        SELECT username, full_name, role, password_hash, active
+        SELECT username, full_name, role, password_hash, active, managed_department
         FROM users_app WHERE username = ?
     """, (username,))
     row = cur.fetchone()
@@ -259,11 +472,11 @@ def verify_login(username: str, password: str):
     row = get_user(username)
     if not row:
         return None
-    _username, full_name, role, pw_hash, active = row
+    _username, full_name, role, pw_hash, active, managed_dept = row
     if active != 1:
         return None
     if bcrypt.checkpw(password.encode("utf-8"), pw_hash):
-        return {"username": _username, "full_name": full_name, "role": role}
+        return {"username": _username, "full_name": full_name, "role": role, "managed_department": managed_dept}
     return None
 
 
@@ -301,6 +514,17 @@ def load_devices():
         if isinstance(d, dict) and d.get("ip"):
             valid.append(d)
     return valid
+
+
+def save_devices(devices_list: list):
+    """Guarda la lista de dispositivos actualizados en devices.yaml"""
+    try:
+        with open(DEVICES_YAML, "w", encoding="utf-8") as f:
+            yaml.dump({"devices": devices_list}, f, allow_unicode=True, sort_keys=False)
+        return True
+    except Exception as e:
+        print(f"Error guardando devices.yaml: {e}")
+        return False
 
 
 def download_attendance_from_device(device: dict):
@@ -354,6 +578,35 @@ def download_attendance_from_device(device: dict):
         except Exception:
             pass
 
+def sync_device_time(device: dict):
+    ip = device["ip"]
+    try: port = int(device.get("port", 4370))
+    except Exception: port = device.get("port", 4370)
+    password = device.get("password", 0)
+    try: password = int(password)
+    except Exception: pass
+    try: timeout = int(device.get("timeout", 10))
+    except Exception: timeout = device.get("timeout", 10)
+    name = device.get("name", ip)
+
+    zk = ZK(ip, port=port, timeout=timeout, password=password)
+    conn = None
+
+    try:
+        conn = zk.connect()
+        conn.disable_device()
+        now = datetime.now()
+        conn.set_time(now)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+    finally:
+        try:
+            if conn:
+                conn.enable_device()
+                conn.disconnect()
+        except Exception:
+            pass
 
 def upsert_attendance(rows: list[dict]):
     if not rows:
@@ -1078,7 +1331,7 @@ def fetch_attendance_between(start_dt: datetime, end_dt: datetime):
     df = pd.read_sql_query("""
         SELECT device_name, device_ip, user_id, ts, status, punch, uid, downloaded_at
         FROM attendance_raw
-        WHERE ts >= ? AND ts < ?
+        WHERE ts >= ? AND ts < ? AND is_ignored = 0
         ORDER BY user_id, ts
     """, conn, params=(start_dt.isoformat(sep=" ", timespec="seconds"),
                        end_dt.isoformat(sep=" ", timespec="seconds")))
@@ -1158,7 +1411,8 @@ def compute_month_lateness(year: int, month: int):
 
     summary_df = (detail_df.groupby("user_id", as_index=False)
                     .agg(dias_tarde=("fecha", "nunique"),
-                         minutos_tarde_total=("minutos_tarde", "sum"))
+                         minutos_tarde_total=("minutos_tarde", "sum"),
+                         fechas_tarde=("fecha", lambda x: ", ".join(sorted([str(i) for i in x.unique()]))))
                     .sort_values(["minutos_tarde_total", "dias_tarde"], ascending=False))
     return summary_df, detail_df
 
@@ -1175,45 +1429,214 @@ def to_excel_bytes(summary_df: pd.DataFrame, detail_df: pd.DataFrame, raw_df: pd
 
 
 # -----------------------------
-# UI
+# UI & Registration
 # -----------------------------
+
+@st.dialog("📝 Registro en Portal de Empleados", width="large")
+def register_employee_dialog():
+    st.write("Crea tu cuenta segura para acceder al Portal de Autogestión.")
+    
+    if "reg_step" not in st.session_state:
+        st.session_state["reg_step"] = 1
+    if "reg_dni" not in st.session_state:
+        st.session_state["reg_dni"] = ""
+    if "reg_name" not in st.session_state:
+        st.session_state["reg_name"] = ""
+    if "reg_error" not in st.session_state:
+        st.session_state["reg_error"] = ""
+        
+    def verify_cedula():
+        st.session_state["reg_error"] = ""
+        cedula_reg = st.session_state.get("reg_cedula_input", "").strip()
+        
+        if not cedula_reg:
+            st.session_state["reg_error"] = "Por favor ingresa tu cédula."
+            return
+            
+        conn = db_conn()
+        emp_df = pd.read_sql_query("SELECT full_name FROM employees WHERE user_id = ?", conn, params=(cedula_reg,))
+        if emp_df.empty:
+            st.session_state["reg_error"] = f"❌ La cédula {cedula_reg} no se encuentra en el listado maestro de empleados. Pide a Recursos Humanos que te registre en la pestaña 'Empleados' del Área Administrativa."
+            conn.close()
+            return
+            
+        full_name = emp_df.iloc[0]['full_name']
+        
+        user_df = pd.read_sql_query("SELECT username FROM users_app WHERE username = ?", conn, params=(cedula_reg,))
+        if not user_df.empty:
+            st.session_state["reg_error"] = f"ℹ️ El usuario DNI {cedula_reg} ya se encuentra registrado. Si olvidaste tu contraseña, contacta a RRHH/Sistemas."
+            conn.close()
+            return
+            
+        conn.close()
+        st.session_state["reg_dni"] = cedula_reg
+        st.session_state["reg_name"] = full_name
+        st.session_state["reg_step"] = 2
+
+    def create_account():
+        st.session_state["reg_error"] = ""
+        pass1 = st.session_state.get("reg_pass1", "")
+        pass2 = st.session_state.get("reg_pass2", "")
+        sel_area = st.session_state.get("reg_sel_area", "Administrativo")
+        sel_subarea = st.session_state.get("reg_sel_subarea", "")
+        phone = st.session_state.get("reg_phone", "").strip()
+        email = st.session_state.get("reg_email", "").strip()
+        
+        if not pass1 or not pass2 or not phone or not email:
+            st.session_state["reg_error"] = "Todos los campos de Registro (Teléfono, Correo y Contraseñas) son obligatorios."
+            return
+            
+        if pass1 != pass2:
+            st.session_state["reg_error"] = "Las contraseñas no coinciden."
+            return
+            
+        if len(pass1) < 4:
+            st.session_state["reg_error"] = "La contraseña debe tener al menos 4 caracteres."
+            return
+            
+        pw_hash = bcrypt.hashpw(pass1.encode("utf-8"), bcrypt.gensalt())
+        conn = db_conn()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                INSERT INTO users_app(username, full_name, role, password_hash, active, created_at, managed_department, emp_area, emp_subarea, emp_phone, emp_email)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """, (st.session_state["reg_dni"], st.session_state["reg_name"], "empleado", pw_hash, 1, datetime.now().isoformat(timespec="seconds"), "", sel_area, sel_subarea, phone, email))
+            conn.commit()
+            st.session_state["reg_step"] = 3
+        except Exception as e:
+            st.session_state["reg_error"] = f"Error al crear el usuario: {str(e)}"
+        finally:
+            conn.close()
+
+    def go_back():
+        st.session_state["reg_error"] = ""
+        st.session_state["reg_step"] = 1
+
+    def finish_process():
+        st.session_state["reg_step"] = 1
+        st.session_state["reg_dni"] = ""
+        st.session_state["reg_name"] = ""
+        st.session_state["reg_error"] = ""
+        st.rerun()
+
+    if st.session_state["reg_step"] == 1:
+        st.info("Paso 1: Verificación de Identidad")
+        st.text_input("Número de Cédula (DNI) registrado en la empresa", key="reg_cedula_input")
+        
+        if st.session_state["reg_error"]:
+            st.error(st.session_state["reg_error"])
+            
+        st.button("Verificar Cédula", type="primary", on_click=verify_cedula)
+
+    elif st.session_state["reg_step"] == 2:
+        st.success(f"¡Hola, {st.session_state['reg_name']}! Completa tus datos para crear la cuenta.")
+        st.info("Paso 2: Datos de Contacto, Área y Seguridad")
+        
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.text_input("Teléfono Móvil", key="reg_phone")
+        with col_c2:
+            st.text_input("Correo Electrónico", key="reg_email")
+            
+        st.markdown("---")
+        st.selectbox("Área a la que perteneces", list(AREA_MAPPING.keys()), key="reg_sel_area")
+        
+        selected_a = st.session_state.get("reg_sel_area", "Administrativo")
+        if selected_a not in AREA_MAPPING: selected_a = "Administrativo"
+            
+        st.selectbox("Sub-área / Cargo", AREA_MAPPING[selected_a], key="reg_sel_subarea")
+        
+        st.markdown("---")
+        st.text_input("Ingresa una Contraseña nueva", type="password", key="reg_pass1")
+        st.text_input("Confirma tu Contraseña", type="password", key="reg_pass2")
+        
+        if st.session_state["reg_error"]:
+            st.error(st.session_state["reg_error"])
+            
+        col1, col2 = st.columns(2)
+        with col1:
+            st.button("Crear mi Cuenta", type="primary", use_container_width=True, on_click=create_account)
+        with col2:
+            st.button("Volver atrás", use_container_width=True, on_click=go_back)
+
+    elif st.session_state["reg_step"] == 3:
+        st.success(f"🎉 ¡Cuenta creada con éxito para {st.session_state['reg_name']}!")
+        st.write("Tu usuario es tu número de cédula. Ya puedes cerrar esta ventana y utilizar tus nuevas credenciales para iniciar sesión en el Portal de Empleados.")
+        st.button("Cerrar Ventana", type="primary", use_container_width=True, on_click=finish_process)
+
 def page_login():
-    st.markdown("<h1 style='text-align: center; color: #0066cc;'>Dolormed</h1>", unsafe_allow_html=True)
-    st.markdown("<h3 style='text-align: center; color: gray;'>Gestión de Nómina y Asistencia</h3>", unsafe_allow_html=True)
+    # Global CSS injection for subtle polish:
+    st.markdown("""
+        <style>
+        .stButton>button {
+            border-radius: 8px;
+            transition: all 0.2s ease-in-out;
+        }
+        .stButton>button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        /* Ajustar ancho máximo de las notificaciones */
+        .stAlert {
+            border-radius: 8px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["🏢 Ingreso Administrativo", "🧑‍⚕️ Portal Empleados"])
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    _, col_center, _ = st.columns([1, 2, 1])
+    
+    with col_center:
+        with st.container(border=True):
+            st.markdown("<h1 style='text-align: center; font-size: 3.5rem; margin-bottom: 0; color: #0D6EFD;'>Dolormed</h1>", unsafe_allow_html=True)
+            st.markdown("<p style='text-align: center; color: gray; font-size: 1.1rem; margin-top: 0;'>Portal Web de Empleados y Administración</p>", unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
 
-    with tab1:
-        username = st.text_input("Usuario")
-        password = st.text_input("Contraseña", type="password")
+            tab1, tab2 = st.tabs(["🔒 Ingreso Administrativo", "🧑‍⚕️ Portal de Empleados"])
 
-        if st.button("Ingresar a Dashboard", type="primary", use_container_width=True):
-            user = verify_login(username.strip(), password)
-            if user:
-                st.session_state["user"] = user
-                st.success(f"Bienvenido, {user['full_name']} ({user['role']})")
-                st.rerun()
-            else:
-                st.error("Usuario/contraseña inválidos o usuario inactivo.")
+            with tab1:
+                st.write("**Credenciales Base:**")
+                username = st.text_input("Usuario Administrativo")
+                password = st.text_input("Contraseña", type="password")
+                st.markdown("<br>", unsafe_allow_html=True)
 
-    with tab2:
-        st.write("Ingresa tu **Número de Cédula** para radicar permisos o consultar tus solicitudes.")
-        cedula = st.text_input("Número de Documento (Cédula / ID)", key="emp_login")
-        if st.button("Ingresar al Portal", type="secondary", use_container_width=True):
-            if cedula.strip():
-                conn = db_conn()
-                cur = conn.cursor()
-                cur.execute("SELECT user_id, full_name, department FROM employees WHERE user_id = ?", (cedula.strip(),))
-                row = cur.fetchone()
-                conn.close()
+                if st.button("Ingresar al Sistema", type="primary", use_container_width=True):
+                    user = verify_login(username.strip(), password)
+                    if user:
+                        st.session_state["user"] = user
+                        st.success(f"¡Bienvenido, {user['full_name']}!")
+                        import time
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error("❌ Credenciales inválidas o acceso deshabilitado.")
+
+            with tab2:
+                st.write("**Acceso por Documento de Identidad:**")
                 
-                if row:
-                    st.session_state["user"] = {"username": row[0], "full_name": row[1], "role": "empleado", "department": row[2]}
-                    st.rerun()
-                else:
-                    st.error("Documento no encontrado en el directorio activo de empleados. Solicita a RRHH que te registren.")
-            else:
-                st.warning("Escribe tu número de cédula.")
+                cedula_log = st.text_input("Número de Cédula de Ciudadanía", key="emp_login_ced")
+                pw_log = st.text_input("Contraseña Personal", type="password", key="emp_login_pw")
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                if st.button("Ingresar al Portal", type="primary", use_container_width=True):
+                    if cedula_log.strip() and pw_log:
+                        user = verify_login(cedula_log.strip(), pw_log)
+                        if user:
+                            st.session_state["user"] = user
+                            st.success(f"Acceso exitoso: {user['full_name']}")
+                            import time
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error("❌ Credenciales incorrectas.")
+                    else:
+                        st.warning("⚠️ Debes digitar tu número de documento completo y la contraseña.")
+                        
+                st.divider()
+                st.write("¿Es tu primera vez entrando al portal digital?")
+                if st.button("Registrar / Asignar mi primera Contraseña 🔑", use_container_width=True):
+                    register_employee_dialog()
 
 
 def page_dashboard():
@@ -1227,32 +1650,74 @@ def page_dashboard():
     cur.execute("SELECT COUNT(*) FROM employees")
     total_empleados = cur.fetchone()[0]
     
-    cur.execute("SELECT COUNT(*) FROM attendance_raw WHERE date(ts) = date('now', 'localtime')")
+    cur.execute("SELECT COUNT(*) FROM leave_requests WHERE status LIKE 'PENDING%'")
+    novedades_pend = cur.fetchone()[0]
+    
+    cur.execute("SELECT COUNT(*) FROM attendance_raw WHERE date(ts) = date('now', 'localtime') AND is_ignored = 0")
     marcaciones_hoy = cur.fetchone()[0]
     
-    cur.execute("SELECT COUNT(DISTINCT device_name) FROM attendance_raw")
-    dispositivos_activos = cur.fetchone()[0]
-    
     col1, col2, col3 = st.columns(3)
-    col1.metric("Empleados Registrados", total_empleados, "Activos")
-    col2.metric("Marcaciones Hoy", marcaciones_hoy)
-    col3.metric("Relojes Biométricos Activos", dispositivos_activos)
+    with col1:
+        with st.container(border=True):
+            st.metric("👥 Empleados Activos", total_empleados, "Base de datos")
+    with col2:
+        with st.container(border=True):
+            st.metric("⏱️ Marcaciones de Hoy", marcaciones_hoy, "Actividad de red")
+    with col3:
+        with st.container(border=True):
+            st.metric("🔔 Permisos Pendientes", novedades_pend, "- Requieren revisión", delta_color="inverse")
     
     st.markdown("---")
     
+    # Gráfico de Llegadas Tarde por Área (Este Mes)
+    st.subheader("⏱️ Minutos de Retraso por Área (Mes Actual)")
+    st.write("Cálculo dinámico cruzando horarios oficiales con marcaciones del biométrico.")
+    
+    try:
+        summary_df, _ = compute_month_lateness(date.today().year, date.today().month)
+        
+        if summary_df.empty:
+            st.success("¡Excelente! No hay tardanzas acumuladas este mes.")
+        else:
+            nombres = pd.read_sql_query("SELECT user_id, department FROM employees", conn)
+            
+            merged = pd.merge(summary_df, nombres, on="user_id", how="left")
+            
+            def get_main_area(dept):
+                if not dept or pd.isna(dept): return "Sin Área"
+                if " - " in str(dept): return str(dept).split(" - ")[0]
+                return str(dept)
+                
+            merged['Area'] = merged['department'].apply(get_main_area)
+            
+            area_tarde = merged.groupby('Area')['minutos_tarde_total'].sum().reset_index()
+            area_tarde = area_tarde[area_tarde['minutos_tarde_total'] > 0]
+            
+            if not area_tarde.empty:
+                fig_tarde = px.bar(area_tarde, x='Area', y='minutos_tarde_total', color='Area',
+                             labels={'Area': 'Área', 'minutos_tarde_total': 'Minutos Acumulados'},
+                             title="")
+                st.plotly_chart(fig_tarde, use_container_width=True)
+            else:
+                st.success("¡Excelente! No hay tardanzas acumuladas este mes.")
+                
+    except Exception as e:
+        st.error(f"No se pudo cargar el gráfico de tardanzas: {e}")
+
+    st.markdown("---")
+    
     # Gráfico de Marcaciones Recientes (Últimos 7 días)
-    st.subheader("Actividad de los últimos 7 días")
+    st.subheader("📈 Actividad del Biométrico (Últimos 7 Días)")
     df_act = pd.read_sql_query("""
         SELECT date(ts) as fecha, COUNT(*) as cantidad 
         FROM attendance_raw 
-        WHERE date(ts) >= date('now', '-7 days')
+        WHERE date(ts) >= date('now', '-7 days') AND is_ignored = 0
         GROUP BY date(ts)
         ORDER BY date(ts)
     """, conn)
-    conn.close()
     
     if not df_act.empty:
-        fig = px.bar(df_act, x='fecha', y='cantidad', labels={'fecha':'Fecha', 'cantidad':'Marcaciones Totales'}, title="Frecuencia de Marcaciones por Día", color_discrete_sequence=['#0066cc'])
+        fig = px.bar(df_act, x='fecha', y='cantidad', labels={'fecha':'Fecha', 'cantidad':'Marcaciones Totales'}, title="", color_discrete_sequence=['#0D6EFD'])
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No hay suficientes datos recientes para mostrar el gráfico.")
@@ -1275,7 +1740,7 @@ def page_dashboard():
             JOIN employees e ON sa.user_id = e.user_id
             WHERE sa.week_start = ? AND sa.dow = ? 
             AND sa.user_id NOT IN (
-                SELECT user_id FROM attendance_raw WHERE date(ts) = ?
+                SELECT user_id FROM attendance_raw WHERE date(ts) = ? AND is_ignored = 0
             )
             AND sa.user_id NOT IN (
                 SELECT user_id FROM exceptions WHERE date = ?
@@ -1317,105 +1782,436 @@ def page_dashboard():
                     st.warning(f"Sin horario: {r['full_name']} (ID: {r['user_id']})")
 
 
+@st.dialog("✏️ Editar Usuario", width="large")
+def edit_user_dialog(username: str, emp_df: pd.DataFrame):
+    conn = db_conn()
+    df_u = pd.read_sql_query("SELECT * FROM users_app WHERE username = ?", conn, params=(username,))
+    conn.close()
+    
+    if df_u.empty:
+        st.error("Usuario no encontrado.")
+        return
+        
+    u = df_u.iloc[0]
+    
+    st.markdown(f"### Editando ID/DNI: `{u['username']}`")
+    st.markdown(f"**Nombre:** {u['full_name']}")
+    
+    roles_list = ["admin", "nomina", "jefe_area", "coordinador", "empleado"]
+    role_idx = roles_list.index(u['role']) if u['role'] in roles_list else len(roles_list)-1
+    new_role = st.selectbox("Rol", roles_list, index=role_idx)
+    
+    depts = sorted([d for d in emp_df['department'].unique() if d])
+    dept_idx = 0
+    if u.get('managed_department') in depts:
+        dept_idx = depts.index(u['managed_department']) + 1
+        
+    new_managed_dept = st.selectbox("Departamento a Cargo (Aplica para Coordinadores)", options=[""] + depts, index=dept_idx)
+    
+    areas_list = list(AREA_MAPPING.keys())
+    area_idx = 0
+    if u.get('managed_area') in areas_list:
+        area_idx = areas_list.index(u['managed_area']) + 1
+        
+    new_managed_area = st.selectbox("Área a Cargo (Aplica para Jefes de Área)", options=[""] + areas_list, index=area_idx)
+
+    st.markdown("---")
+    st.write("**Área y Sub-área del Empleado (Para el Portal)**")
+    
+    current_area = u.get("emp_area")
+    if current_area not in AREA_MAPPING: current_area = "Administrativo"
+        
+    new_emp_area = st.selectbox("Área", list(AREA_MAPPING.keys()), index=list(AREA_MAPPING.keys()).index(current_area))
+    
+    current_subarea = u.get("emp_subarea")
+    if current_subarea not in AREA_MAPPING[new_emp_area]: current_subarea = AREA_MAPPING[new_emp_area][0]
+    
+    new_emp_subarea = st.selectbox("Sub-área / Cargo", AREA_MAPPING[new_emp_area], index=AREA_MAPPING[new_emp_area].index(current_subarea))
+    
+    st.markdown("---")
+    st.write("**Datos de Contacto**")
+    c3, c4 = st.columns(2)
+    with c3:
+        new_emp_phone = st.text_input("Teléfono Móvil", value=u.get("emp_phone", ""))
+    with c4:
+        new_emp_email = st.text_input("Correo Electrónico", value=u.get("emp_email", ""))
+        
+    st.markdown("---")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        new_active = st.checkbox("Activo (Puede iniciar sesión)", value=bool(u['active']))
+    with c2:
+        new_pw = st.text_input("Nueva Contraseña (Dejar en blanco para no cambiar)", type="password")
+        
+    submit_edit = st.button("Guardar Cambios", type="primary")
+        
+    st.markdown("---")
+    with st.expander("⚠️ Zona de Peligro"):
+        st.warning("Eliminar a este usuario revocará su acceso al sistema de forma permanente.")
+        confirm_delete = st.checkbox("Entiendo que esta acción es irreversible y quiero eliminar este usuario.")
+        submit_delete = st.button("🗑️ Eliminar Usuario", type="primary", disabled=not confirm_delete)
+        
+    if submit_edit:
+        if new_role != "coordinador":
+            new_managed_dept = ""
+        if new_role != "jefe_area":
+            new_managed_area = ""
+            
+        conn = db_conn()
+        cur = conn.cursor()
+        
+        try:
+            if new_pw:
+                pw_hash = bcrypt.hashpw(new_pw.encode("utf-8"), bcrypt.gensalt())
+                cur.execute("""
+                    UPDATE users_app 
+                    SET role = ?, managed_department = ?, active = ?, password_hash = ?, emp_area = ?, emp_subarea = ?, emp_phone = ?, emp_email = ?, managed_area = ?
+                    WHERE username = ?
+                """, (new_role, new_managed_dept, 1 if new_active else 0, pw_hash, new_emp_area, new_emp_subarea, new_emp_phone, new_emp_email, new_managed_area, username))
+            else:
+                cur.execute("""
+                    UPDATE users_app 
+                    SET role = ?, managed_department = ?, active = ?, emp_area = ?, emp_subarea = ?, emp_phone = ?, emp_email = ?, managed_area = ?
+                    WHERE username = ?
+                """, (new_role, new_managed_dept, 1 if new_active else 0, new_emp_area, new_emp_subarea, new_emp_phone, new_emp_email, new_managed_area, username))
+                
+            conn.commit()
+            log_audit("EDIT_USER", f"Usuario actualizado: {username} (Rol: {new_role})")
+            st.success("✅ Cambios guardados correctamente.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error actualizando usuario: {e}")
+        finally:
+            conn.close()
+
+    if submit_delete:
+        conn = db_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users_app WHERE username = ?", (username,))
+        conn.commit()
+        conn.close()
+        log_audit("DELETE_USER", f"Usuario eliminado del sistema: {username}")
+        st.success(f"🗑️ Usuario {username} eliminado del sistema.")
+        st.rerun()
+
 def page_users_admin():
     require_role("admin")
     st.title("👥 Gestión de Usuarios")
     st.write("Administra los accesos al portal de Nómina Dolormed.")
     
-    tab1, tab2 = st.tabs(["📝 Registrar Nuevo", "📋 Lista de Usuarios"])
+    tab1, tab2, tab3 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados"])
 
     with tab1:
-        with st.form("create_user"):
-            st.subheader("Datos del Nuevo Usuario")
-            u = st.text_input("Username (sin espacios)")
-            full = st.text_input("Nombre completo")
-            role = st.selectbox("Rol", ["admin", "nomina"])
+        st.subheader("Datos del Nuevo Usuario")
+        conn = db_conn()
+        emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees ORDER BY full_name", conn)
+        conn.close()
+        
+        if emp_df.empty:
+            st.warning("No hay empleados en el directorio. Importa empleados primero antes de crear usuarios.")
+        else:
+            selected_emp = st.selectbox(
+                "Empleado (A quien se le creará el usuario)",
+                options=emp_df['user_id'].tolist(),
+                format_func=lambda uid: f"{uid} - {emp_df[emp_df['user_id']==uid]['full_name'].values[0]}"
+            )
+            role = st.selectbox("Rol", ["admin", "nomina", "jefe_area", "coordinador", "empleado"])
+            
+            depts = sorted([d for d in emp_df['department'].unique() if d])
+            managed_dept = st.selectbox("Departamento a Cargo (Solo aplica para Coordinadores)", options=[""] + depts)
+            
+            areas = list(AREA_MAPPING.keys())
+            managed_area = st.selectbox("Área a Cargo (Solo aplica para Jefes de Área)", options=[""] + areas)
+            
+            st.markdown("---")
+            sel_area = st.selectbox("Área", list(AREA_MAPPING.keys()))
+            sel_subarea = st.selectbox("Sub-área / Cargo", AREA_MAPPING[sel_area])
+            st.markdown("---")
+            
+            c_p1, c_p2 = st.columns(2)
+            with c_p1:
+                new_phone = st.text_input("Teléfono Móvil (Opcional)")
+            with c_p2:
+                new_email = st.text_input("Correo Electrónico (Opcional)")
+                
+            st.markdown("---")
+            
             pw = st.text_input("Contraseña inicial", type="password")
             active = st.checkbox("Activo", value=True)
-            submit = st.form_submit_button("Crear / Actualizar Usuario", type="primary")
+            submit = st.button("Crear / Actualizar Usuario", type="primary")
 
-        if submit:
-            if not u or not full or not pw:
-                st.error("Completa username, nombre y contraseña.")
-                return
+            if submit:
+                if not pw:
+                    st.error("Completa la contraseña.")
+                else:
+                    u = str(selected_emp).strip()
+                    full = emp_df[emp_df['user_id']==selected_emp]['full_name'].values[0]
+                    
+                    if role != "coordinador":
+                        managed_dept = ""
+                    if role != "jefe_area":
+                        managed_area = ""
 
-            pw_hash = bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt())
-            conn = db_conn()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO users_app(username, full_name, role, password_hash, active, created_at)
-                VALUES(?,?,?,?,?,?)
-                ON CONFLICT(username) DO UPDATE SET
-                    full_name=excluded.full_name,
-                    role=excluded.role,
-                    password_hash=excluded.password_hash,
-                    active=excluded.active
-            """, (u.strip(), full.strip(), role, pw_hash, 1 if active else 0, datetime.now().isoformat(timespec="seconds")))
-            conn.commit()
-            conn.close()
-            st.success("Usuario creado/actualizado correctamente.")
+                    pw_hash = bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt())
+                    conn = db_conn()
+                    cur = conn.cursor()
+                    cur.execute("""
+                        INSERT INTO users_app(username, full_name, role, password_hash, active, created_at, managed_department, emp_area, emp_subarea, emp_phone, emp_email, managed_area)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(username) DO UPDATE SET
+                            full_name=excluded.full_name,
+                            role=excluded.role,
+                            password_hash=excluded.password_hash,
+                            active=excluded.active,
+                            managed_department=excluded.managed_department,
+                            emp_area=excluded.emp_area,
+                            emp_subarea=excluded.emp_subarea,
+                            emp_phone=excluded.emp_phone,
+                            emp_email=excluded.emp_email,
+                            managed_area=excluded.managed_area
+                    """, (u, full, role, pw_hash, 1 if active else 0, datetime.now().isoformat(timespec="seconds"), managed_dept, sel_area, sel_subarea, new_phone, new_email, managed_area))
+                    conn.commit()
+                    conn.close()
+                    
+                    log_audit("CREATE_USER", f"Usuario creado/actualizado: {u} ({full}) con rol {role}")
+                    st.success(f"Usuario {u} ({full}) creado/actualizado correctamente.")
 
     with tab2:
         conn = db_conn()
-        users_df = pd.read_sql_query(
-            "SELECT username, full_name, role, active, created_at FROM users_app ORDER BY username",
+        admin_df = pd.read_sql_query(
+            "SELECT username, full_name, role, managed_department, active, created_at FROM users_app WHERE role IN ('admin', 'nomina', 'jefe_area', 'coordinador') ORDER BY username",
             conn
         )
         conn.close()
-        if not users_df.empty:
-            # Reemplazar 1 y 0 por Si y No
-            users_df['active'] = users_df['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
-            users_df.columns = ["Usuario", "Nombre Completo", "Rol", "Activo", "Creado el"]
-            st.dataframe(users_df, use_container_width=True, hide_index=True)
+        if not admin_df.empty:
+            admin_df['active'] = admin_df['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
+            admin_df.columns = ["Usuario (DNI)", "Nombre Completo", "Rol", "Depto. a Cargo", "Activo", "Creado el"]
+            
+            st.info("💡 Lista de administradores, recursos humanos y coordinadores. Haz clic en una fila para editar o eliminar el usuario.")
+            event_admin = st.dataframe(admin_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="admin_users_table")
+            
+            if len(event_admin.selection.rows) > 0:
+                row_idx = event_admin.selection.rows[0]
+                selected_username = str(admin_df.iloc[row_idx]["Usuario (DNI)"])
+                st.session_state.admin_users_table.selection.rows.clear()
+                
+                conn = db_conn()
+                emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees", conn)
+                conn.close()
+                edit_user_dialog(selected_username, emp_df)
+        else:
+            st.warning("No hay usuarios administrativos creados.")
+
+    with tab3:
+        conn = db_conn()
+        emp_users_df = pd.read_sql_query(
+            "SELECT username, full_name, emp_area, emp_subarea, active, created_at FROM users_app WHERE role = 'empleado' ORDER BY username",
+            conn
+        )
+        conn.close()
+        if not emp_users_df.empty:
+            emp_users_df['active'] = emp_users_df['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
+            emp_users_df.columns = ["Usuario (DNI)", "Nombre Completo", "Área", "Sub-área", "Activo", "Creado el"]
+            
+            st.info("💡 Lista de empleados con acceso al portal de autogestión. Haz clic en una fila para editar o eliminar el usuario.")
+            event_emp = st.dataframe(emp_users_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="emp_users_table")
+            
+            if len(event_emp.selection.rows) > 0:
+                row_idx = event_emp.selection.rows[0]
+                selected_username = str(emp_users_df.iloc[row_idx]["Usuario (DNI)"])
+                st.session_state.emp_users_table.selection.rows.clear()
+                
+                conn = db_conn()
+                emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees", conn)
+                conn.close()
+                edit_user_dialog(selected_username, emp_df)
+        else:
+            st.warning("No hay usuarios empleados creados. Invita a tus empleados a que se registren en el portal.")
+
+
+@st.dialog("⚙️ Editar Reloj Biométrico")
+def edit_device_dialog(device_idx, devices_list):
+    if device_idx is not None:
+        d = devices_list[device_idx]
+        is_new = False
+    else:
+        d = {"name": "", "ip": "", "port": 4370, "password": 0, "timeout": 10}
+        is_new = True
+        
+    new_name = st.text_input("Nombre Visual", value=d.get("name", ""))
+    new_ip = st.text_input("Dirección IP", value=d.get("ip", ""))
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        new_port_str = st.text_input("Puerto (Default 4370)", value=str(d.get("port", 4370)))
+    with col2:
+        new_pwd_str = st.text_input("Contraseña", value=str(d.get("password", 0)))
+        
+    new_timeout = st.number_input("Timeout (s)", value=int(d.get("timeout", 10)), min_value=1, step=1)
+    
+    st.markdown("---")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("💾 Guardar Cambios", type="primary", use_container_width=True):
+            if not new_ip.strip():
+                st.error("La Dirección IP es obligatoria.")
+                return
+                
+            try:
+                port_val = int(new_port_str)
+            except ValueError:
+                st.error("El puerto debe ser numérico.")
+                return
+                
+            try:
+                pwd_val = int(new_pwd_str)
+            except ValueError:
+                st.error("La contraseña debe ser numérica.")
+                return
+                
+            updated_d = {
+                "name": new_name.strip() if new_name.strip() else new_ip.strip(),
+                "ip": new_ip.strip(),
+                "port": port_val,
+                "password": pwd_val,
+                "timeout": int(new_timeout)
+            }
+            
+            if is_new:
+                devices_list.append(updated_d)
+            else:
+                devices_list[device_idx] = updated_d
+                
+            if save_devices(devices_list):
+                st.success("✅ Dispositivo guardado correctamente. Cerrando...")
+                import time
+                time.sleep(0.75)
+                if "devices_table" in st.session_state:
+                    del st.session_state["devices_table"]
+                st.rerun()
+            else:
+                st.error("Error al guardar en devices.yaml.")
+                
+    with c2:
+        if not is_new:
+            del_confirm = st.checkbox("Confirmar eliminación")
+            if st.button("🗑️ Eliminar Reloj", type="secondary", disabled=not del_confirm, use_container_width=True):
+                devices_list.pop(device_idx)
+                if save_devices(devices_list):
+                    st.success("🗑️ Dispositivo eliminado. Cerrando...")
+                    import time
+                    time.sleep(0.75)
+                    if "devices_table" in st.session_state:
+                        del st.session_state["devices_table"]
+                    st.rerun()
+                else:
+                    st.error("Error al guardar en devices.yaml.")
 
 
 def page_sync():
     require_role("admin", "nomina")
     st.title("🔄 Sincronización Biométrica")
-    st.write("Selecciona los relojes de los que deseas descargar las marcaciones recientes.")
+    
+    tab_sync, tab_conf = st.tabs(["⏬ Sincronizar Datos", "⚙️ Configurar Dispositivos"])
+    
+    with tab_sync:
+        st.write("Selecciona los relojes de los que deseas descargar las marcaciones recientes.")
 
-    devices = load_devices()
-    if not devices:
-        st.error("No encontré 'devices.yaml' o no tiene dispositivos configurados.")
-        return
-
-    with st.expander("🛠️ Lista de Relojes Biométricos Disponibles", expanded=True):
-        st.write("Marca o desmarca los dispositivos que quieras sincronizar:")
-        
-        # Crear un checkbox por cada dispositivo
-        selected_devices = []
-        for d in devices:
-            label = f"📱 {d.get('name', d['ip'])} (IP: {d['ip']})"
-            # Por defecto, todos vienen chequeados
-            if st.checkbox(label, value=True, key=f"chk_{d['ip']}"):
-                selected_devices.append(d)
+        devices = load_devices()
+        if not devices:
+            st.error("No hay dispositivos configurados. Ve a la pestaña '⚙️ Configurar Dispositivos' para crearlos.")
+        else:
+            with st.expander("🛠️ Lista de Relojes Biométricos Disponibles", expanded=True):
+                st.write("Marca o desmarca los dispositivos que quieras sincronizar:")
                 
-        st.markdown("<br>", unsafe_allow_html=True)
-        btn_sync = st.button("Descargar Marcaciones de los Relojes Seleccionados", type="primary")
+                selected_devices = []
+                for d in devices:
+                    label = f"📱 {d.get('name', d['ip'])} (IP: {d['ip']})"
+                    if st.checkbox(label, value=True, key=f"chk_{d['ip']}"):
+                        selected_devices.append(d)
+                        
+                st.markdown("<br>", unsafe_allow_html=True)
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    btn_sync = st.button("Descargar Marcaciones de los Relojes Seleccionados", type="primary", use_container_width=True)
+                with col_btn2:
+                    btn_set_time = st.button("Sincronizar Hora Biométricos", use_container_width=True)
 
-    if btn_sync:
-        if not selected_devices:
-            st.warning("Debes dejar marcado al menos un reloj para hacer la descarga.")
-            return
+            if btn_set_time:
+                if not selected_devices:
+                    st.warning("Debes dejar marcado al menos un reloj para hacer la sincronización.")
+                else:
+                    for d in selected_devices:
+                        label = f"{d.get('name', d['ip'])} ({d['ip']})"
+                        with st.spinner(f"Ajustando hora en: {label}"):
+                            success, err = sync_device_time(d)
+                            if success:
+                                st.success(f"{label} ✅ Hora sincronizada con el servidor.")
+                            else:
+                                st.error(f"{label} ❌ Error de conexión al sincronizar: {err}")
+
+            if btn_sync:
+                if not selected_devices:
+                    st.warning("Debes dejar marcado al menos un reloj para hacer la descarga.")
+                else:
+                    total_inserted = 0
+                    total_skipped = 0
+
+                    for d in selected_devices:
+                        label = f"{d.get('name', d['ip'])} ({d['ip']})"
+
+                        with st.spinner(f"Conectando y descargando datos de: {label}"):
+                            rows, err = download_attendance_from_device(d)
+                            if err:
+                                st.error(f"{label} ❌ Error de conexión: {err}")
+                                continue
+
+                            ins, skp = upsert_attendance(rows)
+                            total_inserted += ins
+                            total_skipped += skp
+                            st.success(f"{label} ✅ Correcto (Nuevos: {ins} | Duplicados ignorados: {skp} | Total leídos: {len(rows)})")
+
+                    st.info(f"**RESUMEN TOTAL** -> Nuevas marcaciones: **{total_inserted}** | Ignoradas: **{total_skipped}**")
+
+    with tab_conf:
+        st.write("Agrega, edita o elimina los relojes biométricos de tu red.")
+        
+        devices_config = load_devices()
+        
+        cbtn1, _ = st.columns([1, 2])
+        with cbtn1:
+            if st.button("➕ Agregar Nuevo Reloj", type="primary", use_container_width=True):
+                edit_device_dialog(None, devices_config)
+                
+        if not devices_config:
+            st.info("No hay dispositivos registrados en el sistema. Haz clic en 'Agregar Nuevo Reloj'.")
             
-        total_inserted = 0
-        total_skipped = 0
-
-        for d in selected_devices:
-            label = f"{d.get('name', d['ip'])} ({d['ip']})"
-
-            with st.spinner(f"Conectando y descargando datos de: {label}"):
-                rows, err = download_attendance_from_device(d)
-                if err:
-                    st.error(f"{label} ❌ Error de conexión: {err}")
-                    continue
-
-                ins, skp = upsert_attendance(rows)
-                total_inserted += ins
-                total_skipped += skp
-                st.success(f"{label} ✅ Correcto (Nuevos: {ins} | Duplicados ignorados: {skp} | Total leídos: {len(rows)})")
-
-        st.info(f"**RESUMEN TOTAL** -> Nuevas marcaciones: **{total_inserted}** | Ignoradas: **{total_skipped}**")
+        else:
+            df_dev = pd.DataFrame(devices_config)
+            if "name" not in df_dev.columns: df_dev["name"] = df_dev["ip"]
+            if "port" not in df_dev.columns: df_dev["port"] = 4370
+            if "timeout" not in df_dev.columns: df_dev["timeout"] = 10
+            if "password" not in df_dev.columns: df_dev["password"] = 0
+                
+            df_show = df_dev[["name", "ip", "port", "password", "timeout"]]
+            df_show.columns = ["Nombre Visual", "Dirección IP", "Puerto", "Contraseña", "Timeout(s)"]
+            
+            st.info("💡 Selecciona un reloj en la tabla de abajo para poder editarlo o eliminarlo.")
+            event = st.dataframe(
+                df_show, 
+                use_container_width=True, 
+                hide_index=True, 
+                on_select="rerun", 
+                selection_mode="single-row", 
+                key="devices_table"
+            )
+            
+            if len(event.selection.rows) > 0:
+                row_idx = event.selection.rows[0]
+                st.session_state.devices_table.selection.rows.clear()
+                edit_device_dialog(row_idx, devices_config)
 
 
 def page_schedules():
@@ -1542,6 +2338,112 @@ def page_schedules():
 
     ensure_schedules_columns()
 
+@st.dialog("✏️ Editar Marcación", width="large")
+def edit_attendance_dialog(record_id: int):
+    conn = db_conn()
+    df_rec = pd.read_sql_query("""
+        SELECT a.*, COALESCE(e.full_name, 'Sin registrar') as full_name
+        FROM attendance_raw a 
+        LEFT JOIN employees e ON a.user_id = e.user_id
+        WHERE a.id = ?
+    """, conn, params=(record_id,))
+    
+    if df_rec.empty:
+        st.error("No se encontró el registro.")
+        conn.close()
+        return
+        
+    rec = df_rec.iloc[0]
+    
+    st.markdown(f"**Usuario:** {rec['full_name']} (ID: {rec['user_id']})")
+    st.markdown(f"**Dispositivo:** {rec['device_name']} ({rec['device_ip']})")
+    
+    try:
+        current_dt = datetime.fromisoformat(rec['ts'].replace(" ", "T"))
+    except ValueError:
+        # Fallback if format is unexpected
+        current_dt = datetime.strptime(rec['ts'], "%Y-%m-%d %H:%M:%S")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        new_date = st.date_input("Fecha Marcación", value=current_dt.date())
+    with col2:
+        new_time = st.time_input("Hora Marcación", value=current_dt.time(), step=60)
+        
+    current_punch = int(rec['punch'])
+    punch_opts = {0: "0 - Entrada", 1: "1 - Salida", 2: "2 - Break In", 3: "3 - Break Out", 4: "4 - OT In", 5: "5 - OT Out"}
+    punch_keys = list(punch_opts.keys())
+    
+    punch_idx = punch_keys.index(current_punch) if current_punch in punch_keys else 0
+    new_punch_key = st.selectbox("Tipo de Marcación (Punch)", options=punch_keys, format_func=lambda x: punch_opts.get(x, str(x)), index=punch_idx)
+    
+    st.markdown("---")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        submitted = st.button("Guardar Cambios", type="primary", use_container_width=True)
+    with c2:
+        confirm_del = st.checkbox("Confirmar eliminación", key=f"del_att_{record_id}")
+        submitted_del = st.button("🗑️ Eliminar Registro", type="secondary", disabled=not confirm_del, use_container_width=True)
+
+    if submitted:
+        new_ts = datetime.combine(new_date, new_time).isoformat(sep=" ", timespec="seconds")
+        try:
+            cur = conn.cursor()
+            is_manual = rec.get("is_manual", 0)
+            if is_manual == 1:
+                cur.execute("""
+                    UPDATE attendance_raw 
+                    SET ts = ?, punch = ? 
+                    WHERE id = ?
+                """, (new_ts, new_punch_key, record_id))
+            else:
+                cur.execute("UPDATE attendance_raw SET is_ignored = 1 WHERE id = ?", (record_id,))
+                cur.execute("""
+                    INSERT INTO attendance_raw (device_name, device_ip, user_id, ts, status, punch, uid, downloaded_at, is_ignored, is_manual)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1)
+                """, (str(rec['device_name']), str(rec['device_ip']), str(rec['user_id']), new_ts, int(rec['status']), int(new_punch_key), int(rec['uid']), str(rec['downloaded_at'])))
+            conn.commit()
+            log_audit("EDIT_ATTENDANCE", f"Marcación #{record_id} modif: {rec['ts']} -> {new_ts}")
+            st.success("✅ Marcación actualizada. Cerrando...")
+            import time as time_mod
+            time_mod.sleep(0.75)
+            if "view_attendance_table" in st.session_state:
+                del st.session_state["view_attendance_table"]
+            st.rerun()
+        except sqlite3.IntegrityError:
+            st.error("Error: Ya existe un registro idéntico (mismo usuario, fecha, hora y tipo).")
+        except Exception as e:
+            st.error(f"Error al actualizar: {e}")
+        finally:
+            conn.close()
+
+    if submitted_del:
+        try:
+            cur = conn.cursor()
+            is_manual = rec.get("is_manual", 0)
+            if is_manual == 1:
+                cur.execute("DELETE FROM attendance_raw WHERE id = ?", (record_id,))
+            else:
+                cur.execute("UPDATE attendance_raw SET is_ignored = 1 WHERE id = ?", (record_id,))
+            conn.commit()
+            log_audit("DELETE_ATTENDANCE", f"Marcación #{record_id} eliminada/ignorada.")
+            st.success("🗑️ Registro eliminado. Cerrando...")
+            import time as time_mod
+            time_mod.sleep(0.75)
+            if "view_attendance_table" in st.session_state:
+                del st.session_state["view_attendance_table"]
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al eliminar: {e}")
+        finally:
+            conn.close()
+            
+    if conn:
+        try:
+            conn.close()
+        except:
+            pass
 
 def page_view_attendance():
     require_role("admin", "nomina")
@@ -1571,6 +2473,7 @@ def page_view_attendance():
 
     query = """
         SELECT 
+            a.id,
             a.device_name, 
             a.device_ip, 
             a.user_id,
@@ -1581,7 +2484,7 @@ def page_view_attendance():
             a.downloaded_at
         FROM attendance_raw a
         LEFT JOIN employees e ON a.user_id = e.user_id
-        WHERE a.ts >= ? AND a.ts < ?
+        WHERE a.ts >= ? AND a.ts < ? AND a.is_ignored = 0
     """
     params = [start_dt.isoformat(sep=" ", timespec="seconds"), 
               end_dt.isoformat(sep=" ", timespec="seconds")]
@@ -1604,6 +2507,7 @@ def page_view_attendance():
         st.warning("No hay marcaciones en el rango seleccionado.")
     else:
         df = df.rename(columns={
+            "id": "ID",
             "device_name": "Dispositivo",
             "device_ip": "IP",
             "user_id": "ID Usuario",
@@ -1613,8 +2517,20 @@ def page_view_attendance():
             "punch": "Tipo",
             "downloaded_at": "Descargado en"
         })
-        st.info(f"📊 Total de registros: {len(df)}")
-        st.dataframe(df, use_container_width=True)
+        
+        # Mapear los valores de 0 y 1 a textos comprensibles
+        punch_map = {0: "Entrada", 1: "Salida", 2: "Break In", 3: "Break Out", 4: "OT In", 5: "OT Out"}
+        df["Tipo"] = df["Tipo"].map(punch_map).fillna(df["Tipo"])
+
+        st.info(f"💡 Selecciona una marcación para editar manualmente su hora o eliminarla. Total de registros: {len(df)}")
+        event = st.dataframe(df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="view_attendance_table")
+        
+        if len(event.selection.rows) > 0:
+            row_idx = event.selection.rows[0]
+            selected_id = int(df.iloc[row_idx]["ID"])
+            # Clear selection so it doesn't pop up again
+            st.session_state.view_attendance_table.selection.rows.clear()
+            edit_attendance_dialog(selected_id)
 
         excel_bytes = io.BytesIO()
         with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
@@ -1627,6 +2543,111 @@ def page_view_attendance():
             file_name=f"marcaciones_{start_date.isoformat()}_{end_date.isoformat()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+@st.dialog("✏️ Editar Empleado", width="large")
+def edit_employee_dialog(user_id):
+    conn = db_conn()
+    emp_df = pd.read_sql_query("SELECT full_name, department, profile_id FROM employees WHERE user_id = ?", conn, params=(user_id,))
+    profiles_df = pd.read_sql_query("SELECT profile_id, name FROM profiles ORDER BY name", conn)
+    conn.close()
+    
+    if emp_df.empty:
+        st.error("No se encontró el empleado.")
+        return
+        
+    e = emp_df.iloc[0]
+    
+    profile_opts = profiles_df["name"].tolist()
+    
+    current_prof_id = e.get("profile_id")
+    current_prof_name = ""
+    if pd.notna(current_prof_id):
+        prof_row = profiles_df[profiles_df['profile_id'] == current_prof_id]
+        if not prof_row.empty:
+            current_prof_name = prof_row.iloc[0]["name"]
+            
+    prof_index = profile_opts.index(current_prof_name) if current_prof_name in profile_opts else 0
+    
+    current_dept = str(e['department']) if pd.notna(e['department']) else ""
+    def_area = list(AREA_MAPPING.keys())[0]
+    def_subarea = ""
+    
+    if " - " in current_dept:
+        parts = current_dept.split(" - ", 1)
+        if parts[0] in AREA_MAPPING:
+            def_area = parts[0]
+            def_subarea = parts[1]
+    else:
+        for k, v in AREA_MAPPING.items():
+            if current_dept in v:
+                def_area = k
+                def_subarea = current_dept
+                break
+        else:
+            if current_dept in AREA_MAPPING:
+                def_area = current_dept
+                
+    st.write(f"**DNI / ID Biométrico:** {user_id}")
+    new_name = st.text_input("Nombre Completo*", value=e['full_name'])
+    
+    area_opts = list(AREA_MAPPING.keys())
+    area_idx = area_opts.index(def_area) if def_area in area_opts else 0
+    new_area = st.selectbox("Área Principal*", options=area_opts, index=area_idx)
+    
+    subarea_opts = AREA_MAPPING[new_area]
+    subarea_idx = subarea_opts.index(def_subarea) if def_subarea in subarea_opts else 0
+    new_subarea = st.selectbox("Sub-área / Departamento*", options=subarea_opts, index=subarea_idx)
+    
+    new_prof_name = st.selectbox("Perfil Asignado*", options=profile_opts, index=prof_index)
+    
+    st.markdown("---")
+    submitted = st.button("Guardar Cambios", type="primary")
+    
+    if submitted:
+        if not new_name.strip() or not new_area or not new_subarea:
+            st.error("Nombre, Área y Sub-área son obligatorios.")
+            return
+            
+        new_prof_id = None
+        prof_row = profiles_df[profiles_df['name'] == new_prof_name]
+        if not prof_row.empty:
+            new_prof_id = int(prof_row.iloc[0]["profile_id"])
+            
+        final_dept = f"{new_area} - {new_subarea}"
+        
+        conn = db_conn()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                UPDATE employees 
+                SET full_name = ?, department = ?, profile_id = ?
+                WHERE user_id = ?
+            """, (new_name.strip(), final_dept, new_prof_id, str(user_id)))
+            conn.commit()
+            st.success("✅ Cambios guardados correctamente.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Error al guardar los cambios: {exc}")
+        finally:
+            conn.close()
+            
+    with st.expander("🚨 Zona de Peligro - Eliminar Empleado"):
+        st.warning("Esta acción es irreversible y eliminará el registro de empleado y sus accesos si existen.")
+        confirm_del = st.checkbox("Entiendo que esta acción es permanente.", key=f"del_emp_{user_id}")
+        
+        if st.button("🗑️ Eliminar Definitivamente", type="primary", disabled=not confirm_del):
+            conn = db_conn()
+            cur = conn.cursor()
+            try:
+                cur.execute("DELETE FROM employees WHERE user_id = ?", (str(user_id),))
+                cur.execute("DELETE FROM users_app WHERE username = ?", (str(user_id),))
+                conn.commit()
+                st.success("🗑️ Empleado eliminado.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Error al eliminar: {exc}")
+            finally:
+                conn.close()
 
 
 def page_employees():
@@ -1652,9 +2673,10 @@ def page_employees():
 
     with tab1:
         st.subheader("Directorio Actual")
+        st.write("Selecciona una fila para editar la información del empleado.")
         conn = db_conn()
         emp = pd.read_sql_query("""
-            SELECT e.user_id, e.full_name, e.email, e.department, COALESCE(p.name, 'Sin asignar') as profile, e.created_at
+            SELECT e.user_id, e.full_name, e.department, COALESCE(p.name, 'Sin asignar') as profile, e.created_at
             FROM employees e
             LEFT JOIN profiles p ON e.profile_id = p.profile_id
             ORDER BY e.user_id
@@ -1664,7 +2686,7 @@ def page_employees():
         if emp.empty:
             st.warning("El directorio está vacío.")
         else:
-            emp.columns = ["DNI / ID Biométrico", "Nombre Completo", "Correo Electrónico", "Área / Departamento", "Perfil Asignado", "Fecha Registro"]
+            emp.columns = ["DNI / ID Biométrico", "Nombre Completo", "Área / Departamento", "Perfil Asignado", "Fecha Registro"]
             
             # Filtro rápido
             deptss = ["Todos"] + list(emp["Área / Departamento"].dropna().unique())
@@ -1673,24 +2695,31 @@ def page_employees():
             df_show = emp if filtro_dep == "Todos" else emp[emp["Área / Departamento"] == filtro_dep]
             
             st.metric("Total en vista", len(df_show))
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
+            event = st.dataframe(df_show, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+            
+            selected_rows = event.selection.rows
+            if selected_rows:
+                idx = selected_rows[0]
+                selected_user_id = df_show.iloc[idx]["DNI / ID Biométrico"]
+                edit_employee_dialog(selected_user_id)
 
     with tab2:
         st.subheader("Registrar Empleado Manualmente")
         st.info("Utiliza este formulario para crear un registro individual en la base de datos de manera inmediata.")
-        with st.form("form_create_employee"):
-            c1, c2 = st.columns(2)
-            with c1:
-                e_id = st.text_input("Número de Documento (DNI)*", placeholder="Ej: 100123456")
-                e_name = st.text_input("Nombre Completo*", placeholder="Apellidos y Nombres")
-                e_email = st.text_input("Correo Electrónico (Opcional)", placeholder="usuario@dolormed.com")
-            with c2:
-                e_dept = st.text_input("Área / Departamento*", placeholder="Ej: Urgencias, Admisiones")
-                e_prof = st.selectbox("Perfil Asignado*", options=[p for p in profiles_df["Nombre Perfil"].tolist()])
-                
-            submitted = st.form_submit_button("Crear Empleado", type="primary")
+        c1, c2 = st.columns(2)
+        with c1:
+            e_id = st.text_input("Número de Documento (DNI)*", placeholder="Ej: 100123456")
+            e_name = st.text_input("Nombre Completo*", placeholder="Apellidos y Nombres")
+            e_email = st.text_input("Correo Electrónico (Opcional)", placeholder="usuario@dolormed.com")
+        with c2:
+            e_area_main = st.selectbox("Área Principal*", options=list(AREA_MAPPING.keys()))
+            e_subarea = st.selectbox("Sub-área / Departamento*", options=AREA_MAPPING[e_area_main])
+            e_prof = st.selectbox("Perfil Asignado*", options=[p for p in profiles_df["Nombre Perfil"].tolist()])
+            
+        submitted = st.button("Crear Empleado", type="primary")
 
         if submitted:
+            e_dept = f"{e_area_main} - {e_subarea}"
             if not e_id.strip() or not e_name.strip() or not e_dept.strip():
                 st.error("Por favor completa los campos obligatorios (*).")
             else:
@@ -1870,19 +2899,119 @@ def page_assign_shifts():
 
 def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, total_time, r_type, r_desc, makeup, is_paid):
     conn = db_conn()
+    
+    role = st.session_state.get("role", "empleado")
+    
+    if r_type in ["Citas médicas", "Incapacidad", "Calamidad"]:
+        target_status = "PENDING_RRHH"
+    elif r_type in ["Permiso personal", "Permiso laboral"]:
+        target_status = "PENDING_INMEDIATO"
+    elif r_type in ["Vacaciones", "Día de la familia", "Votaciones", "Licencia de luto"]:
+        target_status = "PENDING_INMEDIATO"
+    else:
+        target_status = "PENDING_INMEDIATO"
+        
+    if role == "coordinador" and target_status == "PENDING_INMEDIATO":
+        target_status = "PENDING_AREA"
+    elif role == "jefe_area" and target_status in ["PENDING_INMEDIATO", "PENDING_AREA"]:
+        target_status = "PENDING_RRHH"
+    elif role in ["admin", "nomina"]:
+        target_status = "PENDING_RRHH"
+
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO leave_requests (
             user_id, request_date, leave_date_start, leave_date_end, start_time, end_time, 
-            total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         user_id, date.today().isoformat(), leave_start.isoformat(), leave_end.isoformat(),
         t_start, t_end, total_time, r_type, r_desc, makeup, 1 if is_paid else 0,
-        datetime.now().isoformat(timespec="seconds")
+        datetime.now().isoformat(timespec="seconds"), target_status
     ))
+    req_id = cur.lastrowid
     conn.commit()
     conn.close()
+    
+    emp_email = st.session_state["user"].get("emp_email", "")
+    if emp_email:
+        send_notification_email(emp_email, f"Dolormed: Novedad Radicada #{req_id}", f"Hola,<br><br>Tu solicitud de <b>{r_type}</b> ha sido radicada correctamente con el ID #{req_id}.<br>Estado Actual: <b>{target_status}</b>.<br><br>Serás notificado cuando se tome una decisión final.")
+
+def notify_employee(user_id, subject, body):
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT emp_email FROM users_app WHERE username = ?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    if row and row[0]:
+        send_notification_email(row[0], subject, body)
+
+
+@st.dialog("Detalles de Mi Solicitud (F-TH-012)")
+def show_leave_request_details(req_id: int):
+    conn = db_conn()
+    df_req = pd.read_sql_query("SELECT * FROM leave_requests WHERE id = ?", conn, params=(req_id,))
+    
+    # Extraer trazabilidad de aprobadores
+    df_audit = pd.read_sql_query("""
+        SELECT user_id, action, timestamp 
+        FROM audit_logs 
+        WHERE details LIKE ? AND action LIKE 'APPROVE_%'
+        ORDER BY timestamp ASC
+    """, conn, params=(f"%Permiso #{req_id} %",))
+    
+    conn.close()
+    
+    if df_req.empty:
+        st.error("No se encontró la solicitud.")
+        return
+        
+    req = df_req.iloc[0]
+    
+    st.markdown(f"### Radicado: #{req['id']}")
+    
+    if req['status'] == 'APPROVED':
+        st.success("✅ Esta solicitud ha sido Aprobada definitivamente.")
+        html_fth012 = generate_fth012_html(req, df_audit)
+        st.download_button(
+            label="📄 Descargar F-TH-012 (HTML/PDF)",
+            data=html_fth012,
+            file_name=f"F-TH-012_{req['id']}.html",
+            mime="text/html",
+            type="primary",
+            use_container_width=True
+        )
+    else:
+        st.markdown(f"**Estado Actual:** `{req['status']}`")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**Fecha de Solicitud:** {req['request_date']}")
+        st.markdown(f"**Fechas de Ausencia:** {req['leave_date_start']} al {req['leave_date_end']}")
+        st.markdown(f"**Remunerado:** {'✅ Sí' if req['is_paid'] else '❌ No'}")
+    with c2:
+        h_in = req['start_time'] if req['start_time'] else "N/A"
+        h_out = req['end_time'] if req['end_time'] else "N/A"
+        st.markdown(f"**Hora Salida:** {h_in}")
+        st.markdown(f"**Hora Entrada:** {h_out}")
+        st.markdown(f"**Tiempo Total:** {req['total_time']}")
+        
+    st.divider()
+    st.write(f"**Motivo General:** {req['reason_type']}")
+    
+    st.markdown("**Mi Justificación / Detalles:**")
+    st.info(req['reason_description'] if req['reason_description'] else "Sin detalles ingresados.")
+    
+    if not req['is_paid'] and req['how_to_makeup']:
+        st.markdown("**Acuerdo de Reposición Prometido:**")
+        st.warning(req['how_to_makeup'])
+
+    if not df_audit.empty:
+        st.divider()
+        st.markdown("**Trazabilidad de Aprobaciones:**")
+        for _, row_a in df_audit.iterrows():
+            level = "Jefatura" if row_a['action'] == "APPROVE_LEAVE_L1" else "Gestión Humana"
+            st.caption(f"✓ **{level}**: {row_a['user_id']} ({row_a['timestamp']})")
 
 def page_employee_portal():
     user = st.session_state["user"]
@@ -1939,15 +3068,169 @@ def page_employee_portal():
         if df_reqs.empty:
             st.info("No tienes solicitudes históricas radicas.")
         else:
-            st.dataframe(df_reqs, use_container_width=True, hide_index=True)
+            st.info("💡 Haz clic en una solicitud para ver todos sus detalles.")
+            
+            # Using session_state for st.dataframe selection to allow clearing it
+            event = st.dataframe(df_reqs, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="emp_reqs_table")
+            
+            if len(event.selection.rows) > 0:
+                row_idx = event.selection.rows[0]
+                selected_req_id = int(df_reqs.iloc[row_idx]["Radicado"])
+                # Before showing dialog, clear selection so on close it doesn't trigger again
+                st.session_state.emp_reqs_table.selection.rows.clear()
+                show_leave_request_details(selected_req_id)
 
+
+@st.dialog("Detalles Completos de la Novedad/Permiso")
+def show_exception_details(exc_id: int):
+    conn = db_conn()
+    
+    # Obtener info basica de la novedad
+    df_exc = pd.read_sql_query("""
+        SELECT ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
+        FROM exceptions ex
+        LEFT JOIN employees e ON ex.user_id = e.user_id
+        WHERE ex.id = ?
+    """, conn, params=(exc_id,))
+    
+    if df_exc.empty:
+        st.error("No se encontró la novedad.")
+        conn.close()
+        return
+        
+    exc = df_exc.iloc[0]
+    st.markdown(f"#### **Empleado:** {exc['full_name']} (ID: {exc['user_id']})")
+    st.markdown(f"**Fecha Afectada:** {exc['date']} | **Tipo:** {exc['type']}")
+    st.write(f"**Observación General:** {exc['notes']}")
+    st.caption(f"Registrado el: {exc['created_at']}")
+    
+    st.divider()
+    
+    # Buscar si existe una solicitud digital de portal asociada
+    df_req = pd.read_sql_query("""
+        SELECT *
+        FROM leave_requests
+        WHERE user_id = ? AND status = 'APPROVED'
+          AND leave_date_start <= ? AND leave_date_end >= ?
+        ORDER BY id DESC LIMIT 1
+    """, conn, params=(exc['user_id'], exc['date'], exc['date']))
+    
+    conn.close()
+    
+    if not df_req.empty:
+        req = df_req.iloc[0]
+        st.markdown("### 📄 Detalles de la Solicitud (Portal F-TH-012)")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"**Radicado:** #{req['id']}")
+            st.markdown(f"**Fecha de Solicitud:** {req['request_date']}")
+            st.markdown(f"**Remunerado:** {'✅ Sí' if req['is_paid'] else '❌ No'}")
+        with c2:
+            h_in = req['start_time'] if req['start_time'] else "N/A"
+            h_out = req['end_time'] if req['end_time'] else "N/A"
+            st.markdown(f"**Hora Salida:** {h_in}")
+            st.markdown(f"**Hora Entrada:** {h_out}")
+            st.markdown(f"**Tiempo Total:** {req['total_time']}")
+            
+        st.write(f"**Motivo Original:** {req['reason_type']}")
+        
+        st.markdown("**Justificación del Empleado:**")
+        st.info(req['reason_description'] if req['reason_description'] else "Sin detalles adicionales.")
+        
+        if not req['is_paid'] and req['how_to_makeup']:
+            st.markdown("**Acuerdo de Reposición (Tiempo):**")
+            st.warning(req['how_to_makeup'])
+            
+        conn = db_conn()
+        df_audit = pd.read_sql_query("""
+            SELECT user_id, action, timestamp 
+            FROM audit_logs 
+            WHERE details LIKE ? AND action LIKE 'APPROVE_%'
+            ORDER BY timestamp ASC
+        """, conn, params=(f"%Permiso #{req['id']} %",))
+        conn.close()
+        
+        if not df_audit.empty:
+            st.divider()
+            st.markdown("**Trazabilidad de Aprobaciones:**")
+            for _, row_a in df_audit.iterrows():
+                level = "Jefatura" if row_a['action'] == "APPROVE_LEAVE_L1" else "Gestión Humana"
+                st.caption(f"✓ **{level}**: {row_a['user_id']} ({row_a['timestamp']})")
+    else:
+        st.info("ℹ️ Esta novedad no parece tener una solicitud digital asociada del portal de empleados (o fue ingresada manualmente).")
 
 def page_exceptions():
-    require_role("admin", "nomina")
+    require_role("admin", "nomina", "jefe_area", "coordinador")
     st.title("🛡️ Novedades y Justificaciones")
+    user = st.session_state["user"]
+    conn = db_conn()
+
+    if user["role"] in ["coordinador", "jefe_area"]:
+        st.write(f"Bandeja de Aprobación para: **{user.get('managed_department') or user.get('managed_area')}**")
+        
+        if user["role"] == "coordinador":
+            query = """
+                SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status
+                FROM leave_requests lr
+                JOIN employees e ON lr.user_id = e.user_id
+                WHERE lr.status = 'PENDING_INMEDIATO' AND e.department = ?
+                ORDER BY lr.id ASC
+            """
+            params = (user.get('managed_department', ''),)
+        else:
+            query = """
+                SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status
+                FROM leave_requests lr
+                JOIN employees e ON lr.user_id = e.user_id
+                WHERE lr.status = 'PENDING_AREA' AND e.department LIKE ?
+                ORDER BY lr.id ASC
+            """
+            params = (f"{user.get('managed_area', '')} - %",)
+            
+        df_pend = pd.read_sql_query(query, conn, params=params)
+        
+        if df_pend.empty:
+            st.success("No hay solicitudes pendientes de revisión para tu área.")
+        else:
+            st.write(f"Tienes **{len(df_pend)}** solicitud(es) por revisar.")
+            for _, r in df_pend.iterrows():
+                with st.container(border=True):
+                    cols = st.columns([3, 1])
+                    with cols[0]:
+                        st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}*")
+                        st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
+                        st.write(f"**Justificación:** {r['reason_description']}")
+                    with cols[1]:
+                        if st.button("👍 Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True):
+                            cur = conn.cursor()
+                            if user["role"] == "coordinador":
+                                if r['reason_type'] in ["Vacaciones", "Día de la familia", "Votaciones", "Licencia de luto"]:
+                                    next_status = 'PENDING_AREA'
+                                else:
+                                    next_status = 'PENDING_RRHH'
+                            else:
+                                next_status = 'PENDING_RRHH'
+                                
+                            cur.execute("UPDATE leave_requests SET status = ? WHERE id = ?", (next_status, r['id']))
+                            conn.commit()
+                            log_audit("APPROVE_LEAVE_L1", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} pre-aprobado. Pasa a {next_status}")
+                            notify_employee(r['user_id'], f"Dolormed: Novedad #{r['id']} Pre-Aprobada", f"Hola {r['full_name']},<br>Tu permiso de {r['reason_type']} fue pre-aprobado por tu jefatura. Pasa a estado: {next_status}.")
+                            st.rerun()
+                        if st.button("❌ Rechazar", key=f"btn_rej_{r['id']}", use_container_width=True):
+                            cur = conn.cursor()
+                            cur.execute("UPDATE leave_requests SET status = 'REJECTED' WHERE id = ?", (r['id'],))
+                            conn.commit()
+                            log_audit("REJECT_LEAVE_L1", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} rechazado.")
+                            notify_employee(r['user_id'], f"Dolormed: Novedad #{r['id']} Rechazada", f"Hola {r['full_name']},<br>Tu permiso de {r['reason_type']} fue RECHAZADO por tu jefatura.")
+                            st.rerun()
+        conn.close()
+        return
+
     st.write("Registra permisos, incapacidades médicas o vacaciones. El sistema **no penalizará** a estos empleados en los reportes de tardanzas para los días seleccionados.")
 
-    conn = db_conn()
     emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees ORDER BY full_name", conn)
     conn.close()
 
@@ -1955,7 +3238,7 @@ def page_exceptions():
         st.warning("No hay empleados en el directorio.")
         return
 
-    tab1, tab2, tab3 = st.tabs(["📝 Registrar Novedad Manual", "📋 Listado de Novedades", "📥 Solicitudes Digitales de Empleados"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 Registrar Novedad Manual", "📋 Listado de Novedades", "📥 Solicitudes Digitales de Empleados", "🌐 Monitoreo Global"])
 
     with tab1:
         with st.form("form_exceptions"):
@@ -1992,38 +3275,47 @@ def page_exceptions():
                 st.success(f"Novedad registrada del {d_start} al {d_end} para el usuario {selected_emp}.")
 
     with tab2:
+        st.info("💡 Haz clic en cualquier fila para ver los detalles completos del permiso o novedad.")
         df_exc = get_exceptions_df()
         if df_exc.empty:
             st.info("No hay novedades registradas.")
         else:
             df_exc.columns = ["ID", "Usuario", "Nombre", "Fecha", "Tipo", "Observaciones", "Registrado El"]
-            st.dataframe(df_exc, use_container_width=True, hide_index=True)
+            event = st.dataframe(df_exc, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="admin_exc_table")
+            
+            if len(event.selection.rows) > 0:
+                row_idx = event.selection.rows[0]
+                selected_id = int(df_exc.iloc[row_idx]["ID"])
+                st.session_state.admin_exc_table.selection.rows.clear()
+                show_exception_details(selected_id)
 
     with tab3:
-        st.subheader("Bandeja de Aprobación de Permisos (F-TH-012)")
+        st.subheader("Bandeja de Aprobación Final de Permisos (Gestión Humana)")
         conn = db_conn()
         df_pend = pd.read_sql_query("""
             SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                    lr.reason_type, lr.reason_description, lr.is_paid, lr.status
             FROM leave_requests lr
             JOIN employees e ON lr.user_id = e.user_id
-            WHERE lr.status = 'PENDING'
+            WHERE lr.status = 'PENDING_RRHH'
             ORDER BY lr.id ASC
         """, conn)
         
         if df_pend.empty:
-            st.success("No hay solicitudes centralizadas pendientes de revisión.")
+            st.success("No hay solicitudes pendientes de revisión final.")
         else:
-            st.write(f"Tienes **{len(df_pend)}** solicitud(es) por revisar del portal de empleados.")
+            st.write(f"Tienes **{len(df_pend)}** solicitud(es) por procesar definitivamente.")
             for _, r in df_pend.iterrows():
                 with st.container(border=True):
                     cols = st.columns([3, 1])
                     with cols[0]:
-                        st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}*")
+                        badge = "🟣 RRHH FINAL"
+                        st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}* | {badge}")
                         st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
                         st.write(f"**Justificación:** {r['reason_description']}")
                     with cols[1]:
-                        if st.button("✅ Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True):
+                        btn_label = "✅ Aprobar Final"
+                        if st.button(btn_label, key=f"btn_acc_hr_{r['id']}", type="primary", use_container_width=True):
                             cur = conn.cursor()
                             cur.execute("UPDATE leave_requests SET status = 'APPROVED' WHERE id = ?", (r['id'],))
                             
@@ -2039,15 +3331,49 @@ def page_exceptions():
                                     ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
                                 """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal: {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
                             conn.commit()
+                            log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO FINAL por RRHH.")
                             st.rerun()
                             
-                        if st.button("❌ Rechazar", key=f"btn_rej_{r['id']}", use_container_width=True):
+                        if st.button("❌ Rechazar Final", key=f"btn_rej_hr_{r['id']}", use_container_width=True):
                             cur = conn.cursor()
                             cur.execute("UPDATE leave_requests SET status = 'REJECTED' WHERE id = ?", (r['id'],))
                             conn.commit()
-                            st.rerun()
+                            log_audit("REJECT_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} RECHAZADO FINAL por RRHH.")
         conn.close()
 
+    with tab4:
+        user_role = st.session_state["user"]["role"]
+        if user_role in ["admin", "nomina"]:
+            st.subheader("Monitoreo Global de Permisos (Todas las Áreas)")
+            st.info("Vista exclusiva para directivos. Aquí observas el estado de **todas** las solicitudes en curso en toda la empresa.")
+            
+            conn = db_conn()
+            df_g = pd.read_sql_query("""
+                SELECT lr.id, lr.user_id, e.full_name, e.department, lr.reason_type, lr.status, lr.request_date
+                FROM leave_requests lr
+                JOIN employees e ON lr.user_id = e.user_id
+                WHERE lr.status LIKE 'PENDING_%'
+                ORDER BY lr.request_date DESC
+            """, conn)
+            conn.close()
+            
+            if df_g.empty:
+                st.success("Toda la tubería está limpia. No hay solicitudes estancadas.")
+            else:
+                st.write(f"Hay **{len(df_g)}** solicitudes esperando aprobación en algún nivel.")
+                df_g.columns = ["Radicado", "DNI", "Empleado", "Área/Departamento", "Tipo", "Estado de Aprobación", "Fecha Solicitud"]
+                
+                st.info("💡 Haz clic en cualquier fila para ver los detalles completos de la solicitud.")
+                event_g = st.dataframe(df_g, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="admin_global_table")
+                
+                if len(event_g.selection.rows) > 0:
+                    row_idx = event_g.selection.rows[0]
+                    # df_g["Radicado"] is the ID
+                    req_id = int(df_g.iloc[row_idx]["Radicado"])
+                    st.session_state.admin_global_table.selection.rows.clear()
+                    show_leave_request_details(req_id)
+        else:
+            st.warning("No tienes permisos de Administrador para ver la panorámica global de todas las áreas.")
 
 def page_lateness_report():
     require_role("admin", "nomina")
@@ -2055,11 +3381,13 @@ def page_lateness_report():
     st.write("Genera el archivo avalado para procesos disciplinarios y descuentos de nómina.")
 
     today = date.today()
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         year = st.number_input("Año Fiscal", min_value=2020, max_value=2100, value=today.year, step=1)
     with col2:
         month = st.number_input("Mes de Nómina", min_value=1, max_value=12, value=today.month, step=1)
+    with col3:
+        search_dni = st.text_input("Buscar DNI", value="", placeholder="Ej: 100646459")
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("⚙️ Generar Analítica de Tardanzas", type="primary"):
@@ -2087,8 +3415,12 @@ def page_lateness_report():
         conn.close()
         
         summary_view = pd.merge(summary_df, nombres, on="user_id", how="left")
-        summary_view = summary_view[["user_id", "full_name", "department", "dias_tarde", "minutos_tarde_total"]]
-        summary_view.columns = ["DNI Empleado", "Nombre", "Departamento", "Días con Retraso", "Minutos Totales Adeudados"]
+        
+        if search_dni:
+            summary_view = summary_view[summary_view["user_id"].astype(str).str.contains(search_dni.strip())]
+            
+        summary_view = summary_view[["user_id", "full_name", "department", "dias_tarde", "minutos_tarde_total", "fechas_tarde"]]
+        summary_view.columns = ["DNI Empleado", "Nombre", "Departamento", "Días con Retraso", "Minutos Totales Adeudados", "Fechas de Retraso"]
         
         st.dataframe(summary_view, use_container_width=True, hide_index=True)
 
@@ -2107,6 +3439,25 @@ def page_lateness_report():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
+
+def toggle_theme_config():
+    config_path = os.path.join(os.path.dirname(__file__), ".streamlit", "config.toml")
+    is_dark = False
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            if 'base="dark"' in f.read():
+                is_dark = True
+                
+    new_mode = "light" if is_dark else "dark"
+    new_content = f'''[theme]
+primaryColor="#0D6EFD"
+base="{new_mode}"
+font="sans serif"
+'''
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(new_content)
 
 
 def main():
@@ -2131,6 +3482,9 @@ def main():
     elif user["role"] == "empleado":
         menu_options = ["Mi Portal de Autogestión"]
         menu_icons = ["person-vcard"]
+    elif user["role"] == "coordinador":
+        menu_options = ["Dashboard", "Autorización de Permisos", "Visualizar Data"]
+        menu_icons = ["house", "check2-square", "table"]
     else:
         menu_options = ["Dashboard", "Reportes Mensuales", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data"]
         menu_icons = ["house", "bar-chart-line", "journal-medical", "arrow-repeat", "table"]
@@ -2149,9 +3503,22 @@ def main():
                 "nav-link-selected": {"background-color": "#0066cc", "color": "white", "icon-color":"white"},
             }
         )
-        
         st.markdown("<br><br>", unsafe_allow_html=True)
-        if st.button("Cerrar sesión", use_container_width=True):
+        
+        config_p = os.path.join(os.path.dirname(__file__), ".streamlit", "config.toml")
+        current_mode = "☀️ Claro"
+        if os.path.exists(config_p):
+            with open(config_p, "r", encoding="utf-8") as f:
+                if 'base="dark"' in f.read():
+                    current_mode = "🌙 Oscuro"
+                    
+        if st.button(f"Cambiar Tema ({current_mode})", use_container_width=True):
+            toggle_theme_config()
+            import time
+            time.sleep(0.3)
+            st.rerun()
+            
+        if st.button("Cerrar Sesión", type="primary", use_container_width=True):
             st.session_state.pop("user", None)
             st.rerun()
 
@@ -2164,7 +3531,7 @@ def main():
         page_view_attendance()
     elif sel == "Reportes Mensuales":
         page_lateness_report()
-    elif sel == "Novedades y Excepciones":
+    elif sel in ["Novedades y Excepciones", "Autorización de Permisos"]:
         page_exceptions()
     elif sel == "Empleados":
         page_employees()

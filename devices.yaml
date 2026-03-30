@@ -1,14 +1,11 @@
-# Lista de biométricos ZKTeco (asistencia) por red.
-# Edita IP/puerto/password según tu equipo.
 devices:
-  - name: CASA_GALVEZ
-    ip: 192.168.52.247
-    port: 4370
-    password: 0
-    timeout: 10
-
-  - name: CIRUGIA
-    ip: 192.168.53.45
-    port: 4370
-    password: 890724
-    timeout: 10
+- name: CASA_GALVEZ
+  ip: 192.168.52.247
+  port: 4370
+  password: 0
+  timeout: 10
+- name: CIRUGIA
+  ip: 192.168.53.45
+  port: 4370
+  password: 890724
+  timeout: 10
