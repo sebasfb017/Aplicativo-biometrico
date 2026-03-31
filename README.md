@@ -1,24 +1,55 @@
-# ZKTeco Nómina
+# ZKTeco Nómina - Dolormed
 
-Esta app (Streamlit) se conecta a biométricos ZKTeco por red (UDP 4370) usando `pyzk`,
-descarga marcaciones, las guarda en SQLite y genera reporte de tardanzas por mes
-según horarios semanales (porque cambian cada semana).
+Esta app (Streamlit) se conecta a biométricos ZKTeco por red (UDP 4370) usando `pyzk`, descarga marcaciones, las guarda en SQLite y genera reporte de tardanzas por mes según horarios semanales dinámicos.
 
-## 1) Requisitos
-- Python 3.10+ recomendado
-- Conectividad hacia los biométricos por red
-- Puerto UDP 4370 permitido entre el PC y los equipos
+## 1) Requisitos Previos
+- **Python 3.10 o superior** recomendado.
+- Durante la instalación de Python en Windows, es obligatorio marcar la casilla **"Add python.exe to PATH"**.
+- Conectividad de red hacia los biométricos (Puerto UDP 4370 permitido entre el PC y los equipos).
 
-## 2) Instalación (Windows / PowerShell)
-Dentro de esta carpeta:
+## 2) Guía de Configuración Local (Desarrolladores)
 
+Sigue estos pasos en orden para levantar el entorno de desarrollo en Windows desde cero:
+
+**Paso A: Clonar y preparar el directorio**
+Abre una terminal de PowerShell y ejecuta:
 ```powershell
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-streamlit run app.py
+git clone <URL-DEL-REPOSITORIO>
+cd Aplicativo-biometrico
 ```
 
+**Paso B: Permisos de ejecución (Solo Windows)**
+Por defecto, PowerShell bloquea la activación de entornos virtuales. Para evitar el error de seguridad (`PSSecurityException`), otorga permisos locales ejecutando este comando (acepta con "S" o "Y" cuando te lo solicite):
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+**Paso C: Crear y activar el entorno virtual**
+Aísla las dependencias del proyecto ejecutando:
+```powershell
+python -m venv venv
+.\venv\Scripts\activate
+```
+*(Validación: Deberías ver el prefijo `(venv)` al inicio de tu línea de comandos).*
+
+**Paso D: Instalar dependencias**
+Con el entorno activado, instala todas las librerías necesarias:
+```powershell
+pip install -r requirements.txt
+```
+
+**Paso E: Ejecución del servidor**
+Puedes levantar la aplicación ejecutando el script automático o llamando a Streamlit directamente:
+```powershell
+.\run_windows.bat
+# O alternativamente:
+# streamlit run app.py
+```
+
+El navegador abrirá automáticamente el portal en `http://localhost:8501`. 
+* **Credenciales maestras por defecto:** `admin` / `Cambiar123!`
+
+---
 ## 3) Configurar biométricos
 Pon las IP reales (y `password` si el equipo lo usa).
 
