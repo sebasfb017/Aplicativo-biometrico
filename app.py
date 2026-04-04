@@ -14,9 +14,9 @@ from datetime import datetime, date, time, timedelta
 # pyzk
 from zk import ZK
 
+from database_conn.connection import db_conn, DATA_DIR, DB_PATH
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(APP_DIR, "data")
-DB_PATH = os.path.join(DATA_DIR, "app.db")
 DEVICES_YAML = os.path.join(APP_DIR, "devices.yaml")
 # helper for default schedules file path (must be computed at runtime
 # because DATA_DIR can be monkeypatched in tests).
@@ -32,17 +32,12 @@ AREA_MAPPING = {
     "Rayos X": ["Tecnólogo Rayos X"]
 }
 
+# -----------------------------
+# Auth
+from utils.auth import get_user, verify_login, require_role
 
 # -----------------------------
 # DB
-# -----------------------------
-def db_conn():
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    return conn
-
 
 def init_db():
     conn = db_conn()
@@ -452,39 +447,6 @@ def migrate_schema_coordinators():
         pass
     finally:
         conn.close()
-
-# -----------------------------
-# Auth
-# -----------------------------
-def get_user(username: str):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT username, full_name, role, password_hash, active, managed_department
-        FROM users_app WHERE username = ?
-    """, (username,))
-    row = cur.fetchone()
-    conn.close()
-    return row
-
-
-def verify_login(username: str, password: str):
-    row = get_user(username)
-    if not row:
-        return None
-    _username, full_name, role, pw_hash, active, managed_dept = row
-    if active != 1:
-        return None
-    if bcrypt.checkpw(password.encode("utf-8"), pw_hash):
-        return {"username": _username, "full_name": full_name, "role": role, "managed_department": managed_dept}
-    return None
-
-
-def require_role(*allowed_roles):
-    user = st.session_state.get("user")
-    if not user or user.get("role") not in allowed_roles:
-        st.error("No tienes permisos para ver esta sección.")
-        st.stop()
 
 
 # -----------------------------
