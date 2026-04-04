@@ -11,13 +11,9 @@ from streamlit_option_menu import option_menu
 
 from datetime import datetime, date, time, timedelta
 
-# pyzk
-from zk import ZK
-
 from database_conn.connection import db_conn, DATA_DIR, DB_PATH
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DEVICES_YAML = os.path.join(APP_DIR, "devices.yaml")
 # helper for default schedules file path (must be computed at runtime
 # because DATA_DIR can be monkeypatched in tests).
 def default_schedules_path():
@@ -35,6 +31,10 @@ AREA_MAPPING = {
 # -----------------------------
 # Auth
 from utils.auth import get_user, verify_login, require_role
+
+# -----------------------------
+# DEVICES ZK
+from services.zk_service import load_devices, save_devices, download_attendance_from_device, sync_device_time, upsert_attendance
 
 # -----------------------------
 # DB
@@ -449,150 +449,7 @@ def migrate_schema_coordinators():
         conn.close()
 
 
-# -----------------------------
-# Devices
-# -----------------------------
-def load_devices():
-    """Read and return the list of devices from the YAML configuration.
 
-    If the file is missing, contains invalid YAML or does not define a
-    ``devices`` list the function returns an empty list. Any entries that
-    don't at least have an ``ip`` key are silently ignored.
-    """
-    if not os.path.exists(DEVICES_YAML):
-        return []
-    try:
-        with open(DEVICES_YAML, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-    except yaml.YAMLError:
-        return []
-
-    devices = cfg.get("devices", [])
-    if not isinstance(devices, list):
-        return []
-
-    valid = []
-    for d in devices:
-        if isinstance(d, dict) and d.get("ip"):
-            valid.append(d)
-    return valid
-
-
-def save_devices(devices_list: list):
-    """Guarda la lista de dispositivos actualizados en devices.yaml"""
-    try:
-        with open(DEVICES_YAML, "w", encoding="utf-8") as f:
-            yaml.dump({"devices": devices_list}, f, allow_unicode=True, sort_keys=False)
-        return True
-    except Exception as e:
-        print(f"Error guardando devices.yaml: {e}")
-        return False
-
-
-def download_attendance_from_device(device: dict):
-    """
-    Returns list[dict] with fields compatible with attendance_raw.
-    """
-    ip = device["ip"]
-    try:
-        port = int(device.get("port", 4370))
-    except Exception:
-        port = device.get("port", 4370)
-    password = device.get("password", 0)
-    try:
-        password = int(password)
-    except Exception:
-        pass
-    try:
-        timeout = int(device.get("timeout", 10))
-    except Exception:
-        timeout = device.get("timeout", 10)
-    name = device.get("name", ip)
-
-    zk = ZK(ip, port=port, timeout=timeout, password=password)
-    conn = None
-    downloaded_at = datetime.now().isoformat(timespec="seconds")
-
-    try:
-        conn = zk.connect()
-        conn.disable_device()  # evita actividad mientras descargas
-        records = conn.get_attendance()  # list[Attendance]
-        out = []
-        for r in records:
-            out.append({
-                "device_name": name,
-                "device_ip": ip,
-                "user_id": str(r.user_id),
-                "ts": r.timestamp.isoformat(sep=" ", timespec="seconds"),
-                "status": int(r.status),
-                "punch": int(r.punch),
-                "uid": int(getattr(r, "uid", 0)),
-                "downloaded_at": downloaded_at
-            })
-        return out, None
-    except Exception as e:
-        return [], str(e)
-    finally:
-        try:
-            if conn:
-                conn.enable_device()
-                conn.disconnect()
-        except Exception:
-            pass
-
-def sync_device_time(device: dict):
-    ip = device["ip"]
-    try: port = int(device.get("port", 4370))
-    except Exception: port = device.get("port", 4370)
-    password = device.get("password", 0)
-    try: password = int(password)
-    except Exception: pass
-    try: timeout = int(device.get("timeout", 10))
-    except Exception: timeout = device.get("timeout", 10)
-    name = device.get("name", ip)
-
-    zk = ZK(ip, port=port, timeout=timeout, password=password)
-    conn = None
-
-    try:
-        conn = zk.connect()
-        conn.disable_device()
-        now = datetime.now()
-        conn.set_time(now)
-        return True, None
-    except Exception as e:
-        return False, str(e)
-    finally:
-        try:
-            if conn:
-                conn.enable_device()
-                conn.disconnect()
-        except Exception:
-            pass
-
-def upsert_attendance(rows: list[dict]):
-    if not rows:
-        return 0, 0
-    
-    data = [(
-        r["device_name"], r["device_ip"], r["user_id"], r["ts"],
-        r["status"], r["punch"], r["uid"], r["downloaded_at"]
-    ) for r in rows]
-
-    conn = db_conn()
-    cur = conn.cursor()
-    
-    cur.executemany("""
-        INSERT OR IGNORE INTO attendance_raw(device_name, device_ip, user_id, ts, status, punch, uid, downloaded_at)
-        VALUES(?,?,?,?,?,?,?,?)
-    """, data)
-    
-    inserted = cur.rowcount
-    skipped = len(rows) - inserted
-
-    conn.commit()
-    conn.close()
-    return inserted, skipped
 
 
 # -----------------------------
