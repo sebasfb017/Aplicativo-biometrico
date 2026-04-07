@@ -29,6 +29,10 @@ from services.notifications import send_notification_email, notify_employee, log
 # ANALYTICS
 from services.analytics import compute_month_lateness, fetch_attendance_between, to_excel_bytes, schedule_for_user_date, schedule_for_date
 
+# -----------------------------
+# DB
+from database_conn.queries import upsert_employees_df, db_create_leave_request
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # helper for default schedules file path (must be computed at runtime
 # because DATA_DIR can be monkeypatched in tests).
@@ -373,59 +377,6 @@ def migrate_schema_coordinators():
         pass
     finally:
         conn.close()
-
-# -----------------------------
-# Employees
-# -----------------------------
-def upsert_employees_df(df: pd.DataFrame):
-    """Carga o actualiza la tabla de empleados desde un DataFrame.
-
-    Espera columnas: user_id (requerido), full_name (requerido), email, department, profile_id
-    profile_id puede ser el ID del perfil o el nombre del perfil para auto-lookup.
-    """
-    required = {"user_id", "full_name"}
-    if not required.issubset(set(df.columns)):
-        missing = required - set(df.columns)
-        raise ValueError(f"Faltan columnas requeridas: {missing}")
-
-    df = df.copy()
-    df["user_id"] = df["user_id"].astype(str)
-    df["full_name"] = df["full_name"].astype(str)
-    if "email" in df.columns:
-        df["email"] = df["email"].astype(str)
-    else:
-        df["email"] = ""
-    if "department" in df.columns:
-        df["department"] = df["department"].astype(str)
-    else:
-        df["department"] = ""
-
-    conn = db_conn()
-    cur = conn.cursor()
-    for _, r in df.iterrows():
-        profile_id = None
-        if "profile_id" in df.columns and r.get("profile_id"):
-            profile_val = r["profile_id"]
-            # Si es un string, buscar el perfil por nombre
-            if isinstance(profile_val, str):
-                cur.execute("SELECT profile_id FROM profiles WHERE name = ?", (profile_val.strip(),))
-                profile_row = cur.fetchone()
-                if profile_row:
-                    profile_id = profile_row[0]
-            else:
-                profile_id = int(profile_val)
-        
-        cur.execute("""
-            INSERT INTO employees(user_id, full_name, email, department, profile_id, created_at)
-            VALUES(?,?,?,?,?,?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                full_name=excluded.full_name,
-                email=excluded.email,
-                department=excluded.department,
-                profile_id=excluded.profile_id
-        """, (r["user_id"], r["full_name"], r.get("email", ""), r.get("department", ""), profile_id, datetime.now().isoformat(timespec="seconds")))
-    conn.commit()
-    conn.close()
 
 
 # -----------------------------
@@ -2472,45 +2423,6 @@ def page_assign_shifts():
             st.success(f"¡Magia completada! Se clonaron {inserted} asignaciones hacia {target_weeks} semana(s) destino.")
 
 
-def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, total_time, r_type, r_desc, makeup, is_paid):
-    conn = db_conn()
-    
-    role = st.session_state.get("role", "empleado")
-    
-    if r_type in ["Citas médicas", "Incapacidad", "Calamidad"]:
-        target_status = "PENDING_RRHH"
-    elif r_type in ["Permiso personal", "Permiso laboral"]:
-        target_status = "PENDING_INMEDIATO"
-    elif r_type in ["Vacaciones", "Día de la familia", "Votaciones", "Licencia de luto"]:
-        target_status = "PENDING_INMEDIATO"
-    else:
-        target_status = "PENDING_INMEDIATO"
-        
-    if role == "coordinador" and target_status == "PENDING_INMEDIATO":
-        target_status = "PENDING_AREA"
-    elif role == "jefe_area" and target_status in ["PENDING_INMEDIATO", "PENDING_AREA"]:
-        target_status = "PENDING_RRHH"
-    elif role in ["admin", "nomina"]:
-        target_status = "PENDING_RRHH"
-
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO leave_requests (
-            user_id, request_date, leave_date_start, leave_date_end, start_time, end_time, 
-            total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        user_id, date.today().isoformat(), leave_start.isoformat(), leave_end.isoformat(),
-        t_start, t_end, total_time, r_type, r_desc, makeup, 1 if is_paid else 0,
-        datetime.now().isoformat(timespec="seconds"), target_status
-    ))
-    req_id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    
-    emp_email = st.session_state["user"].get("emp_email", "")
-    if emp_email:
-        send_notification_email(emp_email, f"Dolormed: Novedad Radicada #{req_id}", f"Hola,<br><br>Tu solicitud de <b>{r_type}</b> ha sido radicada correctamente con el ID #{req_id}.<br>Estado Actual: <b>{target_status}</b>.<br><br>Serás notificado cuando se tome una decisión final.")
 
 def notify_employee(user_id, subject, body):
     conn = db_conn()
