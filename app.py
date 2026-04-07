@@ -34,7 +34,8 @@ from services.analytics import compute_month_lateness, fetch_attendance_between,
 from database_conn.queries import (
     upsert_employees_df, db_create_leave_request, is_holiday, 
     get_shifts_df, upsert_shift, assign_shift, 
-    upsert_exception, get_exceptions_df
+    upsert_exception, get_exceptions_df,
+    get_users_by_role, get_all_employees  # <-- Estas son las dos funciones que faltaban
 )
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -272,25 +273,6 @@ def init_db():
     migrate_schema_multilevel()
     # if a default schedule file exists, load it now
     maybe_load_default_schedules()
-
-def log_audit(action, details):
-    """Registra una acción en la tabla de auditoría."""
-    conn = db_conn()
-    cur = conn.cursor()
-    user_id = "SISTEMA"
-    if "user" in st.session_state and st.session_state["user"]:
-        user_id = st.session_state["user"].get("username", "SISTEMA")
-        
-    try:
-        cur.execute("""
-            INSERT INTO audit_logs (user_id, action, details, timestamp)
-            VALUES (?, ?, ?, ?)
-        """, (user_id, action, details, datetime.now().isoformat(timespec="seconds")))
-        conn.commit()
-    except Exception as e:
-        print(f"Error escribiendo log de auditoria: {e}")
-    finally:
-        conn.close()
 
 def migrate_schema_attendance_flags():
     """Agrega las banderas para la modificación de marcaciones y auditoría."""
@@ -840,16 +822,6 @@ def auto_assign_shifts_from_schedules():
             assign_shift(uid, row["week_start"], int(row["dow"]), sid)
             count += 1
     return count
-
-def to_excel_bytes(summary_df: pd.DataFrame, detail_df: pd.DataFrame, raw_df: pd.DataFrame | None = None):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        summary_df.to_excel(writer, index=False, sheet_name="RESUMEN_TARDANZAS")
-        detail_df.to_excel(writer, index=False, sheet_name="DETALLE_TARDANZAS")
-        if raw_df is not None and not raw_df.empty:
-            raw_df.to_excel(writer, index=False, sheet_name="MARCACIONES_RAW")
-    output.seek(0)
-    return output.getvalue()
 
 
 # -----------------------------
@@ -2317,17 +2289,6 @@ def page_assign_shifts():
                     assign_shift(uid, target_week_iso, dow, shift_iid)
                     inserted += 1
             st.success(f"¡Magia completada! Se clonaron {inserted} asignaciones hacia {target_weeks} semana(s) destino.")
-
-
-
-def notify_employee(user_id, subject, body):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT emp_email FROM users_app WHERE username = ?", (user_id,))
-    row = cur.fetchone()
-    conn.close()
-    if row and row[0]:
-        send_notification_email(row[0], subject, body)
 
 
 @st.dialog("Detalles de Mi Solicitud (F-TH-012)")
