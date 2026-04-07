@@ -1,5 +1,6 @@
 import bcrypt
 from datetime import datetime
+import holidays
 from database_conn.connection import db_conn
 from views.schedules_view import ensure_schedules_columns, maybe_load_default_schedules
 
@@ -329,36 +330,16 @@ def migrate_schema_for_profiles():
 def initialize_colombian_holidays(cur):
     start_year = datetime.now().year - 2
     end_year = datetime.now().year + 2
-    holidays = []
-
-    for year in range(start_year, end_year + 1):
-        holidays.extend([
-            (f"{year}-01-01", "Año Nuevo"),
-            (f"{year}-01-08", "Reyes Magos"),
-            (f"{year}-02-12", "Lunes de Carnaval"),
-            (f"{year}-02-13", "Martes de Carnaval"),
-            (f"{year}-02-14", "Miércoles de Ceniza"),
-            (f"{year}-03-28", "Jueves Santo"),
-            (f"{year}-03-29", "Viernes Santo"),
-            (f"{year}-05-01", "Día del Trabajo"),
-            (f"{year}-06-10", "Corpus Christi"),
-            (f"{year}-06-17", "Sagrado Corazón"),
-            (f"{year}-07-01", "San Pedro y San Pablo"),
-            (f"{year}-07-29", "Santa Marta"),
-            (f"{year}-08-07", "Batalla de Boyacá"),
-            (f"{year}-08-15", "Asunción de María"),
-            (f"{year}-11-01", "Todos los Santos"),
-            (f"{year}-11-11", "Independencia de Cartagena"),
-            (f"{year}-12-08", "Inmaculada Concepción"),
-            (f"{year}-12-25", "Navidad"),
-        ])
     
-    for date_str, description in holidays:
+    co_holidays = holidays.Colombia(years=range(start_year, end_year + 1))
+    
+    for dt, name in sorted(co_holidays.items()):
+        date_str = dt.strftime("%Y-%m-%d")
         try:
             cur.execute("""
                 INSERT OR IGNORE INTO holidays(date, description, created_at)
                 VALUES(?, ?, ?)
-            """, (date_str, description, datetime.now().isoformat(timespec="seconds")))
+            """, (date_str, name, datetime.now().isoformat(timespec="seconds")))
         except Exception:
             pass
 
