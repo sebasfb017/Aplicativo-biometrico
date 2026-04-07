@@ -1,7 +1,8 @@
+import os
 import pandas as pd
 import streamlit as st
-from datetime import datetime
-from database_conn.connection import db_conn
+from datetime import datetime, date, timedelta
+from database_conn.connection import db_conn, DATA_DIR
 from services.notifications import send_notification_email
 
 def upsert_employees_df(df: pd.DataFrame):
@@ -65,3 +66,74 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
     if emp_email:
         send_notification_email(emp_email, f"Dolormed: Novedad Radicada #{req_id}", 
                                 f"Tu solicitud de {r_type} ha sido radicada. Estado: {target_status}")
+
+def is_holiday(date_obj: date) -> bool:
+    """Verifica si una fecha es festivo en la base de datos."""
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM holidays WHERE date = ?", (date_obj.isoformat(),))
+    count = cur.fetchone()[0]
+    conn.close()
+    return count > 0
+
+def get_shifts_df():
+    """Retorna un DataFrame con todos los turnos configurados."""
+    conn = db_conn()
+    df = pd.read_sql_query("SELECT * FROM shifts ORDER BY name", conn)
+    conn.close()
+    return df
+
+def upsert_shift(name, start_time, grace_minutes, **kwargs):
+    """Crea o actualiza un turno en el catálogo."""
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO shifts(name, start_time, end_time, grace_minutes, has_break, 
+                           break_start, break_end, is_overnight, shift_code, created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(name) DO UPDATE SET
+            start_time=excluded.start_time, grace_minutes=excluded.grace_minutes,
+            shift_code=excluded.shift_code
+    """, (name.strip(), start_time.strip(), kwargs.get('end_time', ''), int(grace_minutes),
+          1 if kwargs.get('has_break') else 0, kwargs.get('break_start', ''), 
+          kwargs.get('break_end', ''), 1 if kwargs.get('is_overnight') else 0,
+          kwargs.get('shift_code'), datetime.now().isoformat(timespec="seconds")))
+    conn.commit()
+    conn.close()
+
+def assign_shift(user_id, week_start, dow, shift_id):
+    """Asigna un turno específico a un empleado para un día concreto."""
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO shift_assignments(user_id, week_start, dow, shift_id, created_at)
+        VALUES(?,?,?,?,?)
+        ON CONFLICT(user_id, week_start, dow) DO UPDATE SET shift_id=excluded.shift_id
+    """, (str(user_id), week_start, int(dow), int(shift_id), 
+          datetime.now().isoformat(timespec="seconds")))
+    conn.commit()
+    conn.close()
+
+def upsert_exception(user_id, date_str, exc_type, notes):
+    """Registra una novedad (vacaciones, incapacidad, etc.) para un empleado."""
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO exceptions(user_id, date, type, notes, created_at)
+        VALUES(?,?,?,?,?)
+        ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
+    """, (user_id, date_str, exc_type, notes, datetime.now().isoformat(timespec="seconds")))
+    conn.commit()
+    conn.close()
+
+def get_exceptions_df():
+    """Obtiene el listado de todas las novedades registradas."""
+    conn = db_conn()
+    df = pd.read_sql_query("""
+        SELECT ex.id, ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
+        FROM exceptions ex
+        LEFT JOIN employees e ON ex.user_id = e.user_id
+        ORDER BY ex.date DESC
+    """, conn)
+    conn.close()
+    return df                             

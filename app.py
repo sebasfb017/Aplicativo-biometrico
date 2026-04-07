@@ -31,7 +31,11 @@ from services.analytics import compute_month_lateness, fetch_attendance_between,
 
 # -----------------------------
 # DB
-from database_conn.queries import upsert_employees_df, db_create_leave_request
+from database_conn.queries import (
+    upsert_employees_df, db_create_leave_request, is_holiday, 
+    get_shifts_df, upsert_shift, assign_shift, 
+    upsert_exception, get_exceptions_df
+)
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # helper for default schedules file path (must be computed at runtime
@@ -670,18 +674,6 @@ def get_profile_by_name(profile_name: str):
         return {"profile_id": row[0], "name": row[1], "works_holidays": row[2]}
     return None
 
-
-def is_holiday(date_obj: date) -> bool:
-    """Verifica si una fecha es festivo en Colombia."""
-    conn = db_conn()
-    cur = conn.cursor()
-    date_str = date_obj.isoformat()
-    cur.execute("SELECT COUNT(*) FROM holidays WHERE date = ?", (date_str,))
-    count = cur.fetchone()[0]
-    conn.close()
-    return count > 0
-
-
 def resolve_shift_from_code(user_id: str, shift_code: str, week_start: str, dow: int):
     """Resuelve el turno real basado en el código (M, T, N, etc.) y el perfil del empleado.
     
@@ -848,100 +840,6 @@ def auto_assign_shifts_from_schedules():
             assign_shift(uid, row["week_start"], int(row["dow"]), sid)
             count += 1
     return count
-
-def upsert_shift(name: str,
-                 start_time: str,
-                 grace_minutes: int,
-                 end_time: str = "",
-                 has_break: bool = False,
-                 break_start: str = "",
-                 break_end: str = "",
-                 is_overnight: bool = False,
-                 shift_code: str | None = None):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO shifts(name, start_time, end_time, grace_minutes, has_break, break_start, break_end, is_overnight, shift_code, created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(name) DO UPDATE SET
-            start_time=excluded.start_time,
-            end_time=excluded.end_time,
-            grace_minutes=excluded.grace_minutes,
-            has_break=excluded.has_break,
-            break_start=excluded.break_start,
-            break_end=excluded.break_end,
-            is_overnight=excluded.is_overnight,
-            shift_code=excluded.shift_code
-    """, (
-        name.strip(), start_time.strip(), end_time.strip(), int(grace_minutes),
-        1 if has_break else 0, break_start.strip(), break_end.strip(), 1 if is_overnight else 0,
-        shift_code.strip() if shift_code else None,
-        datetime.now().isoformat(timespec="seconds")))
-    conn.commit()
-    cur.execute("SELECT id FROM shifts WHERE name = ?", (name.strip(),))
-    sid = cur.fetchone()[0]
-    conn.close()
-    return sid
-
-
-def get_shifts_df():
-    conn = db_conn()
-    df = pd.read_sql_query(
-        "SELECT id, name, start_time, end_time, grace_minutes, has_break, break_start, break_end, is_overnight, shift_code, created_at FROM shifts ORDER BY name",
-        conn)
-    conn.close()
-    return df
-
-
-def assign_shift(user_id: str, week_start: str, dow: int, shift_id: int, conn=None):
-    own_conn = False
-    if conn is None:
-        conn = db_conn()
-        own_conn = True
-        
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO shift_assignments(user_id, week_start, dow, shift_id, created_at)
-        VALUES(?,?,?,?,?)
-        ON CONFLICT(user_id, week_start, dow) DO UPDATE SET
-            shift_id=excluded.shift_id
-    """, (str(user_id), week_start, int(dow), int(shift_id), datetime.now().isoformat(timespec="seconds")))
-    
-    if own_conn:
-        conn.commit()
-        conn.close()
-
-
-def upsert_exception(user_id: str, date_str: str, exc_type: str, notes: str):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO exceptions(user_id, date, type, notes, created_at)
-        VALUES(?,?,?,?,?)
-        ON CONFLICT(user_id, date) DO UPDATE SET
-            type=excluded.type,
-            notes=excluded.notes
-    """, (user_id, date_str, exc_type, notes, datetime.now().isoformat(timespec="seconds")))
-    conn.commit()
-    conn.close()
-
-def delete_exception(user_id: str, date_str: str):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM exceptions WHERE user_id = ? AND date = ?", (user_id, date_str))
-    conn.commit()
-    conn.close()
-
-def get_exceptions_df():
-    conn = db_conn()
-    df = pd.read_sql_query("""
-        SELECT ex.id, ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
-        FROM exceptions ex
-        LEFT JOIN employees e ON ex.user_id = e.user_id
-        ORDER BY ex.date DESC
-    """, conn)
-    conn.close()
-    return df
 
 def to_excel_bytes(summary_df: pd.DataFrame, detail_df: pd.DataFrame, raw_df: pd.DataFrame | None = None):
     output = io.BytesIO()
