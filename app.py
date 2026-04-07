@@ -13,6 +13,22 @@ from datetime import datetime, date, time, timedelta
 
 from database_conn.connection import db_conn, DATA_DIR, DB_PATH
 
+# -----------------------------
+# Auth
+from utils.auth import get_user, verify_login, require_role
+
+# -----------------------------
+# DEVICES ZK
+from services.zk_service import load_devices, save_devices, download_attendance_from_device, sync_device_time, upsert_attendance
+
+# -----------------------------
+# NOTIFICATIONS
+from services.notifications import send_notification_email, notify_employee, log_audit, generate_fth012_html
+
+# -----------------------------
+# ANALYTICS
+from services.analytics import compute_month_lateness, fetch_attendance_between, to_excel_bytes, schedule_for_user_date, schedule_for_date
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # helper for default schedules file path (must be computed at runtime
 # because DATA_DIR can be monkeypatched in tests).
@@ -27,15 +43,6 @@ AREA_MAPPING = {
     "Medico": ["Medico"],
     "Rayos X": ["Tecnólogo Rayos X"]
 }
-
-# -----------------------------
-# Auth
-from utils.auth import get_user, verify_login, require_role
-
-# -----------------------------
-# DEVICES ZK
-from services.zk_service import load_devices, save_devices, download_attendance_from_device, sync_device_time, upsert_attendance
-
 # -----------------------------
 # DB
 
@@ -258,87 +265,6 @@ def init_db():
     # if a default schedule file exists, load it now
     maybe_load_default_schedules()
 
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-
-def send_notification_email(to_email, subject, body):
-    """Envía correos automáticos simulando un servidor SMTP."""
-    if not to_email:
-        return
-    
-    sender_email = "nomina@dolormed.com"
-    # sender_password = "TU_PASSWORD" # TODO: Configurar credenciales reales
-    
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'html'))
-        
-        # Como no hay credenciales reales configuradas, solo imprimimos el log en consola
-        print(f"📧 [EMAIL] Enviando a {to_email} | Asunto: {subject}")
-        # server = smtplib.SMTP('smtp.office365.com', 587)
-        # server.starttls()
-        # server.login(sender_email, sender_password)
-        # server.send_message(msg)
-        # server.quit()
-    except Exception as e:
-        print(f"Error enviando correo: {e}")
-
-def generate_fth012_html(req, df_audit):
-    
-    approvers_html = ""
-    if not df_audit.empty:
-        approvers_html = "<h4>Firmas / Aprobaciones Digitales:</h4><ul>"
-        for _, r in df_audit.iterrows():
-            level = "Jefatura" if r['action'] == "APPROVE_LEAVE_L1" else "Gestión Humana"
-            date_f = r['timestamp'].replace('T', ' ')
-            approvers_html += f"<li><strong>{level} ({r['user_id']})</strong> - <em>{date_f}</em></li>"
-        approvers_html += "</ul>"
-
-    html_content = f"""
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>F-TH-012 - Permiso {req['id']}</title>
-        <style>
-            body {{ font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }}
-            h1 {{ color: #0D6EFD; text-align: center; border-bottom: 2px solid #0D6EFD; padding-bottom: 10px; }}
-            h3 {{ color: #1E293B; text-align: center; margin-top: -10px; }}
-            .box {{ border: 1px solid #E9ECEF; padding: 15px; margin-bottom: 15px; border-radius: 8px; background: #F8F9FA; }}
-            .footer {{ margin-top: 40px; border-top: 1px solid #ccc; padding-top: 10px; font-size: 12px; color: #555; text-align: center; }}
-        </style>
-    </head>
-    <body>
-        <h1>DOLORMED</h1>
-        <h3>FORMATO F-TH-012: Solicitud de Novedad Oficial</h3>
-        
-        <div class="box">
-            <p><strong>Radicado:</strong> #{req['id']}</p>
-            <p><strong>Fecha de Solicitud:</strong> {req['request_date']}</p>
-            <p><strong>Estado Final:</strong> {req['status']}</p>
-        </div>
-        
-        <div class="box">
-            <p><strong>Motivo/Clasificación:</strong> {req['reason_type']}</p>
-            <p><strong>Justificación Adicional:</strong> {req['reason_description']}</p>
-            <p><strong>Fechas de Ausencia:</strong> Del {req['leave_date_start']} al {req['leave_date_end']}</p>
-            <p><strong>Remunerado:</strong> {'Sí' if req['is_paid'] else 'No'}</p>
-        </div>
-        
-        <div class="box">
-            {approvers_html}
-        </div>
-        
-        <div class="footer">
-            <p>Documento generado digitalmente por el Portal de Nómina Dolormed. Válido sin firma manuscrita para control interno y RRHH.</p>
-        </div>
-    </body>
-    </html>
-    """
-    return html_content
-
 def log_audit(action, details):
     """Registra una acción en la tabla de auditoría."""
     conn = db_conn()
@@ -447,10 +373,6 @@ def migrate_schema_coordinators():
         pass
     finally:
         conn.close()
-
-
-
-
 
 # -----------------------------
 # Employees
@@ -1069,172 +991,6 @@ def get_exceptions_df():
     """, conn)
     conn.close()
     return df
-
-
-def get_shift_for_user_date(user_id: str, d: date, conn=None):
-    week_start = (d - timedelta(days=d.weekday())).isoformat()
-    dow = d.weekday()
-    own_conn = False
-    if conn is None:
-        conn = db_conn()
-        own_conn = True
-        
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT s.start_time, s.grace_minutes
-        FROM shift_assignments sa
-        JOIN shifts s ON sa.shift_id = s.id
-        WHERE sa.user_id = ? AND sa.week_start = ? AND sa.dow = ?
-        LIMIT 1
-    """, (str(user_id), week_start, dow))
-    row = cur.fetchone()
-    
-    if own_conn:
-        conn.close()
-        
-    if not row:
-        return None
-    start_time_str, grace = row
-    try:
-        hh, mm = start_time_str.split(":")
-        stime = time(int(hh), int(mm))
-    except Exception:
-        return None
-    return {"start_time": stime, "grace_minutes": int(grace)}
-
-
-def schedule_for_user_date(user_id: str, d: date, conn=None):
-    # Prefer per-user shift assignment; fallback to schedules table
-    s = get_shift_for_user_date(user_id, d, conn)
-    if s:
-        return s
-    return schedule_for_date(d, conn)
-
-
-def schedule_for_date(d: date, conn=None):
-    week_start = d - timedelta(days=d.weekday())  # Monday
-    own_conn = False
-    if conn is None:
-        conn = db_conn()
-        own_conn = True
-        
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT start_time, grace_minutes
-        FROM schedules
-        WHERE week_start = ? AND dow = ?
-    """, (week_start.isoformat(), d.weekday()))
-    row = cur.fetchone()
-    
-    if own_conn:
-        conn.close()
-
-    if not row:
-        return None
-
-    start_time_str, grace = row
-    try:
-        hh, mm = start_time_str.split(":")
-        stime = time(int(hh), int(mm))
-    except Exception:
-        return None
-
-    return {"start_time": stime, "grace_minutes": int(grace)}
-
-
-# -----------------------------
-# Reports
-# -----------------------------
-def fetch_attendance_between(start_dt: datetime, end_dt: datetime):
-    conn = db_conn()
-    df = pd.read_sql_query("""
-        SELECT device_name, device_ip, user_id, ts, status, punch, uid, downloaded_at
-        FROM attendance_raw
-        WHERE ts >= ? AND ts < ? AND is_ignored = 0
-        ORDER BY user_id, ts
-    """, conn, params=(start_dt.isoformat(sep=" ", timespec="seconds"),
-                       end_dt.isoformat(sep=" ", timespec="seconds")))
-    conn.close()
-    if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"])
-    return df
-
-
-def compute_month_lateness(year: int, month: int):
-    first_day = date(year, month, 1)
-    last_day = date(year, month, calendar.monthrange(year, month)[1])
-
-    start_dt = datetime.combine(first_day, time(0, 0))
-    end_dt = datetime.combine(last_day + timedelta(days=1), time(0, 0))
-
-    df = fetch_attendance_between(start_dt, end_dt)
-    if df.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
-    df["day"] = df["ts"].dt.date
-
-    # Obtener excepciones para ignorar penalidades
-    conn = db_conn()
-    start_date_str = first_day.isoformat()
-    end_date_str = last_day.isoformat()
-    exc_df = pd.read_sql_query(
-        "SELECT user_id, date, type FROM exceptions WHERE date >= ? AND date <= ?",
-        conn, params=(start_date_str, end_date_str)
-    )
-
-    exceptions_set = set()
-    for _, row in exc_df.iterrows():
-        exceptions_set.add((str(row["user_id"]), row["date"]))
-
-    # earliest mark per user/day
-    first_punch = (df.sort_values("ts")
-                     .groupby(["user_id", "day"], as_index=False)
-                     .first()[["user_id", "day", "ts", "device_name", "device_ip"]])
-
-    details = []
-    
-    # Optimizacion: reuse connection
-    for _, r in first_punch.iterrows():
-        d = r["day"]
-        uid = str(r["user_id"])
-        
-        # Ignorar si tiene una Novedad/Excepción para ese día (vacaciones, incapacidad, etc.)
-        if (uid, d.isoformat()) in exceptions_set:
-            continue
-            
-        sched = schedule_for_user_date(uid, d, conn)
-        if not sched:
-            continue
-
-        sched_start = datetime.combine(d, sched["start_time"])
-        grace = timedelta(minutes=sched["grace_minutes"])
-        late_after = sched_start + grace
-
-        if r["ts"] > late_after:
-            late_min = int((r["ts"] - late_after).total_seconds() // 60)
-            details.append({
-                "user_id": r["user_id"],
-                "fecha": d.isoformat(),
-                "hora_marcacion": r["ts"].strftime("%H:%M:%S"),
-                "hora_inicio": sched_start.strftime("%H:%M"),
-                "gracia_min": sched["grace_minutes"],
-                "minutos_tarde": late_min,
-                "device_name": r["device_name"],
-                "device_ip": r["device_ip"],
-            })
-    conn.close()
-
-    detail_df = pd.DataFrame(details)
-    if detail_df.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
-    summary_df = (detail_df.groupby("user_id", as_index=False)
-                    .agg(dias_tarde=("fecha", "nunique"),
-                         minutos_tarde_total=("minutos_tarde", "sum"),
-                         fechas_tarde=("fecha", lambda x: ", ".join(sorted([str(i) for i in x.unique()]))))
-                    .sort_values(["minutos_tarde_total", "dias_tarde"], ascending=False))
-    return summary_df, detail_df
-
 
 def to_excel_bytes(summary_df: pd.DataFrame, detail_df: pd.DataFrame, raw_df: pd.DataFrame | None = None):
     output = io.BytesIO()
