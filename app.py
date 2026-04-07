@@ -942,7 +942,6 @@ def register_employee_dialog():
         st.session_state["reg_dni"] = ""
         st.session_state["reg_name"] = ""
         st.session_state["reg_error"] = ""
-        st.rerun()
 
     if st.session_state["reg_step"] == 1:
         st.info("Paso 1: Verificación de Identidad")
@@ -1402,56 +1401,55 @@ def page_users_admin():
                     st.success(f"Usuario {u} ({full}) creado/actualizado correctamente.")
 
     with tab2:
-        conn = db_conn()
-        admin_df = pd.read_sql_query(
-            "SELECT username, full_name, role, managed_department, active, created_at FROM users_app WHERE role IN ('admin', 'nomina', 'jefe_area', 'coordinador') ORDER BY username",
-            conn
-        )
-        conn.close()
+        admin_df = get_users_by_role(['admin', 'nomina', 'jefe_area', 'coordinador'])
+    
         if not admin_df.empty:
-            admin_df['active'] = admin_df['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
-            admin_df.columns = ["Usuario (DNI)", "Nombre Completo", "Rol", "Depto. a Cargo", "Activo", "Creado el"]
-            
-            st.info("💡 Lista de administradores, recursos humanos y coordinadores. Haz clic en una fila para editar o eliminar el usuario.")
-            event_admin = st.dataframe(admin_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="admin_users_table")
-            
+            admin_df_view = admin_df.copy()
+            admin_df_view['active'] = admin_df_view['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
+            admin_df_view.columns = ["Usuario (DNI)", "Nombre Completo", "Rol", "Depto. a Cargo", "Activo", "Creado el"]
+        
+            st.info("💡 Haz clic en una fila para editar o eliminar.")
+            event_admin = st.dataframe(
+                admin_df_view, use_container_width=True, hide_index=True, 
+                on_select="rerun", selection_mode="single-row", key="admin_users_table"
+            )
+        
             if len(event_admin.selection.rows) > 0:
                 row_idx = event_admin.selection.rows[0]
-                selected_username = str(admin_df.iloc[row_idx]["Usuario (DNI)"])
+                # Validación de seguridad para evitar el IndexError
+                if row_idx < len(admin_df):
+                    # USA "username" (nombre real en BD) en lugar de "Usuario (DNI)"
+                    selected_username = str(admin_df.iloc[row_idx]["username"]) 
+        
+                # Limpiar la selección para evitar bucles
                 st.session_state.admin_users_table.selection.rows.clear()
-                
-                conn = db_conn()
-                emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees", conn)
-                conn.close()
+        
+                emp_df = get_all_employees()
                 edit_user_dialog(selected_username, emp_df)
-        else:
-            st.warning("No hay usuarios administrativos creados.")
 
     with tab3:
-        conn = db_conn()
-        emp_users_df = pd.read_sql_query(
-            "SELECT username, full_name, emp_area, emp_subarea, active, created_at FROM users_app WHERE role = 'empleado' ORDER BY username",
-            conn
-        )
-        conn.close()
+        emp_users_df = get_users_by_role(['empleado'])
+    
         if not emp_users_df.empty:
-            emp_users_df['active'] = emp_users_df['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
-            emp_users_df.columns = ["Usuario (DNI)", "Nombre Completo", "Área", "Sub-área", "Activo", "Creado el"]
-            
-            st.info("💡 Lista de empleados con acceso al portal de autogestión. Haz clic en una fila para editar o eliminar el usuario.")
-            event_emp = st.dataframe(emp_users_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="emp_users_table")
-            
+            emp_users_df_view = emp_users_df.copy()
+            emp_users_df_view['active'] = emp_users_df_view['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
+            emp_users_df_view.columns = ["Usuario (DNI)", "Nombre Completo", "Área", "Sub-área", "Activo", "Creado el"]
+        
+            event_emp = st.dataframe(
+                emp_users_df_view, use_container_width=True, hide_index=True, 
+                on_select="rerun", selection_mode="single-row", key="emp_users_table"
+            )
+        
             if len(event_emp.selection.rows) > 0:
                 row_idx = event_emp.selection.rows[0]
-                selected_username = str(emp_users_df.iloc[row_idx]["Usuario (DNI)"])
-                st.session_state.emp_users_table.selection.rows.clear()
-                
-                conn = db_conn()
-                emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees", conn)
-                conn.close()
-                edit_user_dialog(selected_username, emp_df)
-        else:
-            st.warning("No hay usuarios empleados creados. Invita a tus empleados a que se registren en el portal.")
+                if row_idx < len(emp_users_df):
+                    # USA "username" (nombre real en BD)
+                    selected_username = str(emp_users_df.iloc[row_idx]["username"])
+        
+                    st.session_state.emp_users_table.selection.rows.clear()
+        
+                    emp_df = get_all_employees()
+                    edit_user_dialog(selected_username, emp_df)
 
 
 @st.dialog("⚙️ Editar Reloj Biométrico")
