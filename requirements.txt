@@ -7,3 +7,4 @@ bcrypt>=4.0
 pytest>=7.0
 plotly>=5.18.0
 streamlit-option-menu>=0.3.13
+holidays>=0.40
