@@ -48,12 +48,15 @@ from views.dashboard_view import page_dashboard
 from views.employees_view import page_employees
 from views.sync_zkteco_view import page_sync
 from views.employee_portal_view import page_employee_portal
+from views.schedules_view import (
+    page_schedules, page_shifts, page_assign_shifts, 
+    ensure_schedules_columns, maybe_load_default_schedules
+)
+
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # helper for default schedules file path (must be computed at runtime
 # because DATA_DIR can be monkeypatched in tests).
-def default_schedules_path():
-    return os.path.join(DATA_DIR, "default_schedules.csv")
 
 # -----------------------------
 # DB
@@ -488,55 +491,6 @@ def upsert_shifts_from_code_csv(df: pd.DataFrame) -> dict:
         "success": len(errors) == 0
     }
 
-
-def maybe_load_default_schedules():
-    """Read ``DEFAULT_SCHEDULES_FILE`` if present and insert rows.
-
-    This is invoked from ``init_db`` so that a clean installation can
-    ship with a CSV and have schedules populated on first run.
-    """
-    path = default_schedules_path()
-    if not os.path.exists(path):
-        return
-    try:
-        df = pd.read_csv(path)
-        upsert_schedule_df(df)
-    except Exception:
-        # ignore errors - misformatted file shouldn't crash startup
-        pass
-
-
-def ensure_schedules_columns():
-    """Make sure `schedules` table has new columns when upgrading old DBs.
-
-    Older installations may lack end_time, start_time_2, end_time_2 or
-    grace_minutes columns. This function adds them if missing without
-    altering existing data.
-    """
-    conn = db_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute("PRAGMA table_info(schedules)")
-        existing = {row[1] for row in cur.fetchall()}
-    except Exception:
-        existing = set()
-
-    additions = {
-        "end_time": "end_time TEXT DEFAULT ''",
-        "start_time_2": "start_time_2 TEXT DEFAULT ''",
-        "end_time_2": "end_time_2 TEXT DEFAULT ''",
-        "grace_minutes": "grace_minutes INTEGER NOT NULL DEFAULT 0",
-    }
-    for col, ddl in additions.items():
-        if col not in existing:
-            try:
-                cur.execute(f"ALTER TABLE schedules ADD COLUMN {ddl}")
-            except Exception:
-                pass
-    conn.commit()
-    conn.close()
-
-
 def migrate_schema_for_profiles():
     """Migración de esquema para agregar columns profile_id a employees y nuevas columnas a shifts."""
     conn = db_conn()
@@ -801,31 +755,6 @@ def generate_rotating_schedule(year: int, month: int, pattern: list[str], grace_
 # Shifts and assignments
 # -----------------------------
 
-def auto_assign_shifts_from_schedules():
-    """Crea/actualiza turnos y asignaciones para cada empleado según 
-    los registros de `schedules`.
-
-    Se genera un turno por combinación de start_time (title = e.g. "08:00").
-    Retorna número de asignaciones creadas.
-    """
-    # recuperar horarios únicos
-    conn = db_conn()
-    sched_df = pd.read_sql_query("SELECT week_start,dow,start_time,grace_minutes FROM schedules", conn)
-    emp_df = pd.read_sql_query("SELECT user_id FROM employees", conn)
-    conn.close()
-    if sched_df.empty or emp_df.empty:
-        return 0
-
-    count = 0
-    for _, row in sched_df.iterrows():
-        name = row["start_time"]
-        sid = upsert_shift(name, row["start_time"], row["grace_minutes"])
-        for uid in emp_df["user_id"]:
-            assign_shift(uid, row["week_start"], int(row["dow"]), sid)
-            count += 1
-    return count
-
-
 # -----------------------------
 # UI & Registration
 # -----------------------------
@@ -1081,130 +1010,6 @@ def page_users_admin():
 
 @st.dialog("⚙️ Editar Reloj Biométrico")
 
-def page_schedules():
-    require_role("admin")
-    st.title("🕒 Maestro de Horarios")
-    st.write("Configura y administra las rejillas horarias base para los empleados de Dolormed.")
-
-    tab1, tab2, tab3, tab4 = st.tabs(["Horarios Actuales", "Carga por Códigos (CSV)", "Carga Detallada (CSV)", "Generador Automático"])
-
-    with tab1:
-        st.subheader("Matriz de Horarios")
-        st.info("Por defecto se muestran las últimas 52 semanas para evitar lentitud. Activa la opción para ver el historial completo.")
-        load_all = st.checkbox("Cargar todos los registros históricos", value=False)
-
-        conn = db_conn()
-        if not load_all:
-            cutoff = (date.today() - timedelta(weeks=52)).isoformat()
-            sch = pd.read_sql_query(
-                "SELECT week_start,dow,start_time,end_time,start_time_2,end_time_2,grace_minutes FROM schedules WHERE week_start >= ? ORDER BY week_start,dow",
-                conn, params=(cutoff,)
-            )
-        else:
-            sch = pd.read_sql_query(
-                "SELECT week_start,dow,start_time,end_time,start_time_2,end_time_2,grace_minutes FROM schedules ORDER BY week_start,dow",
-                conn
-            )
-        conn.close()
-
-        if sch.empty:
-            st.warning("No hay horarios configurados en el sistema.")
-        else:
-            max_edit_rows = 1000
-            if len(sch) > max_edit_rows:
-                st.warning(f"Mostrando preview de {max_edit_rows} filas debido al tamaño ({len(sch)} total). Descarga el CSV para editar masivamente.")
-                st.dataframe(sch.head(max_edit_rows), use_container_width=True, hide_index=True)
-                csv_bytes = sch.to_csv(index=False).encode("utf-8")
-                st.download_button("📥 Descargar Tabla Completa (CSV)", data=csv_bytes, file_name="horarios_completos.csv", mime="text/csv")
-            else:
-                edited = st.data_editor(sch, num_rows="dynamic", use_container_width=True)
-                if st.button("Guardar Cambios en Pantalla", type="primary"):
-                    try:
-                        upsert_schedule_df(edited)
-                        st.success("Cambios aplicados correctamente.")
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-
-            st.write("---")
-            if st.button("Asincronizar (Auto-asignar) Turnos base"):
-                count = auto_assign_shifts_from_schedules()
-                st.success(f"Proceso concluido. {count} turnos re-asignados a perfiles.")
-
-
-    with tab2:
-        st.subheader("Carga Rápida por Códigos")
-        st.write("Sube tu plantilla de programación usando códigos simples (`M, T, N, OFICINA, L, etc.`).")
-        st.markdown("**Columnas requeridas:** `user_id, week_start, dow, shift_code`")
-        
-        csv_shifts = st.file_uploader("Arrastra tu archivo CSV aquí...", type=["csv"], key="shifts_code")
-        if csv_shifts is not None:
-            df_shifts = pd.read_csv(csv_shifts)
-            try:
-                result = upsert_shifts_from_code_csv(df_shifts)
-                st.success(f"✅ Se han procesado {result['assigned']} asignaciones.")
-                if result['skipped_holidays']:
-                    st.info(f"⏭️ {result['skipped_holidays']} turnos ignorados por reglas de festivos del perfil.")
-                if result['errors']:
-                    with st.expander("⚠️ Ver lista de errores encontrados"):
-                        for err in result['errors']:
-                            st.write(f"- {err}")
-            except Exception as e:
-                st.error(f"El archivo tiene un formato inválido: {e}")
-
-
-    with tab3:
-        st.subheader("Carga y Predeterminados")
-        path = default_schedules_path()
-        if os.path.exists(path):
-            st.success(f"Platilla por defecto activa en el sistema.")
-            if st.button("Forzar Restauración de Plantilla"):
-                try:
-                    df_def = pd.read_csv(path)
-                    upsert_schedule_df(df_def)
-                    st.success("Restauración completa.")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        else:
-            st.info("Sin plantilla base configurada.")
-
-        st.markdown("**Sube una actualización manual:** Columnas: `week_start,dow,start_time,end_time...`")
-        csv_file = st.file_uploader("Archivo de horarios absolutos", type=["csv"], key="sched_abs")
-        if csv_file is not None:
-            df = pd.read_csv(csv_file)
-            try:
-                upsert_schedule_df(df)
-                st.success("Registros procesados.")
-                if st.button("Establecer como Plantilla Definitiva"):
-                    os.makedirs(DATA_DIR, exist_ok=True)
-                    df.to_csv(default_schedules_path(), index=False)
-                    st.success("Guardado como plantilla por defecto.")
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-    with tab4:
-        st.subheader("Asistente Rotativo Semanal")
-        colA, colB = st.columns(2)
-        with colA:
-            gen_year = st.number_input("Año", min_value=2020, max_value=2100, value=date.today().year)
-            pattern_str = st.text_input("Patrón Horario (ej. 08:00,07:30)", value="08:00,07:30")
-        with colB:
-            gen_month = st.number_input("Mes", min_value=1, max_value=12, value=date.today().month)
-            grace = st.number_input("Tolerancia (Mins)", min_value=0, value=10)
-
-        if st.button("Procesar Mes Completo"):
-            try:
-                pattern = [s.strip() for s in pattern_str.split(",") if s.strip()]
-                df = generate_rotating_schedule(int(gen_year), int(gen_month), pattern, int(grace))
-                if df.empty:
-                    st.warning("Verifica los parámetros. No se generó data.")
-                else:
-                    upsert_schedule_df(df)
-                    st.success(f"Batería de {len(df)} horarios rotativos insertada.")
-            except Exception as e:
-                st.error(f"Error interno: {e}")
-
-    ensure_schedules_columns()
-
 @st.dialog("✏️ Editar Marcación", width="large")
 def edit_attendance_dialog(record_id: int):
     conn = db_conn()
@@ -1412,154 +1217,6 @@ def page_view_attendance():
         )
 
 @st.dialog("✏️ Editar Empleado", width="large")
-
-def page_shifts():
-    require_role("admin")
-    st.title("🏭 Catálogo de Turnos Dolormed")
-    st.write("Crea bloques horarios reutilizables (ej: Mañana Enfermería, Tarde, Noche, etc).")
-
-    with st.form("create_shift"):
-        sname = st.text_input("Nombre del turno")
-        stime = st.text_input("Hora inicio (HH:MM)", value="08:00")
-        etime = st.text_input("Hora fin (HH:MM, opcional)", value="")
-        sgrace = st.number_input("Minutos de gracia", min_value=0, value=0, step=1)
-        is_overnight = st.checkbox("Cruza medianoche (overnight)")
-        shift_code = st.text_input("Código del turno (p.ej. M, T, N, RX1, OFICINA)")
-        has_break = st.checkbox("Tiene break / horario partido")
-        if has_break:
-            break_start = st.text_input("Inicio de break (HH:MM)", value="12:00")
-            break_end = st.text_input("Fin de break (HH:MM)", value="14:00")
-        else:
-            break_start = ""
-            break_end = ""
-        submit_shift = st.form_submit_button("Crear/Actualizar turno")
-
-    if submit_shift:
-        if not sname or not stime:
-            st.error("Completa nombre y hora de inicio.")
-        else:
-            try:
-                upsert_shift(
-                    sname,
-                    stime,
-                    int(sgrace),
-                    end_time=etime,
-                    has_break=has_break,
-                    break_start=break_start,
-                    break_end=break_end,
-                    is_overnight=is_overnight,
-                    shift_code=shift_code if shift_code else None,
-                )
-                st.success("Turno creado/actualizado.")
-            except Exception as e:
-                st.error(f"Error al crear turno: {e}")
-
-    shifts_df = get_shifts_df()
-    if shifts_df.empty:
-        st.warning("Aún no hay turnos definidos.")
-    else:
-        st.markdown("### Turnos existentes")
-        st.dataframe(shifts_df, use_container_width=True)
-
-
-def page_assign_shifts():
-    require_role("admin")
-    st.title("📝 Asignación Manual de Turnos")
-    st.write("Forzar turno para empleados específicos en días concretos.")
-
-    today = date.today()
-    default_week_start = (today - timedelta(days=today.weekday()))
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        week_start = st.date_input("Semana (Automáticamente toma el Lunes)", value=default_week_start)
-    with col2:
-        shifts_df = get_shifts_df()
-        if shifts_df.empty:
-            st.warning("Requiere configurar el catálogo de turnos primero.")
-            return
-
-        shift_options = {row['name']: int(row['id']) for _, row in shifts_df.iterrows()}
-        sel_shift_name = st.selectbox("Turno a Aplicar", options=list(shift_options.keys()))
-
-    conn = db_conn()
-    emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees ORDER BY user_id", conn)
-    conn.close()
-    if emp_df.empty:
-        st.warning("No hay empleados en el directorio.")
-        return
-
-    # department filter
-    depts = sorted([d for d in emp_df['department'].unique() if d])
-    dept_sel = st.selectbox("Filtrar destinatarios por área", options=["Todos los Departamentos"] + depts)
-
-    if dept_sel != "Todos los Departamentos":
-        emp_df_filtered = emp_df[emp_df['department'] == dept_sel]
-    else:
-        emp_df_filtered = emp_df
-
-    st.markdown("---")
-    st.write("**Selección de Personal y Días**")
-    
-    colA, colB = st.columns([2, 1])
-    with colA:
-        apply_all = st.checkbox("Asignar masivamente a todos los filtrados", value=False)
-        if apply_all:
-            selected_emps = emp_df_filtered['user_id'].tolist()
-            st.success(f"{len(selected_emps)} empleados seleccionados.")
-        else:
-            selected_emps = st.multiselect(
-                "Seleccionar Manualmente:",
-                options=emp_df_filtered['user_id'].tolist(),
-                format_func=lambda uid: f"{uid} - {emp_df_filtered[emp_df_filtered['user_id']==uid]['full_name'].values[0]}"
-            )
-    with colB:
-        dow_sel = st.multiselect("Días Aplica", options=[0,1,2,3,4,5,6], default=[0,1,2,3,4], format_func=lambda x: ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"][x])
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Aplicar Asignación Directa", type="primary", use_container_width=True):
-        if not selected_emps:
-            st.error("Debes incluir al menos a un empleado.")
-        elif not dow_sel:
-            st.error("Debes incluir al menos un día.")
-        else:
-            ws_iso = (week_start - timedelta(days=week_start.weekday())).isoformat()
-            sid = shift_options[sel_shift_name]
-            for uid in selected_emps:
-                for dow in dow_sel:
-                    assign_shift(uid, ws_iso, int(dow), sid)
-            st.success("✅ Asignación procesada para la semana.")
-
-    st.markdown("---")
-    st.subheader("✨ Asignación Mágica (Clonar Semana)")
-    st.write("Copia los turnos de una semana origen a la(s) siguiente(s) para evitar registrar uno por uno.")
-    
-    col_clone1, col_clone2 = st.columns(2)
-    with col_clone1:
-        source_week = st.date_input("Semana Base a Copiar (Automáticamente toma Lunes)", value=default_week_start - timedelta(days=7))
-    with col_clone2:
-        target_weeks = st.number_input("¿Semanas a generar hacia adelante?", min_value=1, max_value=12, value=1)
-        
-    if st.button("🚀 Iniciar Clonación", type="primary"):
-        ws_source_iso = (source_week - timedelta(days=source_week.weekday())).isoformat()
-        
-        conn = db_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT user_id, dow, shift_id FROM shift_assignments WHERE week_start = ?", (ws_source_iso,))
-        source_assignments = cur.fetchall()
-        conn.close()
-        
-        if not source_assignments:
-            st.warning(f"No hay turnos asignados en la semana del {ws_source_iso}.")
-        else:
-            inserted = 0
-            for i in range(1, target_weeks + 1):
-                target_week_iso = (source_week - timedelta(days=source_week.weekday()) + timedelta(weeks=i)).isoformat()
-                for uid, dow, shift_iid in source_assignments:
-                    assign_shift(uid, target_week_iso, dow, shift_iid)
-                    inserted += 1
-            st.success(f"¡Magia completada! Se clonaron {inserted} asignaciones hacia {target_weeks} semana(s) destino.")
-
 
 @st.dialog("Detalles de Mi Solicitud (F-TH-012)")
 
