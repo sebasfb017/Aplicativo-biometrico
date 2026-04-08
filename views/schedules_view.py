@@ -66,19 +66,23 @@ def upsert_schedule_df(df: pd.DataFrame):
 
     conn = db_conn()
     cur = conn.cursor()
-    for _, r in df.iterrows():
-        cur.execute("""
-            INSERT INTO schedules(week_start, dow, start_time, end_time, start_time_2, end_time_2, grace_minutes)
-            VALUES(?,?,?,?,?,?,?)
-            ON CONFLICT(week_start, dow) DO UPDATE SET
-                start_time=excluded.start_time,
-                end_time=excluded.end_time,
-                start_time_2=excluded.start_time_2,
-                end_time_2=excluded.end_time_2,
-                grace_minutes=excluded.grace_minutes
-        """, (
-            r["week_start"], int(r["dow"]), r["start_time"], r.get("end_time",""),
-            r.get("start_time_2",""), r.get("end_time_2",""), int(r["grace_minutes"])))
+
+    # --- INSERCIÓN EN BLOQUE OPTIMIZADA (BULK INSERT) ---
+    # Convertimos el DataFrame directamente en unas tuplas para evitar iterar fila por fila en Python.
+    # Pasamos de 40 líneas de bucle a 1 línea vectorizada usando executemany resolviéndose instantáneamente de lado del motor SQL.
+    records = df[["week_start", "dow", "start_time", "end_time", "start_time_2", "end_time_2", "grace_minutes"]].itertuples(index=False, name=None)
+
+    cur.executemany("""
+        INSERT INTO schedules(week_start, dow, start_time, end_time, start_time_2, end_time_2, grace_minutes)
+        VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(week_start, dow) DO UPDATE SET
+            start_time=excluded.start_time,
+            end_time=excluded.end_time,
+            start_time_2=excluded.start_time_2,
+            end_time_2=excluded.end_time_2,
+            grace_minutes=excluded.grace_minutes
+    """, records)
+
     conn.commit()
     conn.close()
 
