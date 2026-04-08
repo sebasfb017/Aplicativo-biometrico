@@ -98,18 +98,18 @@ def main():
     st.sidebar.markdown(f"<h2 style='text-align: center; color: #0066cc;'>Dolormed RRHH</h2>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='text-align: center; color: gray; margin-bottom: 20px;'>Hola, <b>{user['full_name']}</b><br><small>({user['role'].upper()})</small></div>", unsafe_allow_html=True)
 
-    if user["role"] == "admin":
-        menu_options = ["Dashboard", "Reportes Mensuales", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Horarios", "Turnos y Asignación", "Usuarios"]
-        menu_icons = ["house", "bar-chart-line", "journal-medical", "arrow-repeat", "table", "", "people", "clock", "calendar-check", "person-badge"]
-    elif user["role"] == "empleado":
-        menu_options = ["Mi Portal de Autogestión"]
-        menu_icons = ["person-vcard"]
-    elif user["role"] == "coordinador":
-        menu_options = ["Dashboard", "Autorización de Permisos", "Visualizar Data"]
-        menu_icons = ["house", "check2-square", "table"]
-    else:
-        menu_options = ["Dashboard", "Reportes Mensuales", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data"]
-        menu_icons = ["house", "bar-chart-line", "journal-medical", "arrow-repeat", "table"]
+    # --- CONFIGURACIÓN OPTIMIZADA DE MENÚS POR ROL ---
+    # Convertimos 15 líneas de ifs a un mapeo constante, más legible y mantenible.
+    ROLES_MENU = {
+        "admin": (["Dashboard", "Reportes Mensuales", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Horarios", "Turnos y Asignación", "Usuarios"],
+                  ["house", "bar-chart-line", "journal-medical", "arrow-repeat", "table", "", "people", "clock", "calendar-check", "person-badge"]),
+        "empleado": (["Mi Portal de Autogestión"], ["person-vcard"]),
+        "coordinador": (["Dashboard", "Autorización de Permisos", "Visualizar Data"], ["house", "check2-square", "table"]),
+        "nomina": (["Dashboard", "Reportes Mensuales", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data"], 
+                   ["house", "bar-chart-line", "journal-medical", "arrow-repeat", "table"])
+    }
+    # Extraemos el menú según el rol. Si el rol no se encuentra, por defecto asignamos el de nómina o empleado.
+    menu_options, menu_icons = ROLES_MENU.get(user["role"], ROLES_MENU["nomina"])
 
     with st.sidebar:
         sel = option_menu(
@@ -144,31 +144,31 @@ def main():
             st.session_state.pop("user", None)
             st.rerun()
 
-    # Router
-    if sel == "Dashboard":
-        page_dashboard()
-    elif sel == "Sincronizar Relojes":
-        page_sync()
-    elif sel == "Visualizar Data":
-        page_view_attendance()
-    elif sel == "Reportes Mensuales":
-        page_lateness_report()
-    elif sel in ["Novedades y Excepciones", "Autorización de Permisos"]:
-        page_exceptions()
-    elif sel == "Empleados":
-        page_employees()
-    elif sel == "Horarios":
-        page_schedules()
-    elif sel == "Turnos y Asignación":
+    # --- ENRUTADOR OPTIMIZADO (Router) ---
+    # Reemplazamos más de 25 líneas con ifs anidados por un mapeo directo.
+    # Llama directamente a la función de la página cuando empata la opción, siendo instantáneo O(1).
+    router = {
+        "Dashboard": page_dashboard,
+        "Sincronizar Relojes": page_sync,
+        "Visualizar Data": page_view_attendance,
+        "Reportes Mensuales": page_lateness_report,
+        "Novedades y Excepciones": page_exceptions,
+        "Autorización de Permisos": page_exceptions,
+        "Empleados": page_employees,
+        "Horarios": page_schedules,
+        "Usuarios": page_users_admin,
+        "Mi Portal de Autogestión": page_employee_portal
+    }
+
+    # Caso especial para "Turnos", requiere subpestañas antes de llamar la vista
+    if sel == "Turnos y Asignación":
         tab1, tab2 = st.tabs(["🏗️ Crear Turnos", "📝 Asignar a Empleados"])
         with tab1:
             page_shifts()
         with tab2:
             page_assign_shifts()
-    elif sel == "Usuarios":
-        page_users_admin()
-    elif sel == "Mi Portal de Autogestión":
-        page_employee_portal()
+    elif sel in router:
+        router[sel]() # Llama a la vista correspondiente de manera dinámica en 1 línea
 
 
 if __name__ == "__main__":
