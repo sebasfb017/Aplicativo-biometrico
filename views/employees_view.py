@@ -1,16 +1,15 @@
 import streamlit as st
 import pandas as pd
-from database_conn.connection import db_conn
-from database_conn.queries import upsert_employees_df
+from database_conn.connection import db_conn, db_session
+from database_conn.queries import upsert_employees_df, get_all_employees
 from utils.auth import require_role
 from utils.constants import AREA_MAPPING
 
 @st.dialog("✏️ Editar Empleado", width="large")
 def edit_employee_dialog(user_id):
-    conn = db_conn()
-    emp_df = pd.read_sql_query("SELECT full_name, department, profile_id FROM employees WHERE user_id = ?", conn, params=(user_id,))
-    profiles_df = pd.read_sql_query("SELECT profile_id, name FROM profiles ORDER BY name", conn)
-    conn.close()
+    with db_session() as conn:
+        emp_df = pd.read_sql_query("SELECT full_name, department, profile_id FROM employees WHERE user_id = ?", conn, params=(user_id,))
+        profiles_df = pd.read_sql_query("SELECT profile_id, name FROM profiles ORDER BY name", conn)
     
     if emp_df.empty:
         st.error("No se encontró el empleado.")
@@ -76,39 +75,40 @@ def edit_employee_dialog(user_id):
             
         final_dept = f"{new_area} - {new_subarea}"
         
-        conn = db_conn()
-        cur = conn.cursor()
         try:
-            cur.execute("""
-                UPDATE employees 
-                SET full_name = ?, department = ?, profile_id = ?
-                WHERE user_id = ?
-            """, (new_name.strip(), final_dept, new_prof_id, str(user_id)))
-            conn.commit()
+            with db_session() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE employees 
+                    SET full_name = ?, department = ?, profile_id = ?
+                    WHERE user_id = ?
+                """, (new_name.strip(), final_dept, new_prof_id, str(user_id)))
+            
+            get_all_employees.clear()
             st.success("✅ Cambios guardados correctamente.")
             st.rerun()
         except Exception as exc:
             st.error(f"Error al guardar los cambios: {exc}")
-        finally:
-            conn.close()
             
     with st.expander("🚨 Zona de Peligro - Eliminar Empleado"):
         st.warning("Esta acción es irreversible y eliminará el registro de empleado y sus accesos si existen.")
         confirm_del = st.checkbox("Entiendo que esta acción es permanente.", key=f"del_emp_{user_id}")
         
         if st.button("🗑️ Eliminar Definitivamente", type="primary", disabled=not confirm_del):
-            conn = db_conn()
-            cur = conn.cursor()
             try:
-                cur.execute("DELETE FROM employees WHERE user_id = ?", (str(user_id),))
-                cur.execute("DELETE FROM users_app WHERE username = ?", (str(user_id),))
-                conn.commit()
+                with db_session() as conn:
+                    cur = conn.cursor()
+                    cur.execute("DELETE FROM employees WHERE user_id = ?", (str(user_id),))
+                    cur.execute("DELETE FROM users_app WHERE username = ?", (str(user_id),))
+                
+                get_all_employees.clear()
+                from database_conn.queries import get_users_by_role
+                get_users_by_role.clear()
+                
                 st.success("🗑️ Empleado eliminado.")
                 st.rerun()
             except Exception as exc:
                 st.error(f"Error al eliminar: {exc}")
-            finally:
-                conn.close()
 
 def page_employees():
     require_role("admin")
@@ -116,9 +116,8 @@ def page_employees():
     st.write("Administra la plantilla de personal y asocia los perfiles de Dolormed.")
 
     # Mostrar perfiles disponibles
-    conn = db_conn()
-    profiles_df = pd.read_sql_query("SELECT profile_id, name, description, works_holidays FROM profiles ORDER BY name", conn)
-    conn.close()
+    with db_session() as conn:
+        profiles_df = pd.read_sql_query("SELECT profile_id, name, description, works_holidays FROM profiles ORDER BY name", conn)
     
     with st.expander("ℹ️ Ver Perfiles y Reglas Base Creados en el Sistema"):
         if not profiles_df.empty:
@@ -134,14 +133,13 @@ def page_employees():
     with tab1:
         st.subheader("Directorio Actual")
         st.write("Selecciona una fila para editar la información del empleado.")
-        conn = db_conn()
-        emp = pd.read_sql_query("""
-            SELECT e.user_id, e.full_name, e.department, COALESCE(p.name, 'Sin asignar') as profile, e.created_at
-            FROM employees e
-            LEFT JOIN profiles p ON e.profile_id = p.profile_id
-            ORDER BY e.user_id
-        """, conn)
-        conn.close()
+        with db_session() as conn:
+            emp = pd.read_sql_query("""
+                SELECT e.user_id, e.full_name, e.department, COALESCE(p.name, 'Sin asignar') as profile, e.created_at
+                FROM employees e
+                LEFT JOIN profiles p ON e.profile_id = p.profile_id
+                ORDER BY e.user_id
+            """, conn)
         
         if emp.empty:
             st.warning("El directorio está vacío.")
@@ -192,6 +190,7 @@ def page_employees():
                         "profile_id": e_prof
                     }])
                     upsert_employees_df(df_new)
+                    get_all_employees.clear()
                     st.success(f"✅ Empleado {e_name} creado exitosamente.")
                 except Exception as e:
                     st.error(f"Fallo al registrar empleado: {e}")
@@ -204,6 +203,7 @@ def page_employees():
             df = pd.read_csv(csv_file)
             try:
                 upsert_employees_df(df)
+                get_all_employees.clear()
                 st.success("✅ Base de datos de empleados actualizada satisfactoriamente.")
             except Exception as e:
                 st.error(f"Fallo al procesar el documento: {e}")
