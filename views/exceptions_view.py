@@ -2,47 +2,42 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta, datetime
 
-from database_conn.connection import db_conn
+from database_conn.connection import db_session
 from database_conn.queries import upsert_exception, get_exceptions_df
 from services.notifications import log_audit, notify_employee
 from utils.auth import require_role
 
 @st.dialog("Detalles Completos de la Novedad/Permiso")
 def show_exception_details(exc_id: int):
-    conn = db_conn()
-    
-    # Obtener info basica de la novedad
-    df_exc = pd.read_sql_query("""
-        SELECT ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
-        FROM exceptions ex
-        LEFT JOIN employees e ON ex.user_id = e.user_id
-        WHERE ex.id = ?
-    """, conn, params=(exc_id,))
-    
-    if df_exc.empty:
-        st.error("No se encontró la novedad.")
-        conn.close()
-        return
+    with db_session() as conn:
+        df_exc = pd.read_sql_query("""
+            SELECT ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
+            FROM exceptions ex
+            LEFT JOIN employees e ON ex.user_id = e.user_id
+            WHERE ex.id = ?
+        """, conn, params=(exc_id,))
         
-    exc = df_exc.iloc[0]
-    st.markdown(f"#### **Empleado:** {exc['full_name']} (ID: {exc['user_id']})")
-    st.markdown(f"**Fecha Afectada:** {exc['date']} | **Tipo:** {exc['type']}")
-    st.write(f"**Observación General:** {exc['notes']}")
-    st.caption(f"Registrado el: {exc['created_at']}")
-    
-    st.divider()
-    
-    # Buscar si existe una solicitud digital de portal asociada
-    df_req = pd.read_sql_query("""
-        SELECT *
-        FROM leave_requests
-        WHERE user_id = ? AND status = 'APPROVED'
-          AND leave_date_start <= ? AND leave_date_end >= ?
-        ORDER BY id DESC LIMIT 1
-    """, conn, params=(exc['user_id'], exc['date'], exc['date']))
-    
-    conn.close()
-    
+        if df_exc.empty:
+            st.error("No se encontró la novedad.")
+            return
+            
+        exc = df_exc.iloc[0]
+        st.markdown(f"#### **Empleado:** {exc['full_name']} (ID: {exc['user_id']})")
+        st.markdown(f"**Fecha Afectada:** {exc['date']} | **Tipo:** {exc['type']}")
+        st.write(f"**Observación General:** {exc['notes']}")
+        st.caption(f"Registrado el: {exc['created_at']}")
+        
+        st.divider()
+        
+        # Buscar si existe una solicitud digital de portal asociada
+        df_req = pd.read_sql_query("""
+            SELECT *
+            FROM leave_requests
+            WHERE user_id = ? AND status = 'APPROVED'
+              AND leave_date_start <= ? AND leave_date_end >= ?
+            ORDER BY id DESC LIMIT 1
+        """, conn, params=(exc['user_id'], exc['date'], exc['date']))
+        
     if not df_req.empty:
         req = df_req.iloc[0]
         st.markdown("### 📄 Detalles de la Solicitud (Portal F-TH-012)")
@@ -68,14 +63,13 @@ def show_exception_details(exc_id: int):
             st.markdown("**Acuerdo de Reposición (Tiempo):**")
             st.warning(req['how_to_makeup'])
             
-        conn = db_conn()
-        df_audit = pd.read_sql_query("""
-            SELECT user_id, action, timestamp 
-            FROM audit_logs 
-            WHERE details LIKE ? AND action LIKE 'APPROVE_%'
-            ORDER BY timestamp ASC
-        """, conn, params=(f"%Permiso #{req['id']} %",))
-        conn.close()
+        with db_session() as conn:
+            df_audit = pd.read_sql_query("""
+                SELECT user_id, action, timestamp 
+                FROM audit_logs 
+                WHERE details LIKE ? AND action LIKE 'APPROVE_%'
+                ORDER BY timestamp ASC
+            """, conn, params=(f"%Permiso #{req['id']} %",))
         
         if not df_audit.empty:
             st.divider()
@@ -90,7 +84,6 @@ def page_exceptions():
     require_role("admin", "nomina", "jefe_area", "coordinador")
     st.title("🛡️ Novedades y Justificaciones")
     user = st.session_state["user"]
-    conn = db_conn()
 
     if user["role"] in ["coordinador", "jefe_area"]:
         st.write(f"Bandeja de Aprobación para: **{user.get('managed_department') or user.get('managed_area')}**")
@@ -116,7 +109,8 @@ def page_exceptions():
             """
             params = (f"{user.get('managed_area', '')} - %",)
             
-        df_pend = pd.read_sql_query(query, conn, params=params)
+        with db_session() as conn:
+            df_pend = pd.read_sql_query(query, conn, params=params)
         
         if df_pend.empty:
             st.success("No hay solicitudes pendientes de revisión para tu área.")
@@ -131,7 +125,6 @@ def page_exceptions():
                         st.write(f"**Justificación:** {r['reason_description']}")
                     with cols[1]:
                         if st.button("👍 Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True):
-                            cur = conn.cursor()
                             if user["role"] == "coordinador":
                                 if r['reason_type'] in ["Vacaciones", "Día de la familia", "Votaciones", "Licencia de luto"]:
                                     next_status = 'PENDING_AREA'
@@ -140,25 +133,28 @@ def page_exceptions():
                             else:
                                 next_status = 'PENDING_RRHH'
                                 
-                            cur.execute("UPDATE leave_requests SET status = ? WHERE id = ?", (next_status, r['id']))
-                            conn.commit()
+                            with db_session() as conn:
+                                cur = conn.cursor()
+                                cur.execute("UPDATE leave_requests SET status = ? WHERE id = ?", (next_status, r['id']))
+                            
                             log_audit("APPROVE_LEAVE_L1", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} pre-aprobado. Pasa a {next_status}")
                             notify_employee(r['user_id'], f"Dolormed: Novedad #{r['id']} Pre-Aprobada", f"Hola {r['full_name']},<br>Tu permiso de {r['reason_type']} fue pre-aprobado por tu jefatura. Pasa a estado: {next_status}.")
                             st.rerun()
+                            
                         if st.button("❌ Rechazar", key=f"btn_rej_{r['id']}", use_container_width=True):
-                            cur = conn.cursor()
-                            cur.execute("UPDATE leave_requests SET status = 'REJECTED' WHERE id = ?", (r['id'],))
-                            conn.commit()
+                            with db_session() as conn:
+                                cur = conn.cursor()
+                                cur.execute("UPDATE leave_requests SET status = 'REJECTED' WHERE id = ?", (r['id'],))
+                                
                             log_audit("REJECT_LEAVE_L1", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} rechazado.")
                             notify_employee(r['user_id'], f"Dolormed: Novedad #{r['id']} Rechazada", f"Hola {r['full_name']},<br>Tu permiso de {r['reason_type']} fue RECHAZADO por tu jefatura.")
                             st.rerun()
-        conn.close()
         return
 
     st.write("Registra permisos, incapacidades médicas o vacaciones. El sistema **no penalizará** a estos empleados en los reportes de tardanzas para los días seleccionados.")
 
-    emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees ORDER BY full_name", conn)
-    conn.close()
+    with db_session() as conn:
+        emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees ORDER BY full_name", conn)
 
     if emp_df.empty:
         st.warning("No hay empleados en el directorio.")
@@ -217,15 +213,15 @@ def page_exceptions():
 
     with tab3:
         st.subheader("Bandeja de Aprobación Final de Permisos (Gestión Humana)")
-        conn = db_conn()
-        df_pend = pd.read_sql_query("""
-            SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
-                   lr.reason_type, lr.reason_description, lr.is_paid, lr.status
-            FROM leave_requests lr
-            JOIN employees e ON lr.user_id = e.user_id
-            WHERE lr.status = 'PENDING_RRHH'
-            ORDER BY lr.id ASC
-        """, conn)
+        with db_session() as conn:
+            df_pend = pd.read_sql_query("""
+                SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status
+                FROM leave_requests lr
+                JOIN employees e ON lr.user_id = e.user_id
+                WHERE lr.status = 'PENDING_RRHH'
+                ORDER BY lr.id ASC
+            """, conn)
         
         if df_pend.empty:
             st.success("No hay solicitudes pendientes de revisión final.")
@@ -242,30 +238,32 @@ def page_exceptions():
                     with cols[1]:
                         btn_label = "✅ Aprobar Final"
                         if st.button(btn_label, key=f"btn_acc_hr_{r['id']}", type="primary", use_container_width=True):
-                            cur = conn.cursor()
-                            cur.execute("UPDATE leave_requests SET status = 'APPROVED' WHERE id = ?", (r['id'],))
-                            
-                            # Inyectar en excepciones (eximir faltas)
-                            d_start = date.fromisoformat(r['leave_date_start'])
-                            d_end = date.fromisoformat(r['leave_date_end'])
-                            delta = d_end - d_start
-                            for i in range(delta.days + 1):
-                                day_to_log = (d_start + timedelta(days=i)).isoformat()
-                                cur.execute("""
-                                    INSERT INTO exceptions(user_id, date, type, notes, created_at)
-                                    VALUES(?,?,?,?,?)
-                                    ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
-                                """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal: {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
-                            conn.commit()
+                            with db_session() as conn:
+                                cur = conn.cursor()
+                                cur.execute("UPDATE leave_requests SET status = 'APPROVED' WHERE id = ?", (r['id'],))
+                                
+                                # Inyectar en excepciones (eximir faltas)
+                                d_start = date.fromisoformat(r['leave_date_start'])
+                                d_end = date.fromisoformat(r['leave_date_end'])
+                                delta = d_end - d_start
+                                for i in range(delta.days + 1):
+                                    day_to_log = (d_start + timedelta(days=i)).isoformat()
+                                    cur.execute("""
+                                        INSERT INTO exceptions(user_id, date, type, notes, created_at)
+                                        VALUES(?,?,?,?,?)
+                                        ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
+                                    """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal: {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
+                                
                             log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO FINAL por RRHH.")
                             st.rerun()
                             
                         if st.button("❌ Rechazar Final", key=f"btn_rej_hr_{r['id']}", use_container_width=True):
-                            cur = conn.cursor()
-                            cur.execute("UPDATE leave_requests SET status = 'REJECTED' WHERE id = ?", (r['id'],))
-                            conn.commit()
+                            with db_session() as conn:
+                                cur = conn.cursor()
+                                cur.execute("UPDATE leave_requests SET status = 'REJECTED' WHERE id = ?", (r['id'],))
+                            
                             log_audit("REJECT_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} RECHAZADO FINAL por RRHH.")
-        conn.close()
+                            st.rerun()
 
     with tab4:
         user_role = st.session_state["user"]["role"]
@@ -273,15 +271,14 @@ def page_exceptions():
             st.subheader("Monitoreo Global de Permisos (Todas las Áreas)")
             st.info("Vista exclusiva para directivos. Aquí observas el estado de **todas** las solicitudes en curso en toda la empresa.")
             
-            conn = db_conn()
-            df_g = pd.read_sql_query("""
-                SELECT lr.id, lr.user_id, e.full_name, e.department, lr.reason_type, lr.status, lr.request_date
-                FROM leave_requests lr
-                JOIN employees e ON lr.user_id = e.user_id
-                WHERE lr.status LIKE 'PENDING_%'
-                ORDER BY lr.request_date DESC
-            """, conn)
-            conn.close()
+            with db_session() as conn:
+                df_g = pd.read_sql_query("""
+                    SELECT lr.id, lr.user_id, e.full_name, e.department, lr.reason_type, lr.status, lr.request_date
+                    FROM leave_requests lr
+                    JOIN employees e ON lr.user_id = e.user_id
+                    WHERE lr.status LIKE 'PENDING_%'
+                    ORDER BY lr.request_date DESC
+                """, conn)
             
             if df_g.empty:
                 st.success("Toda la tubería está limpia. No hay solicitudes estancadas.")
