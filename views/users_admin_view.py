@@ -106,6 +106,9 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
             conn.commit()
             log_audit("EDIT_USER", f"Usuario actualizado: {username} (Rol: {new_role})")
             st.success("✅ Cambios guardados correctamente.")
+            get_users_by_role.clear() # Evitamos que el caché retenga data vieja
+            if "admin_users_table" in st.session_state: del st.session_state["admin_users_table"]
+            if "emp_users_table" in st.session_state: del st.session_state["emp_users_table"]
             st.rerun()
         except Exception as e:
             st.error(f"Error actualizando usuario: {e}")
@@ -120,6 +123,9 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
         conn.close()
         log_audit("DELETE_USER", f"Usuario eliminado del sistema: {username}")
         st.success(f"🗑️ Usuario {username} eliminado del sistema.")
+        get_users_by_role.clear() # Limpiamos el caché inmediatamente de la base de datos
+        if "admin_users_table" in st.session_state: del st.session_state["admin_users_table"]
+        if "emp_users_table" in st.session_state: del st.session_state["emp_users_table"]
         st.rerun()
 
 def page_users_admin():
@@ -203,6 +209,7 @@ def page_users_admin():
                     
                     log_audit("CREATE_USER", f"Usuario creado/actualizado: {u} ({full}) con rol {role}")
                     st.success(f"Usuario {u} ({full}) creado/actualizado correctamente.")
+                    get_users_by_role.clear()
 
     with tab2:
         admin_df = get_users_by_role(['admin', 'nomina', 'jefe_area', 'coordinador'])
@@ -222,11 +229,17 @@ def page_users_admin():
                 row_idx = event_admin.selection.rows[0]
                 if row_idx < len(admin_df):
                     selected_username = str(admin_df.iloc[row_idx]["username"]) 
-        
-                st.session_state.admin_users_table.selection.rows.clear()
-        
-                emp_df = get_all_employees()
-                edit_user_dialog(selected_username, emp_df)
+                    
+                    # Forzamos la limpieza real de estado en Streamlit
+                    if "admin_users_table" in st.session_state:
+                        del st.session_state["admin_users_table"]
+                        
+                    emp_df = get_all_employees()
+                    edit_user_dialog(selected_username, emp_df)
+                else:
+                    if "admin_users_table" in st.session_state:
+                        del st.session_state["admin_users_table"]
+                    st.rerun()
 
     with tab3:
         emp_users_df = get_users_by_role(['empleado'])
@@ -245,8 +258,13 @@ def page_users_admin():
                 row_idx = event_emp.selection.rows[0]
                 if row_idx < len(emp_users_df):
                     selected_username = str(emp_users_df.iloc[row_idx]["username"])
-        
-                    st.session_state.emp_users_table.selection.rows.clear()
-        
+                    
+                    if "emp_users_table" in st.session_state:
+                        del st.session_state["emp_users_table"]
+                        
                     emp_df = get_all_employees()
                     edit_user_dialog(selected_username, emp_df)
+                else:
+                    if "emp_users_table" in st.session_state:
+                        del st.session_state["emp_users_table"]
+                    st.rerun()
