@@ -88,11 +88,7 @@ def register_employee_dialog():
         st.session_state["reg_error"] = ""
         st.session_state["reg_step"] = 1
 
-    def finish_process():
-        st.session_state["reg_step"] = 1
-        st.session_state["reg_dni"] = ""
-        st.session_state["reg_name"] = ""
-        st.session_state["reg_error"] = ""
+
 
     if st.session_state["reg_step"] == 1:
         st.info("Paso 1: Verificación de Identidad")
@@ -137,7 +133,12 @@ def register_employee_dialog():
     elif st.session_state["reg_step"] == 3:
         st.success(f"🎉 ¡Cuenta creada con éxito para {st.session_state['reg_name']}!")
         st.write("Tu usuario es tu número de cédula. Ya puedes cerrar esta ventana y utilizar tus nuevas credenciales para iniciar sesión en el Portal de Empleados.")
-        st.button("Cerrar Ventana", type="primary", use_container_width=True, on_click=finish_process)
+        if st.button("Cerrar Ventana", type="primary", use_container_width=True):
+            st.session_state["reg_step"] = 1
+            st.session_state["reg_dni"] = ""
+            st.session_state["reg_name"] = ""
+            st.session_state["reg_error"] = ""
+            st.rerun()
 
 
 def page_login():
