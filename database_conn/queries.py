@@ -7,6 +7,8 @@ from services.notifications import send_notification_email
 
 # --- GESTIÓN DE USUARIOS (Corrección de Errores y Consultas) ---
 
+# CACHE: Reduce la carga del servidor y elimina parpadeos visuales al cambiar tabs. Refresca cada 15 segundos.
+@st.cache_data(ttl=15, show_spinner=False)
 def get_users_by_role(roles_list):
     """Obtiene usuarios filtrados por una lista de roles para las tablas de administración."""
     conn = db_conn()
@@ -31,6 +33,8 @@ def get_users_by_role(roles_list):
     conn.close()
     return df
 
+# CACHE: Hace que los selectores de pantalla (ej. listado de empleados) carguen al instante sin re-consultar a la BD.
+@st.cache_data(ttl=15, show_spinner=False)
 def get_all_employees():
     """Obtiene el listado maestro de empleados para selectores y diálogos."""
     conn = db_conn()
@@ -80,6 +84,8 @@ def is_holiday(date_obj: date) -> bool:
     conn.close()
     return count > 0
 
+# CACHE: Carga inmediata del catálogo general de horarios
+@st.cache_data(ttl=15, show_spinner=False)
 def get_shifts_df():
     """Retorna el catálogo completo de turnos configurados."""
     conn = db_conn()
