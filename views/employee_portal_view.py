@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime, date, timedelta
 
 from database_conn.connection import db_conn
 from database_conn.queries import db_create_leave_request
@@ -83,21 +84,47 @@ def page_employee_portal():
         st.subheader("Solicitud de Permisos Laborales Y/O Personales")
         st.info("Llena el siguiente formulario digital equivalente al formato F-TH-012 físico.")
         
-        with st.form("form_leave_request"):
-            c1, c2 = st.columns(2)
-            with c1:
-                leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona uno o varios días de ausencia.", format="YYYY-MM-DD")
-                reason_type = st.selectbox("Motivo (Laboral o Personal)", ["Personal", "Laboral", "Cita Médica", "Calamidad", "Vacaciones", "Licencia"])
-                is_paid = st.radio("¿Permiso Remunerado?", ["No", "Sí"], horizontal=True)
-            with c2:
-                time_s = st.time_input("Hora de Salida (Opcional)", value=None)
-                time_e = st.time_input("Hora de Entrada (Opcional)", value=None)
-                total_time = st.text_input("Tiempo Total del Permiso", placeholder="Ej: 4 Horas, 1 Día, Completo")
-                
-            r_desc = st.text_area("Justificación / Detalles del permiso")
-            makeup = st.text_input("¿Cómo se repone el tiempo? (Dejar en blanco si es remunerado/laboral)")
+        c1, c2 = st.columns(2)
+        with c1:
+            leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona uno o varios días de ausencia.", format="YYYY-MM-DD")
+            reason_type = st.selectbox("Motivo (Laboral o Personal)", ["Personal", "Laboral", "Cita Médica", "Calamidad", "Vacaciones", "Licencia"])
+            is_paid = st.radio("¿Permiso Remunerado?", ["No", "Sí"], horizontal=True)
+        with c2:
+            time_s = st.time_input("Hora de Salida (Opcional)", value=None)
+            time_e = st.time_input("Hora de Entrada (Opcional)", value=None)
             
-            submitted = st.form_submit_button("Firmar y Enviar a RRHH", type="primary")
+            calculated_time = ""
+            if leave_dates:
+                if type(leave_dates) in (tuple, list) and len(leave_dates) > 1:
+                    dias = (leave_dates[1] - leave_dates[0]).days + 1
+                    calculated_time = f"{dias} Día(s)"
+                elif time_s and time_e:
+                    ts_dt = datetime.combine(date.today(), time_s)
+                    te_dt = datetime.combine(date.today(), time_e)
+                    if te_dt > ts_dt:
+                        diff = te_dt - ts_dt
+                        total_mins = diff.seconds // 60
+                        h = total_mins // 60
+                        m = total_mins % 60
+                        
+                        parts = []
+                        if h > 0:
+                            parts.append(f"{h} Hora{'s' if h > 1 else ''}")
+                        if m > 0:
+                            parts.append(f"{m} Minuto{'s' if m > 1 else ''}")
+                            
+                        calculated_time = " y ".join(parts) if parts else "0 Minutos"
+                    else:
+                        calculated_time = "Error: Horas inválidas"
+                else:
+                    calculated_time = "1 Día"
+            
+            total_time = st.text_input("Tiempo Total del Permiso (Automático o Manual)", value=calculated_time, placeholder="Ej: 4 Horas, 1 Día")
+            
+        r_desc = st.text_area("Justificación / Detalles del permiso")
+        makeup = st.text_input("¿Cómo se repone el tiempo? (Dejar en blanco si es remunerado/laboral)")
+        
+        submitted = st.button("Firmar y Enviar a RRHH", type="primary")
             
         if submitted:
             if not leave_dates:
@@ -119,7 +146,14 @@ def page_employee_portal():
     with t2:
         conn = db_conn()
         df_reqs = pd.read_sql_query("""
-            SELECT id as Radicado, request_date as Fecha_Solicitud, leave_date_start as Desde, leave_date_end as Hasta, reason_type as Motivo, status as Estado 
+            SELECT 
+                id as Radicado, 
+                request_date as Fecha_Solicitud, 
+                leave_date_start, 
+                leave_date_end, 
+                total_time as Duración,
+                reason_type as Motivo, 
+                status as Estado 
             FROM leave_requests WHERE user_id = ? ORDER BY id DESC
         """, conn, params=(user["username"],))
         conn.close()
@@ -127,14 +161,32 @@ def page_employee_portal():
         if df_reqs.empty:
             st.info("No tienes solicitudes históricas radicas.")
         else:
+            df_reqs["Fechas"] = df_reqs.apply(
+                lambda r: r['leave_date_start'] if r['leave_date_start'] == r['leave_date_end'] 
+                else f"{r['leave_date_start']} al {r['leave_date_end']}", 
+                axis=1
+            )
+            
+            # Reordenamos para ocultar las columnas crudas y mostrar todo más limpio
+            display_df = df_reqs[["Radicado", "Fechas", "Duración", "Motivo", "Estado", "Fecha_Solicitud"]]
+            
             st.info("💡 Haz clic en una solicitud para ver todos sus detalles.")
             
-            # Using session_state for st.dataframe selection to allow clearing it
-            event = st.dataframe(df_reqs, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="emp_reqs_table")
+            # Tracker de la última solicitud procesada para evitar "Popups Fantasmas"
+            if 'last_processed_req' not in st.session_state:
+                st.session_state.last_processed_req = None
+            
+            # Dataframe con selección de una fila
+            event = st.dataframe(display_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="emp_reqs_table")
             
             if len(event.selection.rows) > 0:
                 row_idx = event.selection.rows[0]
-                selected_req_id = int(df_reqs.iloc[row_idx]["Radicado"])
-                # Before showing dialog, clear selection so on close it doesn't trigger again
-                st.session_state.emp_reqs_table.selection.rows.clear()
-                show_leave_request_details(selected_req_id)
+                selected_req_id = int(display_df.iloc[row_idx]["Radicado"])
+                
+                # Solo abrir el dialog si es un click NUEVO o distinto al que generó el último popup
+                if selected_req_id != st.session_state.last_processed_req:
+                    st.session_state.last_processed_req = selected_req_id
+                    show_leave_request_details(selected_req_id)
+            else:
+                # Si no hay ninguna fila seleccionada, reseteamos el tracker para permitir abrir la misma después
+                st.session_state.last_processed_req = None
