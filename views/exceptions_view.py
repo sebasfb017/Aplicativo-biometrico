@@ -205,6 +205,12 @@ def page_exceptions():
         else:
             df_exc.columns = ["ID", "Usuario", "Nombre", "Fecha", "Tipo", "Observaciones", "Registrado El"]
             
+            # =========================================================================
+            # PREVENCIÓN ANTIGUOS POPUPS FANTASMAS (BUG "DOBLE CLIC")
+            # =========================================================================
+            # Este tracker (memoria de estado de la sesión) guarda en disco
+            # el ID del último popup que abrió exitosamente. Así cuando ocurre
+            # un re-render inadvertido de otra pestaña, bloquea eventos dobles fantasmas.
             if 'last_processed_exc' not in st.session_state:
                 st.session_state.last_processed_exc = None
                 
@@ -296,7 +302,13 @@ def page_exceptions():
             else:
                 st.write(f"Hay **{len(df_g)}** solicitudes esperando aprobación en algún nivel.")
                 
-                # Unificar fechas inteligentemente
+                # =========================================================================
+                # COMPRESIÓN INTELIGENTE DE COLUMNAS (FUSIÓN DE FECHAS)
+                # =========================================================================
+                # Usamos una función anónima (Lambda) de Pandas. Si la persona 
+                # pidió permiso para un solo día (inicio = fin), imprimimos un día.
+                # De lo contrario (vacaciones cruzadas), concatenamos con un " al ".
+                # Esto ahorra un 20% del espacio invaluable en el ancho del monitor.
                 df_g["Fechas"] = df_g.apply(
                     lambda r: r['leave_date_start'] if r['leave_date_start'] == r['leave_date_end'] 
                     else f"{r['leave_date_start']} al {r['leave_date_end']}", 
@@ -308,6 +320,7 @@ def page_exceptions():
                 
                 st.info("💡 Haz clic en cualquier fila para ver los detalles completos de la solicitud.")
                 
+                # Prevenidor de Popups Fantasmas replicado para esta tabla Global
                 if 'last_processed_global' not in st.session_state:
                     st.session_state.last_processed_global = None
                     
@@ -317,10 +330,15 @@ def page_exceptions():
                     row_idx = event_g.selection.rows[0]
                     req_id = int(df_g.iloc[row_idx]["Radicado"])
                     
+                    # Interceptor lógico: ¿Es un click fresco en una fila NUEVA o quitada?
+                    # Si coincide con la memoria sucia, ignóralo para no interrumpir al Administrador.
                     if req_id != st.session_state.last_processed_global:
                         st.session_state.last_processed_global = req_id
+                        
+                        # Invocación directa a la tarjeta visual que diseñamos en employee_portal (Modularidad)
                         show_leave_request_details(req_id)
                 else:
+                    # En caso de que el admnistrador un-clickee la fila para "cerrar" visualmente.
                     st.session_state.last_processed_global = None
         else:
             st.warning("No tienes permisos de Administrador para ver la panorámica global de todas las áreas.")

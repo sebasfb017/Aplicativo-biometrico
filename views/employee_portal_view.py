@@ -93,20 +93,33 @@ def page_employee_portal():
             time_s = st.time_input("Hora de Salida (Opcional)", value=None)
             time_e = st.time_input("Hora de Entrada (Opcional)", value=None)
             
+            # =========================================================================
+            # BLOQUE DE CÁLCULO MATEMÁTICO EN TIEMPO REAL
+            # =========================================================================
+            # Al no encerrar todo el formulario en un `st.form` restrictivo, la
+            # interfaz es reactiva. Apenas el empleado escoge fechas, Streamlit recarga
+            # la pantalla súper rápido y deduce el tiempo automáticamente.
+            
             calculated_time = ""
             if leave_dates:
+                # Caso A: El empleado eligió más de un día. El sistema asume todo como días completos.
                 if type(leave_dates) in (tuple, list) and len(leave_dates) > 1:
                     dias = (leave_dates[1] - leave_dates[0]).days + 1
                     calculated_time = f"{dias} Día(s)"
+                # Caso B: El empleado eligió solo 1 fecha PERO introdujo horas específicas.
                 elif time_s and time_e:
+                    # Envolvemos las horas en objetos DateTime (matemáticos) usando el día de hoy
+                    # simplemente como puente para que Python sea capaz de restar Horas.
                     ts_dt = datetime.combine(date.today(), time_s)
                     te_dt = datetime.combine(date.today(), time_e)
+                    
                     if te_dt > ts_dt:
                         diff = te_dt - ts_dt
                         total_mins = diff.seconds // 60
                         h = total_mins // 60
                         m = total_mins % 60
                         
+                        # Traductor de sistema a lenguaje humano ("1 Hora", "2 Horas y 15 Minutos")
                         parts = []
                         if h > 0:
                             parts.append(f"{h} Hora{'s' if h > 1 else ''}")
@@ -167,10 +180,19 @@ def page_employee_portal():
                 axis=1
             )
             
-            # Reordenamos la forma en que se muestran los datos (Tarjetas en lugar de Dataframe)
+            # =========================================================================
+            # ARQUITECTURA "MOBILE-FRIENDLY" DE TARJETAS (CARDS)
+            # =========================================================================
+            # En lugar de usar st.dataframe (lo cual genera un scroll horizontal muy
+            # molesto en teléfonos pequeños), pintamos la información en cajas hermosas.
+            # Al usar `st.columns` aquí dentro, Streamlit detectará cuando la pantalla
+            # sea pequeña (Smartphone) y automáticamente apilará la Columna 2 debajo
+            # de la Columna 1, eliminando eficientemente el scroll.
+            
             st.info("💡 Desliza hacia abajo o haz clic en 'Ver Detalles' en la solicitud que desees auditar.")
             
             for _, r in df_reqs.iterrows():
+                # Borde en la tarjeta para resaltar individualidad
                 with st.container(border=True):
                     # Usamos columnas asimétricas: texto amplio a la izquierda, botón a la derecha
                     cols = st.columns([3, 1])
