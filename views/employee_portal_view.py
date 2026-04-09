@@ -167,26 +167,17 @@ def page_employee_portal():
                 axis=1
             )
             
-            # Reordenamos para ocultar las columnas crudas y mostrar todo más limpio
-            display_df = df_reqs[["Radicado", "Fechas", "Duración", "Motivo", "Estado", "Fecha_Solicitud"]]
+            # Reordenamos la forma en que se muestran los datos (Tarjetas en lugar de Dataframe)
+            st.info("💡 Desliza hacia abajo o haz clic en 'Ver Detalles' en la solicitud que desees auditar.")
             
-            st.info("💡 Haz clic en una solicitud para ver todos sus detalles.")
-            
-            # Tracker de la última solicitud procesada para evitar "Popups Fantasmas"
-            if 'last_processed_req' not in st.session_state:
-                st.session_state.last_processed_req = None
-            
-            # Dataframe con selección de una fila
-            event = st.dataframe(display_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="emp_reqs_table")
-            
-            if len(event.selection.rows) > 0:
-                row_idx = event.selection.rows[0]
-                selected_req_id = int(display_df.iloc[row_idx]["Radicado"])
-                
-                # Solo abrir el dialog si es un click NUEVO o distinto al que generó el último popup
-                if selected_req_id != st.session_state.last_processed_req:
-                    st.session_state.last_processed_req = selected_req_id
-                    show_leave_request_details(selected_req_id)
-            else:
-                # Si no hay ninguna fila seleccionada, reseteamos el tracker para permitir abrir la misma después
-                st.session_state.last_processed_req = None
+            for _, r in df_reqs.iterrows():
+                with st.container(border=True):
+                    # Usamos columnas asimétricas: texto amplio a la izquierda, botón a la derecha
+                    cols = st.columns([3, 1])
+                    with cols[0]:
+                        st.markdown(f"🗓️ **{r['Fechas']}** | Radicado: `#{r['Radicado']}`")
+                        st.write(f"**Motivo:** {r['Motivo']} | **Duración:** {r['Duración']}")
+                        st.caption(f"Enviado el {r['Fecha_Solicitud']} — Estado actual: **{r['Estado']}**")
+                    with cols[1]:
+                        if st.button("👁️ Ver Detalles", key=f"btn_detalles_{r['Radicado']}", use_container_width=True):
+                            show_leave_request_details(r['Radicado'])
