@@ -6,6 +6,7 @@ from database_conn.connection import db_session
 from database_conn.queries import upsert_exception, get_exceptions_df
 from services.notifications import log_audit, notify_employee
 from utils.auth import require_role
+from views.employee_portal_view import show_leave_request_details
 
 @st.dialog("Detalles Completos de la Novedad/Permiso")
 def show_exception_details(exc_id: int):
@@ -203,13 +204,21 @@ def page_exceptions():
             st.info("No hay novedades registradas.")
         else:
             df_exc.columns = ["ID", "Usuario", "Nombre", "Fecha", "Tipo", "Observaciones", "Registrado El"]
+            
+            if 'last_processed_exc' not in st.session_state:
+                st.session_state.last_processed_exc = None
+                
             event = st.dataframe(df_exc, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="admin_exc_table")
             
             if len(event.selection.rows) > 0:
                 row_idx = event.selection.rows[0]
                 selected_id = int(df_exc.iloc[row_idx]["ID"])
-                st.session_state.admin_exc_table.selection.rows.clear()
-                show_exception_details(selected_id)
+                
+                if selected_id != st.session_state.last_processed_exc:
+                    st.session_state.last_processed_exc = selected_id
+                    show_exception_details(selected_id)
+            else:
+                st.session_state.last_processed_exc = None
 
     with tab3:
         st.subheader("Bandeja de Aprobación Final de Permisos (Gestión Humana)")
@@ -273,7 +282,9 @@ def page_exceptions():
             
             with db_session() as conn:
                 df_g = pd.read_sql_query("""
-                    SELECT lr.id, lr.user_id, e.full_name, e.department, lr.reason_type, lr.status, lr.request_date
+                    SELECT lr.id, lr.user_id, e.full_name, e.department, 
+                           lr.leave_date_start, lr.leave_date_end,
+                           lr.reason_type, lr.status, lr.request_date
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
                     WHERE lr.status LIKE 'PENDING_%'
@@ -284,15 +295,32 @@ def page_exceptions():
                 st.success("Toda la tubería está limpia. No hay solicitudes estancadas.")
             else:
                 st.write(f"Hay **{len(df_g)}** solicitudes esperando aprobación en algún nivel.")
-                df_g.columns = ["Radicado", "DNI", "Empleado", "Área/Departamento", "Tipo", "Estado de Aprobación", "Fecha Solicitud"]
+                
+                # Unificar fechas inteligentemente
+                df_g["Fechas"] = df_g.apply(
+                    lambda r: r['leave_date_start'] if r['leave_date_start'] == r['leave_date_end'] 
+                    else f"{r['leave_date_start']} al {r['leave_date_end']}", 
+                    axis=1
+                )
+                
+                display_df = df_g[["id", "user_id", "full_name", "department", "Fechas", "reason_type", "status", "request_date"]]
+                display_df.columns = ["Radicado", "DNI", "Empleado", "Área/Departamento", "Fechas", "Tipo", "Estado de Aprobación", "Fecha Solicitud"]
                 
                 st.info("💡 Haz clic en cualquier fila para ver los detalles completos de la solicitud.")
-                event_g = st.dataframe(df_g, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="admin_global_table")
+                
+                if 'last_processed_global' not in st.session_state:
+                    st.session_state.last_processed_global = None
+                    
+                event_g = st.dataframe(display_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="admin_global_table")
                 
                 if len(event_g.selection.rows) > 0:
                     row_idx = event_g.selection.rows[0]
                     req_id = int(df_g.iloc[row_idx]["Radicado"])
-                    st.session_state.admin_global_table.selection.rows.clear()
-                    show_exception_details(req_id)
+                    
+                    if req_id != st.session_state.last_processed_global:
+                        st.session_state.last_processed_global = req_id
+                        show_leave_request_details(req_id)
+                else:
+                    st.session_state.last_processed_global = None
         else:
             st.warning("No tienes permisos de Administrador para ver la panorámica global de todas las áreas.")
