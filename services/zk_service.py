@@ -65,13 +65,20 @@ def download_attendance_from_device(device: dict):
         records = conn.get_attendance()
         out = []
         for r in records:
+            # --- INTERCEPTOR DE SOFTWARE (OVERRIDE) ---
+            # El usuario solicita que CUALQUIER marcación que ocurra a las 2:00 PM (14:XX)
+            # sea catalogada FORZOSAMENTE como Entrada (Punch 0), ignorando el estado físico del reloj.
+            punch_val = int(r.punch)
+            if r.timestamp.hour == 14:
+                punch_val = 0
+                
             out.append({
                 "device_name": name,
                 "device_ip": ip,
                 "user_id": str(r.user_id),
                 "ts": r.timestamp.isoformat(sep=" ", timespec="seconds"),
                 "status": int(r.status),
-                "punch": int(r.punch),
+                "punch": punch_val,
                 "uid": int(getattr(r, "uid", 0)),
                 "downloaded_at": downloaded_at
             })
