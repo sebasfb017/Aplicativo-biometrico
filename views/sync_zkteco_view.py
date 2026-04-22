@@ -171,6 +171,10 @@ def page_sync():
             df_show.columns = ["Nombre Visual", "Dirección IP", "Puerto", "Contraseña", "Timeout(s)"]
             
             st.info("💡 Selecciona un reloj en la tabla de abajo para poder editarlo o eliminarlo.")
+            
+            if 'last_processed_device' not in st.session_state:
+                st.session_state.last_processed_device = None
+                
             event = st.dataframe(
                 df_show, 
                 use_container_width=True, 
@@ -182,5 +186,10 @@ def page_sync():
             
             if len(event.selection.rows) > 0:
                 row_idx = event.selection.rows[0]
-                st.session_state.devices_table.selection.rows.clear()
-                edit_device_dialog(row_idx, devices_config)
+                dev_ip = str(df_show.iloc[row_idx]["Dirección IP"])
+                
+                if dev_ip != st.session_state.last_processed_device:
+                    st.session_state.last_processed_device = dev_ip
+                    edit_device_dialog(row_idx, devices_config)
+            else:
+                st.session_state.last_processed_device = None

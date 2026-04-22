@@ -153,13 +153,22 @@ def page_employees():
             df_show = emp if filtro_dep == "Todos" else emp[emp["Área / Departamento"] == filtro_dep]
             
             st.metric("Total en vista", len(df_show))
-            event = st.dataframe(df_show, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+            
+            if 'last_processed_employee' not in st.session_state:
+                st.session_state.last_processed_employee = None
+                
+            event = st.dataframe(df_show, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="employees_table")
             
             selected_rows = event.selection.rows
             if selected_rows:
                 idx = selected_rows[0]
-                selected_user_id = df_show.iloc[idx]["DNI / ID Biométrico"]
-                edit_employee_dialog(selected_user_id)
+                selected_user_id = str(df_show.iloc[idx]["DNI / ID Biométrico"])
+                
+                if selected_user_id != st.session_state.last_processed_employee:
+                    st.session_state.last_processed_employee = selected_user_id
+                    edit_employee_dialog(selected_user_id)
+            else:
+                st.session_state.last_processed_employee = None
 
     with tab2:
         st.subheader("Registrar Empleado Manualmente")

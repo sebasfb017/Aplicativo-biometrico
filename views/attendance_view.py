@@ -192,13 +192,21 @@ def page_view_attendance():
         df["Tipo"] = df["Tipo"].map(punch_map).fillna(df["Tipo"])
 
         st.info(f"💡 Selecciona una marcación para editar manualmente su hora o eliminarla. Total de registros: {len(df)}")
+        
+        if 'last_processed_attendance' not in st.session_state:
+            st.session_state.last_processed_attendance = None
+            
         event = st.dataframe(df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="view_attendance_table")
         
         if len(event.selection.rows) > 0:
             row_idx = event.selection.rows[0]
             selected_id = int(df.iloc[row_idx]["ID"])
-            st.session_state.view_attendance_table.selection.rows.clear()
-            edit_attendance_dialog(selected_id)
+            
+            if selected_id != st.session_state.last_processed_attendance:
+                st.session_state.last_processed_attendance = selected_id
+                edit_attendance_dialog(selected_id)
+        else:
+            st.session_state.last_processed_attendance = None
 
         excel_bytes = io.BytesIO()
         with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:

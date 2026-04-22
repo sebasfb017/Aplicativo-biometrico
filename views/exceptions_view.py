@@ -328,7 +328,7 @@ def page_exceptions():
                 
                 if len(event_g.selection.rows) > 0:
                     row_idx = event_g.selection.rows[0]
-                    req_id = int(df_g.iloc[row_idx]["Radicado"])
+                    req_id = int(display_df.iloc[row_idx]["Radicado"])
                     
                     # Interceptor lógico: ¿Es un click fresco en una fila NUEVA o quitada?
                     # Si coincide con la memoria sucia, ignóralo para no interrumpir al Administrador.

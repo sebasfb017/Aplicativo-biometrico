@@ -220,6 +220,10 @@ def page_users_admin():
             admin_df_view.columns = ["Usuario (DNI)", "Nombre Completo", "Rol", "Depto. a Cargo", "Activo", "Creado el"]
         
             st.info("💡 Haz clic en una fila para editar o eliminar.")
+            
+            if 'last_processed_admin_user' not in st.session_state:
+                st.session_state.last_processed_admin_user = None
+                
             event_admin = st.dataframe(
                 admin_df_view, use_container_width=True, hide_index=True, 
                 on_select="rerun", selection_mode="single-row", key="admin_users_table"
@@ -230,16 +234,12 @@ def page_users_admin():
                 if row_idx < len(admin_df):
                     selected_username = str(admin_df.iloc[row_idx]["username"]) 
                     
-                    # Forzamos la limpieza real de estado en Streamlit
-                    if "admin_users_table" in st.session_state:
-                        del st.session_state["admin_users_table"]
-                        
-                    emp_df = get_all_employees()
-                    edit_user_dialog(selected_username, emp_df)
-                else:
-                    if "admin_users_table" in st.session_state:
-                        del st.session_state["admin_users_table"]
-                    st.rerun()
+                    if selected_username != st.session_state.last_processed_admin_user:
+                        st.session_state.last_processed_admin_user = selected_username
+                        emp_df = get_all_employees()
+                        edit_user_dialog(selected_username, emp_df)
+            else:
+                st.session_state.last_processed_admin_user = None
 
     with tab3:
         emp_users_df = get_users_by_role(['empleado'])
@@ -249,6 +249,9 @@ def page_users_admin():
             emp_users_df_view['active'] = emp_users_df_view['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
             emp_users_df_view.columns = ["Usuario (DNI)", "Nombre Completo", "Área", "Sub-área", "Activo", "Creado el"]
         
+            if 'last_processed_emp_user' not in st.session_state:
+                st.session_state.last_processed_emp_user = None
+                
             event_emp = st.dataframe(
                 emp_users_df_view, use_container_width=True, hide_index=True, 
                 on_select="rerun", selection_mode="single-row", key="emp_users_table"
@@ -259,12 +262,9 @@ def page_users_admin():
                 if row_idx < len(emp_users_df):
                     selected_username = str(emp_users_df.iloc[row_idx]["username"])
                     
-                    if "emp_users_table" in st.session_state:
-                        del st.session_state["emp_users_table"]
-                        
-                    emp_df = get_all_employees()
-                    edit_user_dialog(selected_username, emp_df)
-                else:
-                    if "emp_users_table" in st.session_state:
-                        del st.session_state["emp_users_table"]
-                    st.rerun()
+                    if selected_username != st.session_state.last_processed_emp_user:
+                        st.session_state.last_processed_emp_user = selected_username
+                        emp_df = get_all_employees()
+                        edit_user_dialog(selected_username, emp_df)
+            else:
+                st.session_state.last_processed_emp_user = None
