@@ -195,9 +195,6 @@ def init_db():
     initialize_colombian_holidays(cur)
     conn.commit()
 
-    initialize_predefined_shifts(cur)
-    conn.commit()
-
     conn.close()
 
     ensure_schedules_columns()
@@ -344,18 +341,7 @@ def initialize_colombian_holidays(cur):
             pass
 
 def initialize_predefined_shifts(cur):
-    shifts = [
-        ("M - Mañana (Enf)", "07:00", "15:00", 0, 0, "", "", 0, "M"),
-        ("T - Tarde (Enf)", "15:00", "23:00", 0, 0, "", "", 0, "T"),
-        ("N - Noche (Enf)", "23:00", "07:00", 0, 0, "", "", 1, "N"),
-        ("M - Mañana (Adm)", "06:00", "14:00", 0, 0, "", "", 0, "M_ADM"),
-        ("T - Tarde (Adm)", "14:00", "22:00", 0, 0, "", "", 0, "T_ADM"),
-        ("RX1 - Día", "07:00", "19:00", 0, 0, "", "", 0, "RX1"),
-        ("RX2 - Noche", "19:00", "07:00", 0, 0, "", "", 1, "RX2"),
-        ("OFICINA - Horario Partido", "08:00", "18:00", 0, 1, "12:00", "14:00", 0, "OFICINA"),
-        ("C - Corrido", "10:00", "19:00", 0, 1, "14:00", "16:00", 0, "C"),
-        ("L - Día Libre", "", "", 0, 0, "", "", 0, "L"),
-    ]
+    shifts = []
     
     for name, start, end, grace, has_break, break_start, break_end, is_overnight, code in shifts:
         try:
