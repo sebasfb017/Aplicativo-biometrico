@@ -5,7 +5,7 @@ devices:
   password: 0
   timeout: 10
 - name: CIRUGIA
-  ip: 192.168.52.133
+  ip: 192.168.52.233
   port: 4370
   password: 890724
   timeout: 10
