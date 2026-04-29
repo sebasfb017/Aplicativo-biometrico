@@ -392,10 +392,16 @@ def page_assign_shifts():
 
     today = date.today()
     default_week_start = (today - timedelta(days=today.weekday()))
+    available_weeks = [(default_week_start + timedelta(weeks=i)) for i in range(-4, 13)]
     
     col1, col2 = st.columns(2)
     with col1:
-        week_start = st.date_input("Semana (Automáticamente toma el Lunes)", value=default_week_start)
+        selected_weeks = st.multiselect(
+            "Semanas a Asignar", 
+            options=available_weeks, 
+            default=[default_week_start],
+            format_func=lambda d: f"Semana del Lunes {d.strftime('%d/%m/%Y')}"
+        )
     with col2:
         shifts_df = get_shifts_df()
         if shifts_df.empty:
@@ -439,17 +445,20 @@ def page_assign_shifts():
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("Aplicar Asignación Directa", type="primary", use_container_width=True):
-        if not selected_emps:
+        if not selected_weeks:
+            st.error("Debes incluir al menos una semana.")
+        elif not selected_emps:
             st.error("Debes incluir al menos a un empleado.")
         elif not dow_sel:
             st.error("Debes incluir al menos un día.")
         else:
-            ws_iso = (week_start - timedelta(days=week_start.weekday())).isoformat()
             sid = shift_options[sel_shift_name]
-            for uid in selected_emps:
-                for dow in dow_sel:
-                    assign_shift(uid, ws_iso, int(dow), sid)
-            st.success("✅ Asignación procesada para la semana.")
+            for w_start in selected_weeks:
+                ws_iso = (w_start - timedelta(days=w_start.weekday())).isoformat()
+                for uid in selected_emps:
+                    for dow in dow_sel:
+                        assign_shift(uid, ws_iso, int(dow), sid)
+            st.success(f"✅ Asignación procesada para {len(selected_weeks)} semana(s).")
 
     st.markdown("---")
     st.subheader("✨ Asignación Mágica (Clonar Semana)")
