@@ -57,6 +57,7 @@ from views.exceptions_view import page_exceptions
 from views.attendance_view import page_view_attendance
 from views.month_report_view import page_lateness_report
 from views.users_admin_view import page_users_admin
+from views.employee_360_view import page_employee_360
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -101,12 +102,12 @@ def main():
     # --- CONFIGURACIÓN OPTIMIZADA DE MENÚS POR ROL ---
     # Convertimos 15 líneas de ifs a un mapeo constante, más legible y mantenible.
     ROLES_MENU = {
-        "admin": (["Dashboard", "Reportes Mensuales", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Horarios", "Turnos y Asignación", "Usuarios"],
-                  ["house", "bar-chart-line", "journal-medical", "arrow-repeat", "table", "", "people", "clock", "calendar-check", "person-badge"]),
+        "admin": (["Dashboard", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"],
+                  ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"]),
         "empleado": (["Mi Portal de Autogestión"], ["person-vcard"]),
         "coordinador": (["Dashboard", "Autorización de Permisos", "Visualizar Data"], ["house", "check2-square", "table"]),
-        "nomina": (["Dashboard", "Reportes Mensuales", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data"], 
-                   ["house", "bar-chart-line", "journal-medical", "arrow-repeat", "table"])
+        "nomina": (["Dashboard", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data"], 
+                   ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table"])
     }
     # Extraemos el menú según el rol. Si el rol no se encuentra, por defecto asignamos el de nómina o empleado.
     menu_options, menu_icons = ROLES_MENU.get(user["role"], ROLES_MENU["nomina"])
@@ -152,10 +153,10 @@ def main():
         "Sincronizar Relojes": page_sync,
         "Visualizar Data": page_view_attendance,
         "Reportes Mensuales": page_lateness_report,
+        "Expediente 360": page_employee_360,
         "Novedades y Excepciones": page_exceptions,
         "Autorización de Permisos": page_exceptions,
         "Empleados": page_employees,
-        "Horarios": page_schedules,
         "Usuarios": page_users_admin,
         "Mi Portal de Autogestión": page_employee_portal
     }
