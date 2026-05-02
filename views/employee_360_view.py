@@ -6,7 +6,7 @@ from datetime import datetime, date, time, timedelta
 
 from database_conn.connection import db_conn
 from utils.auth import require_role
-from database_conn.queries import get_all_employees
+from database_conn.queries import get_all_employees, is_holiday
 from services.analytics import schedule_for_user_date, fetch_attendance_between
 
 def get_employee_exceptions(year, month, user_id):
@@ -100,6 +100,8 @@ def page_employee_360():
             marcaciones_am = " | ".join(am_punches) if am_punches else "--:--"
             marcaciones_pm = " | ".join(pm_punches) if pm_punches else "--:--"
             
+            es_festivo = is_holiday(current_date)
+            
             if novedad != "-":
                 tipo_dia = "novedad"
             elif sched is None:
@@ -109,8 +111,11 @@ def page_employee_360():
                     tipo_dia = "libre"
             else:
                 if not dia_punches and current_date < date.today():
-                    tipo_dia = "falta"
-                    faltas_count += 1
+                    if es_festivo:
+                        tipo_dia = "festivo"
+                    else:
+                        tipo_dia = "falta"
+                        faltas_count += 1
                 elif not dia_punches and current_date >= date.today():
                     tipo_dia = "pendiente"
                 else:
@@ -148,7 +153,8 @@ def page_employee_360():
                 "has_punches": bool(dia_punches),
                 "marcaciones_am": marcaciones_am,
                 "marcaciones_pm": marcaciones_pm,
-                "novedad": novedad
+                "novedad": novedad,
+                "es_festivo": es_festivo
             })
             
         conn.close()
@@ -260,6 +266,7 @@ def page_employee_360():
 .day-falta {{ background: rgba(220,53,69,0.15); border-color: rgba(220,53,69,0.3); }}
 .day-novedad {{ background: rgba(234,179,8,0.15); border-color: rgba(234,179,8,0.3); }}
 .day-huerfano {{ background: rgba(111,66,193,0.15); border-color: rgba(111,66,193,0.3); }}
+.day-festivo {{ background: rgba(13,202,240,0.15); border-color: rgba(13,202,240,0.3); }}
 </style>
 
 <div class="cal-wrapper">
@@ -289,6 +296,9 @@ def page_employee_360():
             
         if cell["novedad"] != "-":
             inner_content += f'<div class="info-line info-novedad">⚠️ {cell["novedad"]}</div>'
+        
+        if cell["es_festivo"]:
+            inner_content += f'<div class="info-line" style="background: rgba(13,202,240,0.2); color: #0dcaf0; font-weight: 600; border: 1px solid rgba(13,202,240,0.4);">🎉 Festivo</div>'
             
         grid_html += f'<div class="cal-cell day-{cell["type"]}">{inner_content}</div>'
         
