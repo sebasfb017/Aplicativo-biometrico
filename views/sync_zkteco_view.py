@@ -1,7 +1,10 @@
 import streamlit as st
 import pandas as pd
 from utils.auth import require_role
-from services.zk_service import load_devices, save_devices, sync_device_time, download_attendance_from_device, upsert_attendance
+from services.zk_service import (
+    load_devices, save_devices, sync_device_time, download_attendance_from_device, upsert_attendance,
+    get_device_users_status, upload_user_to_device, delete_user_from_device, sync_all_devices
+)
 
 @st.dialog("⚙️ Editar Reloj Biométrico")
 def edit_device_dialog(device_idx, devices_list):
@@ -86,7 +89,7 @@ def page_sync():
     require_role("admin", "nomina")
     st.title("🔄 Sincronización Biométrica")
     
-    tab_sync, tab_conf = st.tabs(["⏬ Sincronizar Datos", "⚙️ Configurar Dispositivos"])
+    tab_sync, tab_conf, tab_ctrl = st.tabs(["⏬ Sincronizar Datos", "⚙️ Configurar Dispositivos", "🎛️ Centro de Control (Usuarios)"])
     
     with tab_sync:
         st.write("Selecciona los relojes de los que deseas descargar las marcaciones recientes.")
@@ -193,3 +196,84 @@ def page_sync():
                     edit_device_dialog(row_idx, devices_config)
             else:
                 st.session_state.last_processed_device = None
+
+    with tab_ctrl:
+        st.write("Audita y administra los usuarios almacenados directamente en la memoria interna de cada reloj biométrico.")
+        
+        devices_config = load_devices()
+        if not devices_config:
+            st.error("No hay dispositivos configurados.")
+        else:
+            dev_opts = {f"{d.get('name', d['ip'])} (IP: {d['ip']})": d for d in devices_config}
+            sel_dev_label = st.selectbox("1. Selecciona el Reloj Biométrico a Consultar", list(dev_opts.keys()))
+            selected_dev = dev_opts[sel_dev_label]
+            
+            st.markdown("---")
+            
+            st.subheader("🌐 Sincronización Total (Modo Espejo)")
+            st.write("Iguala **todos los usuarios y huellas** entre todos los relojes biométricos. Si falta una huella en un reloj pero está en el otro, el sistema la copiará automáticamente.")
+            
+            if st.button("🌟 Igualar Todos los Relojes Automáticamente", type="primary", use_container_width=True):
+                with st.spinner("Analizando y clonando memorias (Esto puede tardar varios segundos)..."):
+                    logs = sync_all_devices(devices_config)
+                    for log in logs:
+                        if log.startswith("✅") or log.startswith("🚀"):
+                            st.success(log)
+                        else:
+                            st.error(log)
+                            
+            st.markdown("---")
+            
+            c1, c2 = st.columns([1.5, 1])
+            with c1:
+                st.subheader("Auditoría de Memoria Local")
+                if st.button("📥 Descargar Usuarios de este Reloj", use_container_width=True):
+                    with st.spinner(f"Conectando a {selected_dev['ip']}..."):
+                        users_data, err = get_device_users_status(selected_dev)
+                        if err:
+                            st.error(f"Error de conexión: {err}")
+                        elif not users_data:
+                            st.info("No se encontraron usuarios en la memoria del reloj.")
+                        else:
+                            st.session_state["dev_users_" + selected_dev["ip"]] = users_data
+                            
+                users_data = st.session_state.get("dev_users_" + selected_dev["ip"], [])
+                if users_data:
+                    df_users = pd.DataFrame(users_data)
+                    df_users["Huella Registrada"] = df_users["has_fingerprint"].apply(lambda x: "✅ Sí" if x else "❌ No")
+                    df_users["user_id"] = df_users["user_id"].astype(str)
+                    
+                    st.write(f"Usuarios alojados en memoria: **{len(df_users)}**")
+                    st.dataframe(
+                        df_users[["user_id", "name", "Huella Registrada"]].rename(columns={"user_id": "Cédula", "name": "Nombre en Reloj"}),
+                        use_container_width=True, hide_index=True
+                    )
+                    
+            with c2:
+                st.subheader("Crear Remotamente")
+                st.write("Inscribe un nuevo empleado en **TODOS** los relojes de la red.")
+                with st.form("new_user_zk_form"):
+                    new_uid_str = st.text_input("Cédula (user_id)")
+                    new_name_str = st.text_input("Nombre Corto (Ej. J. PEREZ)")
+                    sub_new = st.form_submit_button("🚀 Transmitir a Toda la Red", type="primary", use_container_width=True)
+                    
+                    if sub_new:
+                        if not new_uid_str.strip() or not new_name_str.strip():
+                            st.error("Debes llenar la Cédula y el Nombre.")
+                        else:
+                            with st.spinner("Escribiendo en la memoria de todos los dispositivos..."):
+                                success_count = 0
+                                for d in devices_config:
+                                    ok, err2 = upload_user_to_device(d, new_uid_str.strip(), new_name_str.strip())
+                                    if ok:
+                                        success_count += 1
+                                    else:
+                                        st.error(f"Error inscribiendo en {d['ip']}: {err2}")
+                                
+                                if success_count == len(devices_config):
+                                    st.success(f"¡Usuario {new_name_str} inscrito exitosamente en todos los equipos! Ahora debe enrolar su huella en CUALQUIER reloj.")
+                                else:
+                                    st.warning(f"Inscrito en {success_count} de {len(devices_config)} equipos.")
+                                    
+                                if "dev_users_" + selected_dev["ip"] in st.session_state:
+                                    del st.session_state["dev_users_" + selected_dev["ip"]]
