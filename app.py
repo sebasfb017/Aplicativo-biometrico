@@ -50,7 +50,7 @@ from views.employees_view import page_employees
 from views.sync_zkteco_view import page_sync
 from views.employee_portal_view import page_employee_portal
 from views.schedules_view import (
-    page_schedules, page_shifts, page_assign_shifts, 
+    page_schedules, page_shifts, page_assign_shifts, page_bulk_assign_shifts,
     ensure_schedules_columns, maybe_load_default_schedules
 )
 from views.exceptions_view import page_exceptions
@@ -163,11 +163,13 @@ def main():
 
     # Caso especial para "Turnos", requiere subpestañas antes de llamar la vista
     if sel == "Turnos y Asignación":
-        tab1, tab2 = st.tabs(["🏗️ Crear Turnos", "📝 Asignar a Empleados"])
+        tab1, tab2, tab3 = st.tabs(["🏗️ Crear Turnos", "📝 Asignar a Empleados", "📥 Carga Masiva (Excel)"])
         with tab1:
             page_shifts()
         with tab2:
             page_assign_shifts()
+        with tab3:
+            page_bulk_assign_shifts()
     elif sel in router:
         router[sel]() # Llama a la vista correspondiente de manera dinámica en 1 línea
 
