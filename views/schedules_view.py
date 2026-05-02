@@ -488,3 +488,185 @@ def page_assign_shifts():
                     assign_shift(uid, target_week_iso, dow, shift_iid)
                     inserted += 1
             st.success(f"¡Magia completada! Se clonaron {inserted} asignaciones hacia {target_weeks} semana(s) destino.")
+
+import io
+import calendar
+
+def page_bulk_assign_shifts():
+    st.title("📥 Carga Masiva de Turnos (Mensual)")
+    st.write("Sube la sábana de turnos del mes completo utilizando Nomenclatura Estándar.")
+    
+    with st.expander("📖 Ver Nomenclatura de Códigos Válidos", expanded=True):
+        st.markdown("""
+        **Códigos de Turno (Horarios):**
+        - `M`: Mañana (06:00 - 14:00)
+        - `T`: Tarde (14:00 - 22:00)
+        - `N`: Noche (22:00 - 06:00)
+        - `TE1`: 12h Día (06:00 - 18:00)
+        - `TE2`: 12h Tarde (10:00 - 22:00)
+        - `TP`: Partido (10:00-14:00 y 18:00-22:00)
+        
+        **Excepciones y Libres:**
+        - `V`: Vacaciones
+        - `D`: Día de la Familia
+        - `I`: Incapacidad
+        - `L` o (Vacio): Día Libre
+        """)
+
+    st.markdown("### 1. Selecciona el Periodo")
+    colA, colB = st.columns(2)
+    with colA:
+        current_year = date.today().year
+        sel_year = st.number_input("Año", min_value=2020, max_value=2030, value=current_year)
+    with colB:
+        meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+        current_month_idx = date.today().month - 1
+        sel_month_str = st.selectbox("Mes", options=meses, index=current_month_idx)
+        sel_month = meses.index(sel_month_str) + 1
+
+    _, num_days = calendar.monthrange(sel_year, sel_month)
+
+    st.markdown("### 2. Descarga la plantilla del mes")
+    cols = ["Cedula"] + [str(d) for d in range(1, num_days + 1)]
+    df_template = pd.DataFrame(columns=cols)
+    # Fila de ejemplo
+    example_row = ["10203040"] + ["M", "M", "T", "L", "N"] + [""] * (num_days - 5)
+    df_template.loc[0] = example_row
+    
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df_template.to_excel(writer, index=False, sheet_name='Plantilla')
+    
+    st.download_button(
+        label="⬇️ Descargar Plantilla Ejemplo (.xlsx)",
+        data=buffer.getvalue(),
+        file_name="plantilla_turnos_asistencial.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    
+    st.markdown("### 3. Sube tu archivo diligenciado")
+    uploaded_file = st.file_uploader("Arrastra aquí el archivo Excel", type=["xlsx"])
+    if uploaded_file is not None:
+        try:
+            df = pd.read_excel(uploaded_file, engine='openpyxl')
+            st.dataframe(df.head(), use_container_width=True)
+            if st.button(f"🚀 Procesar y Asignar Turnos de {sel_month_str} {sel_year}", type="primary"):
+                with st.spinner(f"Procesando todo el mes de {sel_month_str}..."):
+                    process_bulk_shifts(df, sel_year, sel_month, num_days)
+        except Exception as e:
+            st.error(f"Error procesando el archivo: {e}")
+
+def process_bulk_shifts(df, year, month, num_days):
+    # Flexible validation: must contain Cedula and columns 1 to num_days
+    str_cols = [str(c) for c in df.columns]
+    
+    # Buscar columna Cedula ignorando mayúsculas
+    cedula_col = None
+    for c in df.columns:
+        if str(c).strip().lower() in ["cedula", "cédula"]:
+            cedula_col = c
+            break
+            
+    if not cedula_col:
+        st.error("El Excel no tiene la columna 'Cedula'. Por favor usa la plantilla.")
+        return
+        
+    missing_days = []
+    for d in range(1, num_days + 1):
+        # Allow column names as integers or strings
+        if d not in df.columns and str(d) not in df.columns:
+            missing_days.append(str(d))
+            
+    if missing_days:
+        st.error(f"El Excel no tiene columnas para los días: {', '.join(missing_days)}. Deben ser números del 1 al {num_days}.")
+        return
+        
+    SHIFT_CODES_MAP = {
+        "M": {"name": "Turno_M", "start": "06:00", "end": "14:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "T": {"name": "Turno_T", "start": "14:00", "end": "22:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "N": {"name": "Turno_N", "start": "22:00", "end": "06:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 1},
+        "TE1": {"name": "Turno_TE1", "start": "06:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "TE2": {"name": "Turno_TE2", "start": "10:00", "end": "22:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "TP": {"name": "Turno_TP", "start": "10:00", "end": "22:00", "has_break": 1, "break_start": "14:00", "break_end": "18:00", "is_overnight": 0},
+    }
+    EXCEPTION_CODES_MAP = {
+        "V": "Vacaciones",
+        "D": "Día de la Familia",
+        "I": "Incapacidad"
+    }
+    
+    shift_ids = {}
+    assigned = 0
+    errors = []
+    
+    with db_session() as conn:
+        cur = conn.cursor()
+        # 1. Asegurar que los turnos base existen
+        for code, info in SHIFT_CODES_MAP.items():
+            cur.execute("SELECT id FROM shifts WHERE name = ?", (info["name"],))
+            row = cur.fetchone()
+            if row:
+                shift_ids[code] = row[0]
+            else:
+                cur.execute("""
+                    INSERT INTO shifts (name, start_time, end_time, grace_minutes, has_break, break_start, break_end, is_overnight, shift_code, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (info["name"], info["start"], info["end"], 0, info["has_break"], info["break_start"], info["break_end"], info["is_overnight"], code, datetime.now().isoformat()))
+                shift_ids[code] = cur.lastrowid
+                
+        # 2. Cargar todos los empleados válidos
+        cur.execute("SELECT user_id FROM employees")
+        valid_users = {str(r[0]) for r in cur.fetchall()}
+        
+        # 3. Iterar cada fila
+        for idx, row in df.iterrows():
+            uid = str(row[cedula_col]).strip()
+            if uid == "nan" or not uid:
+                continue
+            if uid not in valid_users:
+                errors.append(f"Fila {idx+2}: Cédula {uid} no encontrada en la base de datos.")
+                continue
+                
+            for d in range(1, num_days + 1):
+                # Retrieve value using either int or string key
+                val = row.get(d)
+                if val is None or pd.isna(val):
+                    val = row.get(str(d))
+                
+                val = str(val).strip().upper() if pd.notna(val) else ""
+                if val == "NAN":
+                    val = ""
+                
+                current_date = date(year, month, d)
+                current_date_iso = current_date.isoformat()
+                ws_iso = (current_date - timedelta(days=current_date.weekday())).isoformat()
+                dow = current_date.weekday()
+                
+                # Reset assignments for this day
+                cur.execute("DELETE FROM shift_assignments WHERE user_id = ? AND week_start = ? AND dow = ?", (uid, ws_iso, dow))
+                cur.execute("DELETE FROM exceptions WHERE user_id = ? AND date = ?", (uid, current_date_iso))
+                
+                if val in shift_ids:
+                    cur.execute("""
+                        INSERT INTO shift_assignments (user_id, week_start, dow, shift_id, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (uid, ws_iso, dow, shift_ids[val], datetime.now().isoformat()))
+                    assigned += 1
+                elif val in EXCEPTION_CODES_MAP:
+                    cur.execute("""
+                        INSERT INTO exceptions (user_id, date, type, created_at)
+                        VALUES (?, ?, ?, ?)
+                    """, (uid, current_date_iso, EXCEPTION_CODES_MAP[val], datetime.now().isoformat()))
+                    assigned += 1
+                elif val == "L" or val == "":
+                    # Ya se limpió en los DELETE de arriba, día libre
+                    pass
+                else:
+                    errors.append(f"Fila {idx+2}: Código desconocido '{val}' ignorado el día {d}.")
+                    
+    if errors:
+        st.warning("El proceso terminó pero con las siguientes advertencias:")
+        for e in set(errors):
+            st.write(f"⚠️ {e}")
+            
+    st.success(f"🎉 ¡Magia completada! Se procesaron {assigned} asignaciones o excepciones diarias en el sistema.")
