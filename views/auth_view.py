@@ -1,12 +1,13 @@
 import bcrypt
 import pandas as pd
 import streamlit as st
-from datetime import datetime
+import random
+from datetime import datetime, timedelta
 
 from database_conn.connection import db_conn
 from utils.auth import verify_login
 from utils.constants import AREA_MAPPING
-from services.email_service import send_welcome_email
+from services.email_service import send_welcome_email, send_password_reset_pin, send_password_changed_email
 
 @st.dialog("📝 Registro en Portal de Empleados", width="large")
 def register_employee_dialog():
@@ -164,7 +165,154 @@ def register_employee_dialog():
             st.session_state["reg_error"] = ""
             st.rerun()
 
+@st.dialog("🔐 Recuperación de Contraseña", width="large")
+def forgot_password_dialog():
+    st.write("Sigue los pasos para restablecer tu contraseña de forma autónoma.")
+    
+    if "fp_step" not in st.session_state:
+        st.session_state["fp_step"] = 1
+    if "fp_dni" not in st.session_state:
+        st.session_state["fp_dni"] = ""
+    if "fp_error" not in st.session_state:
+        st.session_state["fp_error"] = ""
+        
+    def check_dni():
+        st.session_state["fp_error"] = ""
+        dni = st.session_state.get("fp_dni_input", "").strip()
+        if not dni:
+            st.session_state["fp_error"] = "Ingresa tu número de documento."
+            return
+            
+        conn = db_conn()
+        df = pd.read_sql_query("SELECT full_name, emp_email FROM users_app WHERE username = ?", conn, params=(dni,))
+        if df.empty:
+            st.session_state["fp_error"] = "Esa cédula no está registrada. Contacta a Recursos Humanos."
+            conn.close()
+            return
+            
+        emp_email = df.iloc[0]['emp_email']
+        full_name = df.iloc[0]['full_name']
+        
+        if not emp_email:
+            st.session_state["fp_error"] = "Tu perfil no tiene un correo electrónico configurado. Para tu seguridad, debes contactar a Nómina."
+            conn.close()
+            return
+            
+        # Generar PIN aleatorio de 6 dígitos
+        pin = str(random.randint(100000, 999999))
+        expires = (datetime.now() + timedelta(minutes=5)).isoformat(timespec="seconds")
+        
+        from database_conn.connection import DB_PATH
+        print("====== STREAMLIT DB_PATH IS ======", DB_PATH)
+        
+        # Asegurar columnas en tiempo de ejecución por si hay un fallo de sync con SQLite WAL
+        try:
+            cur = conn.cursor()
+            cur.execute("ALTER TABLE users_app ADD COLUMN reset_pin TEXT;")
+            conn.commit()
+        except:
+            pass
+            
+        try:
+            cur = conn.cursor()
+            cur.execute("ALTER TABLE users_app ADD COLUMN reset_expires TEXT;")
+            conn.commit()
+        except:
+            pass
+            
+        cur = conn.cursor()
+        cur.execute("UPDATE users_app SET reset_pin = ?, reset_expires = ? WHERE username = ?", (pin, expires, dni))
+        conn.commit()
+        conn.close()
+        
+        # Enviar correo con PIN
+        send_password_reset_pin(emp_email, full_name, pin)
+        
+        st.session_state["fp_dni"] = dni
+        st.session_state["fp_step"] = 2
+        
+    def reset_pw():
+        st.session_state["fp_error"] = ""
+        pin = st.session_state.get("fp_pin_input", "").strip()
+        pw1 = st.session_state.get("fp_pw1", "")
+        pw2 = st.session_state.get("fp_pw2", "")
+        
+        if not pin or not pw1 or not pw2:
+            st.session_state["fp_error"] = "Llena todos los campos."
+            return
+        if pw1 != pw2:
+            st.session_state["fp_error"] = "Las contraseñas nuevas no coinciden."
+            return
+            
+        conn = db_conn()
+        df = pd.read_sql_query("SELECT reset_pin, reset_expires FROM users_app WHERE username = ?", conn, params=(st.session_state["fp_dni"],))
+        
+        if df.empty or df.iloc[0]['reset_pin'] != pin:
+            st.session_state["fp_error"] = "PIN incorrecto. Revisa el correo electrónico."
+            conn.close()
+            return
+            
+        expires = datetime.fromisoformat(df.iloc[0]['reset_expires'])
+        if datetime.now() > expires:
+            st.session_state["fp_error"] = "El PIN ha expirado (pasaron más de 5 minutos). Por favor, solicita uno nuevo."
+            cur = conn.cursor()
+            cur.execute("UPDATE users_app SET reset_pin = NULL, reset_expires = NULL WHERE username = ?", (st.session_state["fp_dni"],))
+            conn.commit()
+            conn.close()
+            return
+            
+        # Hashear nueva contraseña
+        pw_hash = bcrypt.hashpw(pw1.encode("utf-8"), bcrypt.gensalt())
+        cur = conn.cursor()
+        cur.execute("UPDATE users_app SET password_hash = ?, reset_pin = NULL, reset_expires = NULL WHERE username = ?", (pw_hash, st.session_state["fp_dni"]))
+        conn.commit()
+        
+        # Consultar de forma segura para enviar correo
+        df_mail = pd.read_sql_query("SELECT full_name, emp_email FROM users_app WHERE username = ?", conn, params=(st.session_state["fp_dni"],))
+        conn.close()
+        
+        if not df_mail.empty and df_mail.iloc[0]['emp_email']:
+            send_password_changed_email(df_mail.iloc[0]['emp_email'], df_mail.iloc[0]['full_name'], pw1)
+        
+        st.session_state["fp_step"] = 3
 
+    if st.session_state["fp_step"] == 1:
+        st.info("Paso 1: Identificación")
+        st.text_input("Ingresa tu Número de Cédula", key="fp_dni_input")
+        if st.session_state["fp_error"]:
+            st.error(st.session_state["fp_error"])
+        
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            st.button("Enviar PIN al Correo", type="primary", use_container_width=True, on_click=check_dni)
+        with col_btn2:
+            if st.button("Cancelar", use_container_width=True):
+                st.rerun()
+        
+    elif st.session_state["fp_step"] == 2:
+        st.info("Paso 2: Digita el PIN y la Nueva Clave")
+        st.warning("Hemos enviado un PIN de 6 dígitos a tu correo. Revisa también la carpeta de SPAM o Correos no deseados. El PIN expira en 5 minutos.")
+        st.text_input("PIN de 6 dígitos", key="fp_pin_input")
+        st.text_input("Nueva Contraseña", type="password", key="fp_pw1")
+        st.text_input("Confirmar Nueva Contraseña", type="password", key="fp_pw2")
+        if st.session_state["fp_error"]:
+            st.error(st.session_state["fp_error"])
+            
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            st.button("Cambiar Contraseña", type="primary", use_container_width=True, on_click=reset_pw)
+        with col_btn2:
+            if st.button("Volver a solicitar PIN", use_container_width=True):
+                st.session_state["fp_step"] = 1
+                st.rerun()
+        
+    elif st.session_state["fp_step"] == 3:
+        st.success("🎉 ¡Tu contraseña ha sido cambiada exitosamente!")
+        st.write("Ya puedes cerrar esta ventana e iniciar sesión con tu nueva clave en la pantalla principal.")
+        if st.button("Cerrar Ventana", type="primary", use_container_width=True):
+            st.session_state["fp_step"] = 1
+            st.session_state["fp_dni"] = ""
+            st.rerun()
 def page_login():
     # Global CSS injection for subtle polish:
     st.markdown("""
@@ -234,6 +382,11 @@ def page_login():
                         st.warning("⚠️ Debes digitar tu número de documento completo y la contraseña.")
                         
                 st.divider()
-                st.write("¿Es tu primera vez entrando al portal digital?")
-                if st.button("Registrar / Asignar mi primera Contraseña 🔑", use_container_width=True):
-                    register_employee_dialog()
+                st.write("¿Problemas de acceso o primera vez en el portal?")
+                colA, colB = st.columns(2)
+                with colA:
+                    if st.button("Olvidé mi Contraseña 🔄", use_container_width=True):
+                        forgot_password_dialog()
+                with colB:
+                    if st.button("Asignar Primera Clave 🔑", use_container_width=True):
+                        register_employee_dialog()
