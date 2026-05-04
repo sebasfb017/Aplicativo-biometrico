@@ -314,7 +314,7 @@ def forgot_password_dialog():
             st.session_state["fp_dni"] = ""
             st.rerun()
 def page_login():
-    # Global CSS injection for subtle polish:
+    # Inyección de CSS global para un acabado visual sutil:
     st.markdown("""
         <style>
         .stButton>button {

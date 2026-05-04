@@ -168,7 +168,7 @@ def get_device_users_status(device: dict):
             templates = conn.get_templates()
             enrolled_uids = {t.uid for t in templates}
         except Exception:
-            # Fallback if get_templates is not supported by firmware
+            # Alternativa si get_templates no es compatible con el firmware
             enrolled_uids = set()
         
         result = []
@@ -262,8 +262,8 @@ def sync_all_devices(devices_list: list):
     Paso 1: Descargar el 'maestro' sumando los usuarios y huellas de todos.
     Paso 2: Subir lo que le falte a cada reloj.
     """
-    master_users = {} # user_id_str -> {name, privilege, password, group_id}
-    master_templates = {} # user_id_str -> dict de {fid: TemplateObject}
+    master_users = {} # user_id_str -> {nombre, privilegio, contraseña, group_id}
+    master_templates = {} # user_id_str -> diccionario de {fid: ObjetoPlantilla}
     logs = []
     
     # --- PASO 1: RECOLECTAR MAESTRO ---

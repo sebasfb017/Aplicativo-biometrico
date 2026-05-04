@@ -13,23 +13,23 @@ from datetime import datetime, date, time, timedelta
 from database_conn.connection import db_conn, DATA_DIR, DB_PATH
 
 # -----------------------------
-# Auth
+# Autenticación
 from utils.auth import get_user, verify_login, require_role
 
 # -----------------------------
-# DEVICES ZK
+# Dispositivos ZK
 from services.zk_service import load_devices, save_devices, download_attendance_from_device, sync_device_time, upsert_attendance
 
 # -----------------------------
-# NOTIFICATIONS
+# Notificaciones
 from services.notifications import send_notification_email, notify_employee, log_audit, generate_fth012_html
 
 # -----------------------------
-# ANALYTICS
+# Analíticas
 from services.analytics import compute_month_lateness, fetch_attendance_between, to_excel_bytes, schedule_for_user_date, schedule_for_date
 
 # -----------------------------
-# DB
+# Base de Datos
 from database_conn.setup import init_db
 from database_conn.queries import (
     upsert_employees_df, db_create_leave_request, is_holiday, 
@@ -39,11 +39,11 @@ from database_conn.queries import (
 )
 
 # -----------------------------
-# CONSTANTS
+# Constantes
 from utils.constants import ROLES, AREA_MAPPING
 
 # -----------------------------
-# VIEWS
+# Vistas
 from views.auth_view import page_login, register_employee_dialog
 from views.dashboard_view import page_dashboard
 from views.employees_view import page_employees
@@ -61,8 +61,8 @@ from views.employee_360_view import page_employee_360
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-# helper for default schedules file path (must be computed at runtime
-# because DATA_DIR can be monkeypatched in tests).
+# Función de ayuda para la ruta del archivo de horarios por defecto (debe ser calculada en tiempo de ejecución
+# porque DATA_DIR puede ser modificada en las pruebas).
 
 def toggle_theme_config():
     config_path = os.path.join(os.path.dirname(__file__), ".streamlit", "config.toml")
@@ -95,7 +95,7 @@ def main():
             page_login()
         return
 
-    # Sidebar Header
+    # Encabezado de la barra lateral
     st.sidebar.markdown(f"<h2 style='text-align: center; color: #0066cc;'>Dolormed RRHH</h2>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='text-align: center; color: gray; margin-bottom: 20px;'>Hola, <b>{user['full_name']}</b><br><small>({user['role'].upper()})</small></div>", unsafe_allow_html=True)
 
