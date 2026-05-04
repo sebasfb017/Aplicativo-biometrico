@@ -5,6 +5,7 @@ from datetime import datetime, date, timedelta
 from database_conn.connection import db_conn
 from database_conn.queries import db_create_leave_request
 from services.notifications import generate_fth012_html
+from services.email_service import send_novedad_alert
 
 @st.dialog("Detalles de Mi Solicitud (F-TH-012)")
 def show_leave_request_details(req_id: int):
@@ -154,6 +155,21 @@ def page_employee_portal():
                     user["username"], d_start, d_end, str_ts, str_te,
                     total_time, reason_type, r_desc, makeup, is_paid == "Sí"
                 )
+                
+                # --- ALERTA DE CORREO A RRHH ---
+                try:
+                    conn = db_conn()
+                    admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
+                    conn.close()
+                    admin_emails = admin_df['emp_email'].tolist()
+                    
+                    if admin_emails:
+                        ok, msg = send_novedad_alert(admin_emails, user["full_name"], reason_type, r_desc, total_time, d_start)
+                        if not ok:
+                            st.warning(f"La solicitud fue creada, pero hubo un fallo enviando el correo a RRHH: {msg}")
+                except Exception as e:
+                    st.warning(f"Error interno al enviar correo: {e}")
+                
                 st.success("✅ Solicitud enviada exitosamente. Conserva tu historial en la pestaña 'Mis Solicitudes'.")
                 
     with t2:
