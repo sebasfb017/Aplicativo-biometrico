@@ -8,6 +8,7 @@ from services.notifications import log_audit
 from database_conn.queries import get_users_by_role, get_all_employees
 from utils.auth import require_role
 from utils.constants import AREA_MAPPING
+from services.email_service import load_smtp_config, save_smtp_config, send_welcome_email
 
 @st.dialog("✏️ Editar Usuario", width="large")
 def edit_user_dialog(username: str, emp_df: pd.DataFrame):
@@ -133,7 +134,7 @@ def page_users_admin():
     st.title("👥 Gestión de Usuarios")
     st.write("Administra los accesos al portal de Nómina Dolormed.")
     
-    tab1, tab2, tab3 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados", "⚙️ Servidor de Correos"])
 
     with tab1:
         st.subheader("Datos del Nuevo Usuario")
@@ -209,6 +210,15 @@ def page_users_admin():
                     
                     log_audit("CREATE_USER", f"Usuario creado/actualizado: {u} ({full}) con rol {role}")
                     st.success(f"Usuario {u} ({full}) creado/actualizado correctamente.")
+                    
+                    if new_email and active:
+                        st.info("Intentando enviar correo de bienvenida...")
+                        ok, msg = send_welcome_email(new_email, full, u, pw)
+                        if ok:
+                            st.success("📧 Correo de bienvenida enviado exitosamente.")
+                        else:
+                            st.warning(f"⚠️ El usuario fue creado, pero falló el envío del correo: {msg}")
+                            
                     get_users_by_role.clear()
 
     with tab2:
@@ -268,3 +278,30 @@ def page_users_admin():
                         edit_user_dialog(selected_username, emp_df)
             else:
                 st.session_state.last_processed_emp_user = None
+
+    with tab4:
+        st.subheader("Configuración del Servidor de Correo (SMTP)")
+        st.write("Configura la cuenta de correo desde donde el sistema enviará las alertas y credenciales.")
+        
+        cfg = load_smtp_config()
+        with st.form("smtp_form"):
+            s_host = st.text_input("Servidor SMTP (Ej. smtp.gmail.com)", value=cfg.get("smtp_server", "smtp.gmail.com"))
+            s_port = st.number_input("Puerto (Ej. 587 para TLS o 465 para SSL)", value=int(cfg.get("smtp_port", 587)), min_value=1)
+            s_user = st.text_input("Correo Emisor", value=cfg.get("smtp_user", ""))
+            s_pass = st.text_input("Contraseña de Aplicación", value=cfg.get("smtp_password", ""), type="password")
+            s_name = st.text_input("Nombre del Remitente", value=cfg.get("sender_name", "Nómina Dolormed"))
+            
+            st.info("Nota: Si usas Gmail, recuerda habilitar la Verificación en 2 Pasos y generar una 'Contraseña de Aplicación'. No uses tu contraseña normal.")
+            sub_smtp = st.form_submit_button("💾 Guardar Configuración", type="primary")
+            if sub_smtp:
+                new_cfg = {
+                    "smtp_server": s_host.strip(),
+                    "smtp_port": s_port,
+                    "smtp_user": s_user.strip(),
+                    "smtp_password": s_pass.strip(),
+                    "sender_name": s_name.strip()
+                }
+                if save_smtp_config(new_cfg):
+                    st.success("✅ Configuración SMTP guardada correctamente.")
+                else:
+                    st.error("❌ Error al guardar la configuración.")
