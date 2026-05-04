@@ -15,7 +15,16 @@ def init_db():
         role TEXT NOT NULL CHECK(role IN ('admin','nomina')),
         password_hash BLOB NOT NULL,
         active INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        emp_department TEXT,
+        emp_area TEXT,
+        emp_subarea TEXT,
+        emp_phone TEXT,
+        emp_email TEXT,
+        managed_department TEXT,
+        managed_area TEXT,
+        reset_pin TEXT,
+        reset_expires TEXT
     );
     """)
 
