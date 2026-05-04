@@ -150,7 +150,13 @@ def init_db():
         how_to_makeup TEXT,
         is_paid INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'PENDING',
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        approved_by_coord TEXT,
+        coord_approval_date TEXT,
+        approved_by_jefe TEXT,
+        jefe_approval_date TEXT,
+        approved_by_rrhh TEXT,
+        rrhh_approval_date TEXT
     );
     """)
 
