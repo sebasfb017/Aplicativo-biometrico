@@ -156,15 +156,14 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
     conn = db_conn()
     role = st.session_state.get("user", {}).get("role", "empleado")
     
-    # Definición de estados según el motivo y rol del solicitante
-    if r_type in ["Citas médicas", "Incapacidad", "Calamidad"]:
-        target_status = "PENDING_RRHH"
-    else:
-        target_status = "PENDING_INMEDIATO"
-        
-    if role == "coordinador" and target_status == "PENDING_INMEDIATO":
-        target_status = "PENDING_AREA"
-    elif role == "jefe_area" or role in ["admin", "nomina"]:
+    # Por defecto inicia en el nivel más bajo (Coordinador)
+    target_status = "PENDING_COORD"
+    
+    # Si el que radica es un coordinador, salta a Jefe de Área
+    if role == "coordinador":
+        target_status = "PENDING_JEFE"
+    # Si el que radica es Jefe o Admin/Nómina, va directo a RRHH
+    elif role in ["jefe_area", "admin", "nomina"]:
         target_status = "PENDING_RRHH"
 
     cur = conn.cursor()
@@ -181,8 +180,58 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
     conn.commit()
     conn.close()
     
-    # Notificación automática al radicar
-    emp_email = st.session_state["user"].get("emp_email", "")
-    if emp_email:
-        send_notification_email(emp_email, f"Dolormed: Novedad Radicada #{req_id}", 
-                                f"Tu solicitud de {r_type} ha sido radicada. Estado: {target_status}")
+    
+    # Aquí podríamos notificar al coordinador de su departamento, 
+    # pero eso lo haremos en las vistas para poder buscar su email.
+    return req_id
+
+def db_approve_leave_request_coord(req_id, coord_username):
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE leave_requests 
+        SET status = 'PENDING_JEFE', approved_by_coord = ?, coord_approval_date = ?
+        WHERE id = ? AND status = 'PENDING_COORD'
+    """, (coord_username, datetime.now().isoformat(timespec="seconds"), req_id))
+    conn.commit()
+    conn.close()
+
+def db_approve_leave_request_jefe(req_id, jefe_username):
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE leave_requests 
+        SET status = 'PENDING_RRHH', approved_by_jefe = ?, jefe_approval_date = ?
+        WHERE id = ? AND status = 'PENDING_JEFE'
+    """, (jefe_username, datetime.now().isoformat(timespec="seconds"), req_id))
+    conn.commit()
+    conn.close()
+
+def db_approve_leave_request_rrhh(req_id, rrhh_username):
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE leave_requests 
+        SET status = 'APPROVED', approved_by_rrhh = ?, rrhh_approval_date = ?
+        WHERE id = ? AND status = 'PENDING_RRHH'
+    """, (rrhh_username, datetime.now().isoformat(timespec="seconds"), req_id))
+    conn.commit()
+    conn.close()
+
+def db_reject_leave_request(req_id, rejected_by):
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE leave_requests 
+        SET status = 'REJECTED'
+        WHERE id = ?
+    """, (req_id,))
+    
+    # Log the rejection in audit logs
+    cur.execute("""
+        INSERT INTO audit_logs (user_id, action, details, timestamp)
+        VALUES (?, ?, ?, ?)
+    """, (rejected_by, "REJECT_LEAVE", f"Rechazó la solicitud #{req_id}", datetime.now().isoformat(timespec="seconds")))
+    
+    conn.commit()
+    conn.close()
