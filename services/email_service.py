@@ -198,3 +198,107 @@ El empleado {full_name} acaba de radicar una nueva solicitud:
 Por favor ingresa al portal administrativo para aprobar o rechazar esta solicitud.
 """
     return _send_email(to_emails, subject, html, text)
+
+def send_password_reset_pin(to_email: str, full_name: str, pin: str):
+    """Envia el PIN temporal de recuperación de contraseña."""
+    subject = f"Código de Recuperación de Contraseña - Dolormed"
+    
+    html = f"""
+    <html>
+      <head>
+        <style>
+          body {{ font-family: Arial, sans-serif; background-color: #f4f7f6; color: #333; }}
+          .container {{ max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
+          .header {{ text-align: center; border-bottom: 2px solid #0D6EFD; padding-bottom: 10px; margin-bottom: 20px; }}
+          .header h2 {{ color: #0D6EFD; margin: 0; }}
+          .content {{ line-height: 1.6; text-align: center; }}
+          .pin-box {{ background: #e9ecef; border: 2px dashed #0D6EFD; padding: 20px; border-radius: 5px; margin: 20px auto; font-size: 32px; font-weight: bold; letter-spacing: 5px; width: fit-content; }}
+          .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: #777; }}
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h2>Recuperación de Contraseña</h2>
+          </div>
+          <div class="content">
+            <p>Hola <strong>{full_name}</strong>,</p>
+            <p>Hemos recibido una solicitud para restablecer tu contraseña en el Portal de Autogestión.</p>
+            <p>Ingresa el siguiente PIN de seguridad en la pantalla. <strong>Este PIN expirará en 5 minutos.</strong></p>
+            
+            <div class="pin-box">
+              {pin}
+            </div>
+            
+            <p style="color: #d9534f; font-size: 14px;">Si no fuiste tú quien solicitó esto, ignora este mensaje y tu contraseña seguirá siendo la misma.</p>
+          </div>
+          <div class="footer">
+            <p>Clínica Dolormed - Sistema de Recursos Humanos</p>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    text = f"""
+Recuperación de Contraseña - Clínica Dolormed
+
+Hola {full_name},
+
+Hemos recibido una solicitud para restablecer tu contraseña.
+Tu PIN temporal es: {pin}
+
+Este PIN expirará en 5 minutos. Si no fuiste tú, ignora este mensaje.
+"""
+    return _send_email([to_email], subject, html, text)
+
+def send_password_changed_email(to_email: str, full_name: str, new_password: str):
+    """Envia una confirmación de que la contraseña ha sido cambiada, incluyendo la nueva contraseña."""
+    subject = f"Contraseña Actualizada - Dolormed"
+    
+    html = f"""
+    <html>
+      <head>
+        <style>
+          body {{ font-family: Arial, sans-serif; background-color: #f4f7f6; color: #333; }}
+          .container {{ max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
+          .header {{ text-align: center; border-bottom: 2px solid #28a745; padding-bottom: 10px; margin-bottom: 20px; }}
+          .header h2 {{ color: #28a745; margin: 0; }}
+          .content {{ line-height: 1.6; text-align: center; }}
+          .password-box {{ background: #e9ecef; border: 1px solid #ced4da; padding: 15px; border-radius: 5px; margin: 20px auto; font-size: 20px; font-weight: bold; width: fit-content; }}
+          .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: #777; }}
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h2>¡Contraseña Cambiada Exitosamente!</h2>
+          </div>
+          <div class="content">
+            <p>Hola <strong>{full_name}</strong>,</p>
+            <p>Te confirmamos que la contraseña de tu cuenta en el Portal de Empleados ha sido actualizada correctamente.</p>
+            <p>Tus nuevas credenciales de acceso son:</p>
+            
+            <div class="password-box">
+              {new_password}
+            </div>
+            
+            <p style="color: #6c757d; font-size: 14px;">Te recomendamos eliminar este correo una vez hayas memorizado tu contraseña por razones de seguridad.</p>
+          </div>
+          <div class="footer">
+            <p>Clínica Dolormed - Sistema de Recursos Humanos</p>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    text = f"""
+Contraseña Actualizada - Clínica Dolormed
+
+Hola {full_name},
+
+Tu contraseña en el Portal de Empleados ha sido actualizada correctamente.
+Tu nueva contraseña es: {new_password}
+
+Te recomendamos eliminar este correo por razones de seguridad.
+"""
+    return _send_email([to_email], subject, html, text)
