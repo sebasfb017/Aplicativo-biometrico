@@ -6,6 +6,7 @@ from datetime import datetime
 from database_conn.connection import db_conn
 from utils.auth import verify_login
 from utils.constants import AREA_MAPPING
+from services.email_service import send_welcome_email
 
 @st.dialog("📝 Registro en Portal de Empleados", width="large")
 def register_employee_dialog():
@@ -57,6 +58,10 @@ def register_employee_dialog():
         phone = st.session_state.get("reg_phone", "").strip()
         email = st.session_state.get("reg_email", "").strip()
         
+        role = st.session_state.get("reg_role", "empleado")
+        managed_dept = st.session_state.get("reg_managed_dept", "")
+        managed_area = st.session_state.get("reg_managed_area", "")
+        
         if not pass1 or not pass2 or not phone or not email:
             st.session_state["reg_error"] = "Todos los campos de Registro (Teléfono, Correo y Contraseñas) son obligatorios."
             return
@@ -74,10 +79,17 @@ def register_employee_dialog():
         cur = conn.cursor()
         try:
             cur.execute("""
-                INSERT INTO users_app(username, full_name, role, password_hash, active, created_at, managed_department, emp_area, emp_subarea, emp_phone, emp_email)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)
-            """, (st.session_state["reg_dni"], st.session_state["reg_name"], "empleado", pw_hash, 1, datetime.now().isoformat(timespec="seconds"), "", sel_area, sel_subarea, phone, email))
+                INSERT INTO users_app(username, full_name, role, password_hash, active, created_at, managed_department, emp_area, emp_subarea, emp_phone, emp_email, managed_area)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (st.session_state["reg_dni"], st.session_state["reg_name"], role, pw_hash, 1, datetime.now().isoformat(timespec="seconds"), managed_dept, sel_area, sel_subarea, phone, email, managed_area))
             conn.commit()
+            
+            # Intentar enviar correo de bienvenida de forma silente
+            try:
+                send_welcome_email(email, st.session_state["reg_name"], st.session_state["reg_dni"], pass1)
+            except Exception:
+                pass
+                
             st.session_state["reg_step"] = 3
         except Exception as e:
             st.session_state["reg_error"] = f"Error al crear el usuario: {str(e)}"
@@ -117,6 +129,18 @@ def register_employee_dialog():
             
         st.selectbox("Sub-área / Cargo", AREA_MAPPING[selected_a], key="reg_sel_subarea")
         
+        st.markdown("---")
+        rol_options = {"empleado": "Empleado Regular", "coordinador": "Coordinador de Departamento", "jefe_area": "Jefe de Área"}
+        selected_role = st.selectbox("Rol en el Sistema", list(rol_options.keys()), format_func=lambda x: rol_options[x], key="reg_role")
+        
+        if selected_role == "coordinador":
+            depts = ["Sistemas", "Facturación", "Glosas", "Cartera", "Admisiones", "Enfermería", "SIAU", "Calidad", "SST", "Contabilidad", "Imagenología"]
+            st.selectbox("¿Qué Departamento coordinas?", [""] + sorted(depts), key="reg_managed_dept")
+            
+        elif selected_role == "jefe_area":
+            areas = ["Administrativa", "Financiera", "Asistencial", "Médica"]
+            st.selectbox("¿Qué Área tienes a cargo?", [""] + sorted(areas), key="reg_managed_area")
+            
         st.markdown("---")
         st.text_input("Ingresa una Contraseña nueva", type="password", key="reg_pass1")
         st.text_input("Confirma tu Contraseña", type="password", key="reg_pass2")
