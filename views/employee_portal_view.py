@@ -151,22 +151,49 @@ def page_employee_portal():
                 str_ts = time_s.strftime("%H:%M") if time_s else ""
                 str_te = time_e.strftime("%H:%M") if time_e else ""
                 
-                db_create_leave_request(
+                req_id = db_create_leave_request(
                     user["username"], d_start, d_end, str_ts, str_te,
                     total_time, reason_type, r_desc, makeup, is_paid == "Sí"
                 )
                 
-                # --- ALERTA DE CORREO A RRHH ---
+                # --- ALERTA DE CORREO INTELIGENTE ---
                 try:
                     conn = db_conn()
-                    admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
-                    conn.close()
-                    admin_emails = admin_df['emp_email'].tolist()
+                    # Verificar el estado en el que quedó
+                    req_df = pd.read_sql_query("SELECT status FROM leave_requests WHERE id = ?", conn, params=(req_id,))
                     
-                    if admin_emails:
-                        ok, msg = send_novedad_alert(admin_emails, user["full_name"], reason_type, r_desc, total_time, d_start)
-                        if not ok:
-                            st.warning(f"La solicitud fue creada, pero hubo un fallo enviando el correo a RRHH: {msg}")
+                    if not req_df.empty:
+                        target_status = req_df.iloc[0]['status']
+                        target_emails = []
+                        
+                        if target_status == 'PENDING_COORD':
+                            # Buscar departamento del empleado en la tabla employees
+                            emp_df = pd.read_sql_query("SELECT department FROM employees WHERE user_id = ?", conn, params=(user["username"],))
+                            dept = emp_df.iloc[0]['department'] if not emp_df.empty else ""
+                            
+                            coord_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'coordinador' AND managed_department = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(dept,))
+                            target_emails = coord_df['emp_email'].tolist()
+                            
+                        elif target_status == 'PENDING_JEFE':
+                            # Buscar área del empleado en la tabla users_app
+                            user_app_df = pd.read_sql_query("SELECT emp_area FROM users_app WHERE username = ?", conn, params=(user["username"],))
+                            area = user_app_df.iloc[0]['emp_area'] if not user_app_df.empty else ""
+                            
+                            jefe_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(area,))
+                            target_emails = jefe_df['emp_email'].tolist()
+                            
+                        elif target_status == 'PENDING_RRHH':
+                            admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
+                            target_emails = admin_df['emp_email'].tolist()
+                            
+                        conn.close()
+                        
+                        if target_emails:
+                            ok, msg = send_novedad_alert(target_emails, user["full_name"], reason_type, r_desc, total_time, d_start)
+                            if not ok:
+                                st.warning(f"La solicitud fue creada, pero hubo un fallo enviando la alerta: {msg}")
+                        else:
+                            st.info("Solicitud creada. (No se encontró un correo configurado para el aprobador en este nivel).")
                 except Exception as e:
                     st.warning(f"Error interno al enviar correo: {e}")
                 
