@@ -51,9 +51,16 @@ def _send_email(to_email, subject, html_content, text_content=""):
         return False, "Las credenciales SMTP no están configuradas."
         
     try:
+        import email.utils
+        from email.header import Header
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = f"{sender_name} <{sender_email}>"
+        
+        # Codificar correctamente el nombre si tiene tildes (RFC 5322)
+        formatted_from = email.utils.formataddr((str(Header(sender_name, 'utf-8')), sender_email))
+        msg["From"] = formatted_from
+        msg["Date"] = email.utils.formatdate(localtime=True)
+        msg["Message-ID"] = email.utils.make_msgid(domain=sender_email.split('@')[-1] if '@' in sender_email else 'dolormed.co')
         
         # Si to_email es una lista de destinatarios, lo convertimos en un string separado por comas
         if isinstance(to_email, list):
@@ -76,11 +83,15 @@ def _send_email(to_email, subject, html_content, text_content=""):
         part2 = MIMEText(html_content, "html")
         msg.attach(part2)
         
+        import ssl
+        context = ssl._create_unverified_context()
+        timeout_seconds = 15
+        
         if int(smtp_port) == 465:
-            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port), context=context, timeout=timeout_seconds)
         else:
-            server = smtplib.SMTP(smtp_server, int(smtp_port))
-            server.starttls()
+            server = smtplib.SMTP(smtp_server, int(smtp_port), timeout=timeout_seconds)
+            server.starttls(context=context)
             
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, recipient, msg.as_string())

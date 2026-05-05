@@ -151,7 +151,7 @@ def get_exceptions_df():
     conn.close()
     return df
 
-def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, total_time, r_type, r_desc, makeup, is_paid):
+def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, total_time, r_type, r_desc, makeup, is_paid, attachment_path=None):
     """Crea una solicitud digital y define el flujo de aprobación inicial."""
     conn = db_conn()
     role = st.session_state.get("user", {}).get("role", "empleado")
@@ -170,11 +170,11 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
     cur.execute("""
         INSERT INTO leave_requests (
             user_id, request_date, leave_date_start, leave_date_end, start_time, end_time, 
-            total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status, attachment_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (user_id, datetime.now().date().isoformat(), leave_start.isoformat(), leave_end.isoformat(),
           t_start, t_end, total_time, r_type, r_desc, makeup, 1 if is_paid else 0,
-          datetime.now().isoformat(timespec="seconds"), target_status))
+          datetime.now().isoformat(timespec="seconds"), target_status, attachment_path))
     
     req_id = cur.lastrowid
     conn.commit()

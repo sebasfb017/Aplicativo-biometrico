@@ -288,10 +288,10 @@ def page_users_admin():
             s_host = st.text_input("Servidor SMTP (Ej. smtp.gmail.com)", value=cfg.get("smtp_server", "smtp.gmail.com"))
             s_port = st.number_input("Puerto (Ej. 587 para TLS o 465 para SSL)", value=int(cfg.get("smtp_port", 587)), min_value=1)
             s_user = st.text_input("Correo Emisor", value=cfg.get("smtp_user", ""))
-            s_pass = st.text_input("Contraseña de Aplicación", value=cfg.get("smtp_password", ""), type="password")
+            s_pass = st.text_input("Contraseña del Correo (o Contraseña de Aplicación)", value=cfg.get("smtp_password", ""), type="password")
             s_name = st.text_input("Nombre del Remitente", value=cfg.get("sender_name", "Nómina Dolormed"))
             
-            st.info("Nota: Si usas Gmail, recuerda habilitar la Verificación en 2 Pasos y generar una 'Contraseña de Aplicación'. No uses tu contraseña normal.")
+            st.info("Nota: Si usas un correo corporativo, ingresa tu contraseña normal. Si usas Gmail/Outlook, recuerda habilitar la Verificación en 2 Pasos y generar una 'Contraseña de Aplicación'.")
             sub_smtp = st.form_submit_button("💾 Guardar Configuración", type="primary")
             if sub_smtp:
                 new_cfg = {
@@ -305,3 +305,22 @@ def page_users_admin():
                     st.success("✅ Configuración SMTP guardada correctamente.")
                 else:
                     st.error("❌ Error al guardar la configuración.")
+        
+        st.markdown("---")
+        st.subheader("Herramientas de Diagnóstico")
+        if st.button("🧪 Enviar Correo de Prueba"):
+            with st.spinner("Conectando al servidor SMTP..."):
+                from services.email_service import _send_email
+                test_email = cfg.get("smtp_user", "")
+                if not test_email:
+                    st.warning("Debes guardar un correo emisor primero.")
+                else:
+                    ok, msg = _send_email(
+                        test_email, 
+                        "Prueba de Conexión SMTP - Dolormed", 
+                        "<h1>¡Conexión Exitosa!</h1><p>Si recibes este correo, el servidor SMTP está configurado correctamente y enviando correos sin problemas.</p>"
+                    )
+                    if ok:
+                        st.success(f"✅ ¡Éxito! El servidor se conectó y el correo de prueba fue enviado a {test_email}.")
+                    else:
+                        st.error(f"❌ Falló el envío. El servidor arrojó el siguiente error:\n\n`{msg}`")

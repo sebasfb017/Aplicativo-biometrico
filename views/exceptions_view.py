@@ -68,10 +68,11 @@ def show_exception_details(exc_id: int):
             
         with db_session() as conn:
             df_audit = pd.read_sql_query("""
-                SELECT user_id, action, timestamp 
-                FROM audit_logs 
-                WHERE details LIKE ? AND action LIKE 'APPROVE_%'
-                ORDER BY timestamp ASC
+                SELECT a.user_id, a.action, a.timestamp, u.full_name
+                FROM audit_logs a
+                LEFT JOIN users_app u ON a.user_id = u.username
+                WHERE a.details LIKE ? AND a.action LIKE 'APPROVE_%'
+                ORDER BY a.timestamp ASC
             """, conn, params=(f"%Permiso #{req['id']} %",))
         
         if not df_audit.empty:
@@ -79,7 +80,8 @@ def show_exception_details(exc_id: int):
             st.markdown("**Trazabilidad de Aprobaciones:**")
             for _, row_a in df_audit.iterrows():
                 level = "Jefatura" if row_a['action'] == "APPROVE_LEAVE_L1" else "Gestión Humana"
-                st.caption(f"✓ **{level}**: {row_a['user_id']} ({row_a['timestamp']})")
+                approver_name = row_a['full_name'] if pd.notna(row_a['full_name']) else row_a['user_id']
+                st.caption(f"✓ **{level}**: {approver_name} ({row_a['timestamp']})")
     else:
         st.info("ℹ️ Esta novedad no parece tener una solicitud digital asociada del portal de empleados (o fue ingresada manualmente).")
 
@@ -94,7 +96,7 @@ def page_exceptions():
         if user["role"] == "coordinador":
             query = """
                 SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
-                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status
+                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path
                 FROM leave_requests lr
                 JOIN employees e ON lr.user_id = e.user_id
                 WHERE lr.status = 'PENDING_COORD' AND e.department = ?
@@ -104,7 +106,7 @@ def page_exceptions():
         else:
             query = """
                 SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
-                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status
+                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path
                 FROM leave_requests lr
                 JOIN employees e ON lr.user_id = e.user_id
                 WHERE lr.status = 'PENDING_JEFE' AND e.department LIKE ?
@@ -126,6 +128,14 @@ def page_exceptions():
                         st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}*")
                         st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
                         st.write(f"**Justificación:** {r['reason_description']}")
+                        
+                        if r['attachment_path']:
+                            import os
+                            from database_conn.connection import DATA_DIR
+                            file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
+                            if os.path.exists(file_path):
+                                with open(file_path, "rb") as f:
+                                    st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_coord_{r['id']}")
                     with cols[1]:
                         if st.button("👍 Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True):
                             if user["role"] == "coordinador":
@@ -243,7 +253,7 @@ def page_exceptions():
         with db_session() as conn:
             df_pend = pd.read_sql_query("""
                 SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
-                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status
+                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path
                 FROM leave_requests lr
                 JOIN employees e ON lr.user_id = e.user_id
                 WHERE lr.status = 'PENDING_RRHH'
@@ -262,6 +272,14 @@ def page_exceptions():
                         st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}* | {badge}")
                         st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
                         st.write(f"**Justificación:** {r['reason_description']}")
+                        
+                        if r['attachment_path']:
+                            import os
+                            from database_conn.connection import DATA_DIR
+                            file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
+                            if os.path.exists(file_path):
+                                with open(file_path, "rb") as f:
+                                    st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_rrhh_{r['id']}")
                     with cols[1]:
                         btn_label = "✅ Aprobar Final"
                         if st.button(btn_label, key=f"btn_acc_hr_{r['id']}", type="primary", use_container_width=True):

@@ -165,7 +165,8 @@ def init_db():
         approved_by_jefe TEXT,
         jefe_approval_date TEXT,
         approved_by_rrhh TEXT,
-        rrhh_approval_date TEXT
+        rrhh_approval_date TEXT,
+        attachment_path TEXT
     );
     """)
 

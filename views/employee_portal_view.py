@@ -14,10 +14,11 @@ def show_leave_request_details(req_id: int):
     
     # Extraer trazabilidad de aprobadores
     df_audit = pd.read_sql_query("""
-        SELECT user_id, action, timestamp 
-        FROM audit_logs 
-        WHERE details LIKE ? AND action LIKE 'APPROVE_%'
-        ORDER BY timestamp ASC
+        SELECT a.user_id, a.action, a.timestamp, u.full_name
+        FROM audit_logs a
+        LEFT JOIN users_app u ON a.user_id = u.username
+        WHERE a.details LIKE ? AND a.action LIKE 'APPROVE_%'
+        ORDER BY a.timestamp ASC
     """, conn, params=(f"%Permiso #{req_id} %",))
     
     conn.close()
@@ -71,7 +72,8 @@ def show_leave_request_details(req_id: int):
         st.markdown("**Trazabilidad de Aprobaciones:**")
         for _, row_a in df_audit.iterrows():
             level = "Jefatura" if row_a['action'] == "APPROVE_LEAVE_L1" else "Gestión Humana"
-            st.caption(f"✓ **{level}**: {row_a['user_id']} ({row_a['timestamp']})")
+            approver_name = row_a['full_name'] if pd.notna(row_a['full_name']) else row_a['user_id']
+            st.caption(f"✓ **{level}**: {approver_name} ({row_a['timestamp']})")
 
 
 def page_employee_portal():
@@ -138,6 +140,10 @@ def page_employee_portal():
         r_desc = st.text_area("Justificación / Detalles del permiso")
         makeup = st.text_input("¿Cómo se repone el tiempo? (Dejar en blanco si es remunerado/laboral)")
         
+        st.markdown("---")
+        st.write("📄 **Documento de Soporte (Opcional)**")
+        uploaded_file = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal", type=["pdf", "png", "jpg", "jpeg"])
+        
         submitted = st.button("Firmar y Enviar a RRHH", type="primary")
             
         if submitted:
@@ -151,9 +157,30 @@ def page_employee_portal():
                 str_ts = time_s.strftime("%H:%M") if time_s else ""
                 str_te = time_e.strftime("%H:%M") if time_e else ""
                 
+                # Manejo de archivo adjunto
+                attachment_path = None
+                if uploaded_file is not None:
+                    import os
+                    import time
+                    from database_conn.connection import DATA_DIR
+                    
+                    uploads_dir = os.path.join(DATA_DIR, "uploads")
+                    os.makedirs(uploads_dir, exist_ok=True)
+                    
+                    # Nombre único basado en DNI y timestamp para evitar sobreescrituras
+                    file_extension = os.path.splitext(uploaded_file.name)[1]
+                    safe_filename = f"{user['username']}_{int(time.time())}{file_extension}"
+                    full_path = os.path.join(uploads_dir, safe_filename)
+                    
+                    with open(full_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                        
+                    # Guardamos solo el nombre del archivo o ruta relativa para ser portable
+                    attachment_path = safe_filename
+                
                 req_id = db_create_leave_request(
                     user["username"], d_start, d_end, str_ts, str_te,
-                    total_time, reason_type, r_desc, makeup, is_paid == "Sí"
+                    total_time, reason_type, r_desc, makeup, is_paid == "Sí", attachment_path
                 )
                 
                 # --- ALERTA DE CORREO INTELIGENTE ---

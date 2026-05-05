@@ -4,25 +4,19 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from database_conn.connection import db_conn
 
+from services.email_service import _send_email
+
 def send_notification_email(to_email, subject, body):
-    """Envía correos automáticos simulando un servidor SMTP."""
+    """Envía correos automáticos usando la configuración SMTP."""
     if not to_email:
         return
     
-    sender_email = "nomina@dolormed.com"
-    # sender_password = "TU_PASSWORD" # TODO: Configurar credenciales reales
-    
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'html'))
-        
-        # Como no hay credenciales reales configuradas, solo imprimimos el log en consola
-        print(f"📧 [EMAIL] Enviando a {to_email} | Asunto: {subject}")
-    except Exception as e:
-        print(f"Error enviando correo: {e}")
+    # Delegar al enviador de correos real
+    success, msg = _send_email(to_email, subject, body)
+    if not success:
+        print(f"Error enviando correo: {msg}")
+    else:
+        print(f"📧 [EMAIL] Enviado a {to_email} | Asunto: {subject}")
 
 def notify_employee(user_id, subject, body):
     """Busca el correo del empleado y le envía una notificación."""
@@ -61,7 +55,8 @@ def generate_fth012_html(req, df_audit):
         for _, r in df_audit.iterrows():
             level = "Jefatura" if r['action'] == "APPROVE_LEAVE_L1" else "Gestión Humana"
             date_f = r['timestamp'].replace('T', ' ')
-            approvers_html += f"<li><strong>{level} ({r['user_id']})</strong> - <em>{date_f}</em></li>"
+            approver_name = r['full_name'] if 'full_name' in r and pd.notna(r['full_name']) else r['user_id']
+            approvers_html += f"<li><strong>{level} ({approver_name})</strong> - <em>{date_f}</em></li>"
         approvers_html += "</ul>"
 
     html_content = f"""
