@@ -2,10 +2,17 @@ import os
 import sqlite3
 from contextlib import contextmanager
 
-# Definición de rutas base dinámicas (Sube un nivel para encontrar 'data')
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-DB_PATH = os.path.join(DATA_DIR, "app.db")
+from config import APP_CONFIG, BASE_DIR
+
+# Definición de rutas base dinámicas basadas en config
+db_path_config = APP_CONFIG.get("database", {}).get("path", "data/app.db")
+
+if not os.path.isabs(db_path_config):
+    DB_PATH = os.path.join(BASE_DIR, db_path_config)
+else:
+    DB_PATH = db_path_config
+
+DATA_DIR = os.path.dirname(DB_PATH)
 
 def db_conn():
     """Establece y retorna la conexión a la base de datos SQLite."""

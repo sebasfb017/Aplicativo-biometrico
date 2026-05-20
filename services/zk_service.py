@@ -3,6 +3,10 @@ import yaml
 from datetime import datetime
 from zk import ZK
 from database_conn.connection import db_conn, BASE_DIR
+from config import APP_CONFIG
+
+DEFAULT_PORT = APP_CONFIG.get("zkteco", {}).get("default_port", 4370)
+DEFAULT_TIMEOUT = APP_CONFIG.get("zkteco", {}).get("timeout", 10)
 
 # Apuntamos dinámicamente al archivo de configuración de los relojes
 DEVICES_YAML = os.path.join(BASE_DIR, "devices.yaml")
@@ -41,18 +45,18 @@ def download_attendance_from_device(device: dict):
     """Conecta por UDP al reloj y descarga las marcaciones en crudo."""
     ip = device["ip"]
     try:
-        port = int(device.get("port", 4370))
+        port = int(device.get("port", DEFAULT_PORT))
     except Exception:
-        port = device.get("port", 4370)
+        port = device.get("port", DEFAULT_PORT)
     password = device.get("password", 0)
     try:
         password = int(password)
     except Exception:
         pass
     try:
-        timeout = int(device.get("timeout", 10))
+        timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception:
-        timeout = device.get("timeout", 10)
+        timeout = device.get("timeout", DEFAULT_TIMEOUT)
     name = device.get("name", ip)
 
     zk = ZK(ip, port=port, timeout=timeout, password=password)
