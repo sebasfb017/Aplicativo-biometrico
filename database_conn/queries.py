@@ -7,8 +7,8 @@ from services.notifications import send_notification_email
 
 # --- GESTIÓN DE USUARIOS (Corrección de Errores y Consultas) ---
 
-# CACHE: Reduce la carga del servidor y elimina parpadeos visuales al cambiar tabs. Refresca cada 15 segundos.
-@st.cache_data(ttl=15, show_spinner=False)
+# CACHE: Carga infinita, se limpia manualmente al haber cambios.
+@st.cache_data(show_spinner=False)
 def get_users_by_role(roles_list):
     """Obtiene usuarios filtrados por una lista de roles para las tablas de administración."""
     conn = db_conn()
@@ -34,7 +34,7 @@ def get_users_by_role(roles_list):
     return df
 
 # CACHE: Hace que los selectores de pantalla (ej. listado de empleados) carguen al instante sin re-consultar a la BD.
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(show_spinner=False)
 def get_all_employees():
     """Obtiene el listado maestro de empleados para selectores y diálogos."""
     conn = db_conn()
@@ -71,6 +71,7 @@ def upsert_employees_df(df: pd.DataFrame):
               profile_id, datetime.now().isoformat(timespec="seconds")))
     conn.commit()
     conn.close()
+    get_all_employees.clear()
 
 
 # --- GESTIÓN DE TURNOS Y ASIGNACIONES ---
@@ -85,7 +86,7 @@ def is_holiday(date_obj: date) -> bool:
     return count > 0
 
 # CACHE: Carga inmediata del catálogo general de horarios
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(show_spinner=False)
 def get_shifts_df():
     """Retorna el catálogo completo de turnos configurados."""
     conn = db_conn()
@@ -110,6 +111,7 @@ def upsert_shift(name, start_time, grace_minutes, **kwargs):
           kwargs.get('shift_code'), datetime.now().isoformat(timespec="seconds")))
     conn.commit()
     conn.close()
+    get_shifts_df.clear()
 
 def assign_shift(user_id, week_start, dow, shift_id):
     """Asigna un turno a un empleado para un día de la semana específico."""
