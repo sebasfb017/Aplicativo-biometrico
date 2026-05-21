@@ -166,7 +166,9 @@ def init_db():
         jefe_approval_date TEXT,
         approved_by_rrhh TEXT,
         rrhh_approval_date TEXT,
-        attachment_path TEXT
+        attachment_path TEXT,
+        cancellation_reason TEXT,
+        rejection_reason TEXT
     );
     """)
 
@@ -219,6 +221,38 @@ def init_db():
     migrate_schema_coordinators()
     migrate_schema_multilevel()
     maybe_load_default_schedules()
+    migrate_schema_cancellation()
+    migrate_schema_rejection_reason() # Nueva migración
+
+def migrate_schema_cancellation():
+    """Añade la columna para la razón de cancelación si no existe."""
+    conn = db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("PRAGMA table_info(leave_requests)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "cancellation_reason" not in columns:
+            cur.execute("ALTER TABLE leave_requests ADD COLUMN cancellation_reason TEXT")
+            conn.commit()
+    except Exception as e:
+        print(f"Error en migrate_schema_cancellation: {e}")
+    finally:
+        conn.close()
+
+def migrate_schema_rejection_reason():
+    """Añade la columna para la razón de rechazo si no existe."""
+    conn = db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("PRAGMA table_info(leave_requests)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "rejection_reason" not in columns:
+            cur.execute("ALTER TABLE leave_requests ADD COLUMN rejection_reason TEXT")
+            conn.commit()
+    except Exception as e:
+        print(f"Error en migrate_schema_rejection_reason: {e}")
+    finally:
+        conn.close()
 
 def migrate_schema_attendance_flags():
     conn = db_conn()

@@ -1,5 +1,6 @@
 import bcrypt
 import streamlit as st
+import re # Importar el módulo re para expresiones regulares
 from database_conn.connection import db_conn
 
 def get_user(username: str):
@@ -32,3 +33,20 @@ def require_role(*allowed_roles):
     if not user or user.get("role") not in allowed_roles:
         st.error("No tienes permisos para ver esta sección.")
         st.stop()
+
+def validate_password(password: str):
+    """
+    Valida que la contraseña cumpla con políticas de seguridad robustas.
+    Retorna (True, "") si es válida, o (False, "Mensaje de error") si no lo es.
+    """
+    if len(password) < 8:
+        return False, "La contraseña debe tener al menos 8 caracteres."
+    if not re.search(r"[A-Z]", password):
+        return False, "La contraseña debe contener al menos una letra mayúscula."
+    if not re.search(r"[a-z]", password):
+        return False, "La contraseña debe contener al menos una letra minúscula."
+    if not re.search(r"\d", password):
+        return False, "La contraseña debe contener al menos un número."
+    if not re.search(r"[!@#$%^&*()_+\-=\[\]{}|;:'\",.<>/?]", password):
+        return False, "La contraseña debe contener al menos un carácter especial."
+    return True, ""

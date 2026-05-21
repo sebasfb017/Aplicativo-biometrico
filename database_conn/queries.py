@@ -220,20 +220,48 @@ def db_approve_leave_request_rrhh(req_id, rrhh_username):
     conn.commit()
     conn.close()
 
-def db_reject_leave_request(req_id, rejected_by):
+def db_reject_leave_request(req_id, rejected_by, rejection_reason):
     conn = db_conn()
     cur = conn.cursor()
     cur.execute("""
         UPDATE leave_requests 
-        SET status = 'REJECTED'
+        SET status = 'REJECTED', rejection_reason = ?
         WHERE id = ?
-    """, (req_id,))
+    """, (rejection_reason, req_id,))
     
     # Log the rejection in audit logs
     cur.execute("""
         INSERT INTO audit_logs (user_id, action, details, timestamp)
         VALUES (?, ?, ?, ?)
-    """, (rejected_by, "REJECT_LEAVE", f"Rechazó la solicitud #{req_id}", datetime.now().isoformat(timespec="seconds")))
+    """, (rejected_by, "REJECT_LEAVE", f"Rechazó la solicitud #{req_id}. Motivo: {rejection_reason}", datetime.now().isoformat(timespec="seconds")))
     
     conn.commit()
     conn.close()
+
+def db_cancel_leave_request(req_id, user_id, reason):
+    """
+    Cancela una solicitud de permiso por parte del empleado.
+    Solo se puede cancelar si no ha sido aprobada o rechazada definitivamente.
+    """
+    conn = db_conn()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        UPDATE leave_requests 
+        SET status = 'CANCELLED', cancellation_reason = ?
+        WHERE id = ? AND user_id = ? AND status IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')
+    """, (reason, req_id, user_id))
+    
+    # Verificar si se actualizó alguna fila (por si el estado ya no era PENDING)
+    if cur.rowcount > 0:
+        cur.execute("""
+            INSERT INTO audit_logs (user_id, action, details, timestamp)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, "CANCEL_LEAVE", f"El empleado canceló la solicitud #{req_id}. Motivo: {reason}", datetime.now().isoformat(timespec="seconds")))
+        success = True
+    else:
+        success = False
+
+    conn.commit()
+    conn.close()
+    return success

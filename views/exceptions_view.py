@@ -2,13 +2,57 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta, datetime
 
-from database_conn.connection import db_session
+from database_conn.connection import db_session, db_conn
 from database_conn.queries import (upsert_exception, get_exceptions_df, 
                                    db_approve_leave_request_coord, db_approve_leave_request_jefe, 
                                    db_approve_leave_request_rrhh, db_reject_leave_request)
 from services.notifications import log_audit, notify_employee
 from utils.auth import require_role
 from views.employee_portal_view import show_leave_request_details
+
+# --- Componente de Detección de Conflictos para Jefes ---
+def check_schedule_conflicts(request: pd.Series, approver_role: str, managed_entity: str):
+    """
+    Verifica si una solicitud de permiso se solapa con otras ausencias ya aprobadas
+    dentro del mismo equipo o área.
+    """
+    start_date = request['leave_date_start']
+    end_date = request['leave_date_end']
+    
+    # La consulta busca otras solicitudes aprobadas que se crucen en el rango de fechas
+    # y que pertenezcan al mismo grupo de gestión (departamento o área).
+    query = """
+        SELECT lr.id, e.full_name
+        FROM leave_requests lr
+        JOIN employees e ON lr.user_id = e.user_id
+        WHERE lr.status = 'APPROVED'
+          AND lr.id != ?
+          AND (
+              (lr.leave_date_start <= ? AND lr.leave_date_end >= ?) OR
+              (lr.leave_date_start <= ? AND lr.leave_date_end >= ?) OR
+              (lr.leave_date_start >= ? AND lr.leave_date_end <= ?)
+          )
+    """
+    
+    params = [request['id'], start_date, start_date, end_date, end_date, start_date, end_date]
+    
+    # Ajustar el filtro de la consulta según el rol del aprobador
+    if approver_role == 'coordinador':
+        query += " AND e.department = ?"
+        params.append(managed_entity)
+    elif approver_role == 'jefe_area':
+        query += " AND e.department LIKE ?"
+        params.append(f"{managed_entity} - %")
+        
+    with db_conn() as conn:
+        conflicts_df = pd.read_sql_query(query, conn, params=params)
+        
+    if not conflicts_df.empty:
+        names = ", ".join(conflicts_df['full_name'].tolist())
+        count = len(conflicts_df)
+        st.warning(f"⚠️ **Alerta de Cruce:** Ya hay {count} persona(s) de esta área con permiso en estas fechas: **{names}**.")
+
+# --- Fin del Componente ---
 
 @st.dialog("Detalles Completos de la Novedad/Permiso")
 def show_exception_details(exc_id: int):
@@ -85,6 +129,28 @@ def show_exception_details(exc_id: int):
     else:
         st.info("ℹ️ Esta novedad no parece tener una solicitud digital asociada del portal de empleados (o fue ingresada manualmente).")
 
+@st.dialog("Motivo de Rechazo")
+def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
+    st.write(f"Rechazando solicitud #{req_id} de {full_name} ({reason_type}).")
+    reason = st.text_area("Por favor, ingresa el motivo del rechazo:", key=f"rejection_reason_{req_id}")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Confirmar Rechazo", type="primary", use_container_width=True):
+            if reason:
+                db_reject_leave_request(req_id, user_id, reason)
+                log_audit("REJECT_LEAVE_L1", f"Permiso #{req_id} ({reason_type}) de {full_name} rechazado por {user_id}. Motivo: {reason}")
+                notify_employee(user_id, f"Dolormed: Novedad #{req_id} Rechazada", f"Hola {full_name},<br>Tu permiso de {reason_type} fue RECHAZADO por tu jefatura. Motivo: {reason}")
+                st.success("Solicitud rechazada y empleado notificado.")
+                st.rerun()
+            else:
+                st.error("El motivo de rechazo no puede estar vacío.")
+    with col2:
+        if st.button("Cancelar", use_container_width=True):
+            st.session_state[f"show_rejection_dialog_{req_id}"] = False
+            st.rerun()
+
+
 def page_exceptions():
     require_role("admin", "nomina", "jefe_area", "coordinador")
     st.title("🛡️ Novedades y Justificaciones")
@@ -129,6 +195,10 @@ def page_exceptions():
                         st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
                         st.write(f"**Justificación:** {r['reason_description']}")
                         
+                        # --- Llamada al detector de conflictos ---
+                        managed_entity = user.get('managed_department') if user["role"] == "coordinador" else user.get('managed_area')
+                        check_schedule_conflicts(r, user["role"], managed_entity)
+                        
                         if r['attachment_path']:
                             import os
                             from database_conn.connection import DATA_DIR
@@ -167,11 +237,11 @@ def page_exceptions():
                             st.rerun()
                             
                         if st.button("❌ Rechazar", key=f"btn_rej_{r['id']}", use_container_width=True):
-                            db_reject_leave_request(r['id'], user['username'])
-                                
-                            log_audit("REJECT_LEAVE_L1", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} rechazado.")
-                            notify_employee(r['user_id'], f"Dolormed: Novedad #{r['id']} Rechazada", f"Hola {r['full_name']},<br>Tu permiso de {r['reason_type']} fue RECHAZADO por tu jefatura.")
+                            st.session_state[f"show_rejection_dialog_{r['id']}"] = True
                             st.rerun()
+                        
+                        if st.session_state.get(f"show_rejection_dialog_{r['id']}", False):
+                            rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
         return
 
     st.write("Registra permisos, incapacidades médicas o vacaciones. El sistema **no penalizará** a estos empleados en los reportes de tardanzas para los días seleccionados.")
@@ -303,10 +373,11 @@ def page_exceptions():
                             st.rerun()
                             
                         if st.button("❌ Rechazar Final", key=f"btn_rej_hr_{r['id']}", use_container_width=True):
-                            db_reject_leave_request(r['id'], user['username'])
-                            
-                            log_audit("REJECT_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} RECHAZADO FINAL por RRHH.")
+                            st.session_state[f"show_rejection_dialog_rrhh_{r['id']}"] = True
                             st.rerun()
+                        
+                        if st.session_state.get(f"show_rejection_dialog_rrhh_{r['id']}", False):
+                            rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
 
     with tab4:
         user_role = st.session_state["user"]["role"]

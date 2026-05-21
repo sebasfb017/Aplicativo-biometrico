@@ -118,9 +118,9 @@ def page_sync():
                 if not selected_devices:
                     st.warning("Debes dejar marcado al menos un reloj para hacer la sincronización.")
                 else:
-                    for d in selected_devices:
-                        label = f"{d.get('name', d['ip'])} ({d['ip']})"
-                        with st.spinner(f"Ajustando hora en: {label}"):
+                    with st.spinner("Sincronizando hora de los relojes seleccionados..."):
+                        for d in selected_devices:
+                            label = f"{d.get('name', d['ip'])} ({d['ip']})"
                             success, err = sync_device_time(d)
                             if success:
                                 st.success(f"{label} ✅ Hora sincronizada con el servidor.")
@@ -134,20 +134,24 @@ def page_sync():
                     total_inserted = 0
                     total_skipped = 0
 
-                    for d in selected_devices:
+                    progress_bar = st.progress(0, "Iniciando descarga...")
+
+                    for i, d in enumerate(selected_devices):
                         label = f"{d.get('name', d['ip'])} ({d['ip']})"
+                        progress_text = f"({i+1}/{len(selected_devices)}) Conectando y descargando datos de: {label}"
+                        progress_bar.progress((i + 1) / len(selected_devices), text=progress_text)
 
-                        with st.spinner(f"Conectando y descargando datos de: {label}"):
-                            rows, err = download_attendance_from_device(d)
-                            if err:
-                                st.error(f"{label} ❌ Error de conexión: {err}")
-                                continue
+                        rows, err = download_attendance_from_device(d)
+                        if err:
+                            st.error(f"{label} ❌ Error de conexión: {err}")
+                            continue
 
-                            ins, skp = upsert_attendance(rows)
-                            total_inserted += ins
-                            total_skipped += skp
-                            st.success(f"{label} ✅ Correcto (Nuevos: {ins} | Duplicados ignorados: {skp} | Total leídos: {len(rows)})")
+                        ins, skp = upsert_attendance(rows)
+                        total_inserted += ins
+                        total_skipped += skp
+                        st.success(f"{label} ✅ Correcto (Nuevos: {ins} | Duplicados ignorados: {skp} | Total leídos: {len(rows)})")
 
+                    progress_bar.empty()
                     st.info(f"**RESUMEN TOTAL** -> Nuevas marcaciones: **{total_inserted}** | Ignoradas: **{total_skipped}**")
 
     with tab_conf:

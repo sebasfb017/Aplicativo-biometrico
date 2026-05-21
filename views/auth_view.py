@@ -5,7 +5,7 @@ import random
 from datetime import datetime, timedelta
 
 from database_conn.connection import db_conn
-from utils.auth import verify_login
+from utils.auth import verify_login, validate_password # Importar validate_password
 from utils.constants import AREA_MAPPING
 from services.email_service import send_welcome_email, send_password_reset_pin, send_password_changed_email
 
@@ -71,8 +71,10 @@ def register_employee_dialog():
             st.session_state["reg_error"] = "Las contraseñas no coinciden."
             return
             
-        if len(pass1) < 4:
-            st.session_state["reg_error"] = "La contraseña debe tener al menos 4 caracteres."
+        # Validar contraseña con la nueva función
+        is_valid, error_msg = validate_password(pass1)
+        if not is_valid:
+            st.session_state["reg_error"] = error_msg
             return
             
         pw_hash = bcrypt.hashpw(pass1.encode("utf-8"), bcrypt.gensalt())
@@ -243,6 +245,12 @@ def forgot_password_dialog():
         if pw1 != pw2:
             st.session_state["fp_error"] = "Las contraseñas nuevas no coinciden."
             return
+
+        # Validar contraseña con la nueva función
+        is_valid, error_msg = validate_password(pw1)
+        if not is_valid:
+            st.session_state["fp_error"] = error_msg
+            return
             
         conn = db_conn()
         df = pd.read_sql_query("SELECT reset_pin, reset_expires FROM users_app WHERE username = ?", conn, params=(st.session_state["fp_dni"],))
@@ -301,7 +309,7 @@ def forgot_password_dialog():
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             st.button("Cambiar Contraseña", type="primary", use_container_width=True, on_click=reset_pw)
-        with col_btn2:
+        with col2:
             if st.button("Volver a solicitar PIN", use_container_width=True):
                 st.session_state["fp_step"] = 1
                 st.rerun()

@@ -1,9 +1,74 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
+
+# --- Componente Visual de Trazabilidad (Barra de Progreso) ---
+def create_status_tracker(status: str):
+    """
+    Genera una barra de progreso visual en HTML/CSS para el estado de una solicitud.
+    Marca los pasos completados, el actual y los pendientes.
+    """
+    # Define los estados y su orden en el flujo de aprobación
+    status_order = {
+        "PENDING_COORD": 0,
+        "PENDING_JEFE": 1,
+        "PENDING_RRHH": 2,
+        "APPROVED": 3,
+        "REJECTED": -1, # Estado terminal de rechazo
+        "CANCELLED": -1 # Estado terminal de cancelación
+    }
+
+    # Mapeo de estados a un texto más legible para el usuario
+    status_labels = {
+        "PENDING_COORD": "Enviado (Coord.)",
+        "PENDING_JEFE": "Pre-Aprobado (Jefe Área)",
+        "PENDING_RRHH": "Validando (RRHH)",
+        "APPROVED": "Aprobado Final",
+        "REJECTED": "Rechazado",
+        "CANCELLED": "Cancelado"
+    }
+
+    current_step = status_order.get(status, -1)
+
+    # Si es un estado de rechazo, muestra una barra simple en rojo
+    if current_step == -1:
+        return f"""
+        <div style="text-align: center; background-color: #ffcdd2; color: #c62828; padding: 10px; border-radius: 8px; font-weight: bold;">
+            {status_labels.get(status, "Estado Desconocido")}
+        </div>
+        """
+
+    # Construcción de la barra de progreso con HTML y CSS
+    html = '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem;">'
+    steps = ["Enviado", "Coord.", "Jefe Área", "RRHH"]
+
+    for i, step_name in enumerate(steps):
+        # Determinar el estilo de cada paso (completado, actual, pendiente)
+        if i < current_step:
+            # Verde para los pasos ya completados
+            style = 'background-color: #C8E6C9; color: #2E7D32; border: 1px solid #2E7D32;'
+        elif i == current_step:
+            # Azul para el paso actual
+            style = 'background-color: #BBDEFB; color: #0D47A1; border: 1px solid #0D47A1;'
+        else:
+            # Gris para los pasos futuros/pendientes
+            style = 'background-color: #E0E0E0; color: #616161; border: 1px solid #BDBDBD;'
+
+        html += f'<div style="padding: 5px 10px; border-radius: 15px; font-weight: bold; {style}">{step_name}</div>'
+
+        # Añadir una línea de conexión entre los pasos (excepto en el último)
+        if i < len(steps) - 1:
+            line_color = '#2E7D32' if i < current_step else '#BDBDBD'
+            html += f'<div style="flex-grow: 1; height: 2px; background-color: {line_color}; margin: 0 5px;"></div>'
+
+    html += '</div>'
+    return html
+
+# --- Fin del Componente Visual ---
+
 
 from database_conn.connection import db_conn
-from database_conn.queries import db_create_leave_request
+from database_conn.queries import db_create_leave_request, db_cancel_leave_request
 from services.notifications import generate_fth012_html
 from services.email_service import send_novedad_alert
 
@@ -12,7 +77,6 @@ def show_leave_request_details(req_id: int):
     conn = db_conn()
     df_req = pd.read_sql_query("SELECT * FROM leave_requests WHERE id = ?", conn, params=(req_id,))
     
-    # Extraer trazabilidad de aprobadores
     df_audit = pd.read_sql_query("""
         SELECT a.user_id, a.action, a.timestamp, u.full_name
         FROM audit_logs a
@@ -31,8 +95,11 @@ def show_leave_request_details(req_id: int):
     
     st.markdown(f"### Radicado: #{req['id']}")
     
+    # Usamos el nuevo componente visual
+    st.markdown(create_status_tracker(req['status']), unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
     if req['status'] == 'APPROVED':
-        st.success("✅ Esta solicitud ha sido Aprobada definitivamente.")
         html_fth012 = generate_fth012_html(req, df_audit)
         st.download_button(
             label="📄 Descargar F-TH-012 (HTML/PDF)",
@@ -42,9 +109,12 @@ def show_leave_request_details(req_id: int):
             type="primary",
             use_container_width=True
         )
-    else:
-        st.markdown(f"**Estado Actual:** `{req['status']}`")
-    
+    elif req['status'] == 'REJECTED':
+        st.error(f"❌ Solicitud Rechazada. Motivo: {req['rejection_reason']}")
+    elif req['status'] == 'CANCELLED':
+        st.warning(f"🚫 Solicitud Cancelada por el empleado. Motivo: {req['cancellation_reason']}")
+
+
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(f"**Fecha de Solicitud:** {req['request_date']}")
@@ -75,6 +145,27 @@ def show_leave_request_details(req_id: int):
             approver_name = row_a['full_name'] if pd.notna(row_a['full_name']) else row_a['user_id']
             st.caption(f"✓ **{level}**: {approver_name} ({row_a['timestamp']})")
 
+@st.dialog("Cancelar Solicitud de Permiso")
+def cancel_leave_request_dialog(req_id: int, user_id: str, full_name: str, reason_type: str):
+    st.write(f"Cancelando solicitud #{req_id} de {full_name} ({reason_type}).")
+    reason = st.text_area("Por favor, ingresa el motivo de la cancelación:", key=f"cancellation_reason_{req_id}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Confirmar Cancelación", type="primary", use_container_width=True):
+            if reason:
+                success = db_cancel_leave_request(req_id, user_id, reason)
+                if success:
+                    st.success("Solicitud cancelada exitosamente.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo cancelar la solicitud. Es posible que ya haya sido procesada.")
+            else:
+                st.error("El motivo de cancelación no puede estar vacío.")
+    with col2:
+        if st.button("Volver", use_container_width=True):
+            st.session_state[f"show_cancellation_dialog_{req_id}"] = False
+            st.rerun()
 
 def page_employee_portal():
     user = st.session_state["user"]
@@ -87,77 +178,71 @@ def page_employee_portal():
         st.subheader("Solicitud de Permisos Laborales Y/O Personales")
         st.info("Llena el siguiente formulario digital equivalente al formato F-TH-012 físico.")
         
-        c1, c2 = st.columns(2)
-        with c1:
-            leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona uno o varios días de ausencia.", format="YYYY-MM-DD")
-            reason_type = st.selectbox("Motivo (Laboral o Personal)", ["Personal", "Laboral", "Cita Médica", "Calamidad", "Vacaciones", "Licencia"])
-            is_paid = st.radio("¿Permiso Remunerado?", ["No", "Sí"], horizontal=True)
-        with c2:
-            time_s = st.time_input("Hora de Salida (Opcional)", value=None)
-            time_e = st.time_input("Hora de Entrada (Opcional)", value=None)
-            
-            # =========================================================================
-            # BLOQUE DE CÁLCULO MATEMÁTICO EN TIEMPO REAL
-            # =========================================================================
-            # Al no encerrar todo el formulario en un `st.form` restrictivo, la
-            # interfaz es reactiva. Apenas el empleado escoge fechas, Streamlit recarga
-            # la pantalla súper rápido y deduce el tiempo automáticamente.
-            
-            calculated_time = ""
-            if leave_dates:
-                # Caso A: El empleado eligió más de un día. El sistema asume todo como días completos.
-                if type(leave_dates) in (tuple, list) and len(leave_dates) > 1:
-                    dias = (leave_dates[1] - leave_dates[0]).days + 1
-                    calculated_time = f"{dias} Día(s)"
-                # Caso B: El empleado eligió solo 1 fecha PERO introdujo horas específicas.
-                elif time_s and time_e:
-                    # Envolvemos las horas en objetos DateTime (matemáticos) usando el día de hoy
-                    # simplemente como puente para que Python sea capaz de restar Horas.
-                    ts_dt = datetime.combine(date.today(), time_s)
-                    te_dt = datetime.combine(date.today(), time_e)
-                    
-                    if te_dt > ts_dt:
-                        diff = te_dt - ts_dt
-                        total_mins = diff.seconds // 60
-                        h = total_mins // 60
-                        m = total_mins % 60
-                        
-                        # Traductor de sistema a lenguaje humano ("1 Hora", "2 Horas y 15 Minutos")
-                        parts = []
-                        if h > 0:
-                            parts.append(f"{h} Hora{'s' if h > 1 else ''}")
-                        if m > 0:
-                            parts.append(f"{m} Minuto{'s' if m > 1 else ''}")
-                            
-                        calculated_time = " y ".join(parts) if parts else "0 Minutos"
+        with st.form("leave_request_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona uno o varios días de ausencia.", format="YYYY-MM-DD")
+                reason_type = st.selectbox("Motivo (Laboral o Personal)", ["Personal", "Laboral", "Cita Médica", "Calamidad", "Vacaciones", "Licencia"])
+                is_paid = st.radio("¿Permiso Remunerado?", ["No", "Sí"], horizontal=True)
+            with c2:
+                time_s = st.time_input("Hora de Salida (Opcional)", value=None)
+                time_e = st.time_input("Hora de Entrada (Opcional)", value=None)
+
+                calculated_time = ""
+                if leave_dates:
+                    if isinstance(leave_dates, (tuple, list)) and len(leave_dates) > 1:
+                        dias = (leave_dates[1] - leave_dates[0]).days + 1
+                        calculated_time = f"{dias} Día(s)"
+                    elif time_s and time_e:
+                        ts_dt = datetime.combine(date.today(), time_s)
+                        te_dt = datetime.combine(date.today(), time_e)
+                        if te_dt > ts_dt:
+                            diff = te_dt - ts_dt
+                            total_mins = diff.seconds // 60
+                            h, m = divmod(total_mins, 60)
+                            parts = []
+                            if h > 0: parts.append(f"{h} Hora{'s' if h > 1 else ''}")
+                            if m > 0: parts.append(f"{m} Minuto{'s' if m > 1 else ''}")
+                            calculated_time = " y ".join(parts) if parts else "0 Minutos"
+                        else:
+                            calculated_time = "Error: Horas inválidas"
                     else:
-                        calculated_time = "Error: Horas inválidas"
-                else:
-                    calculated_time = "1 Día"
+                        calculated_time = "1 Día"
+
+                total_time = st.text_input("Tiempo Total del Permiso (Automático o Manual)", value=calculated_time, placeholder="Ej: 4 Horas, 1 Día")
+
+            r_desc = st.text_area("Justificación / Detalles del permiso")
+            makeup = st.text_input("¿Cómo se repone el tiempo? (Dejar en blanco si es remunerado/laboral)")
             
-            total_time = st.text_input("Tiempo Total del Permiso (Automático o Manual)", value=calculated_time, placeholder="Ej: 4 Horas, 1 Día")
+            st.markdown("---")
+            st.write("📄 **Documento de Soporte (Opcional)**")
+            uploaded_file = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal. Tamaño máximo: 5MB", type=["pdf", "png", "jpg", "jpeg"])
             
-        r_desc = st.text_area("Justificación / Detalles del permiso")
-        makeup = st.text_input("¿Cómo se repone el tiempo? (Dejar en blanco si es remunerado/laboral)")
-        
-        st.markdown("---")
-        st.write("📄 **Documento de Soporte (Opcional)**")
-        uploaded_file = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal", type=["pdf", "png", "jpg", "jpeg"])
-        
-        submitted = st.button("Firmar y Enviar a RRHH", type="primary")
+            submitted = st.form_submit_button("Firmar y Enviar a RRHH", type="primary")
             
         if submitted:
-            if not leave_dates:
+            # --- Validación de Tamaño del Archivo ---
+            MAX_FILE_SIZE_MB = 5
+            file_is_valid = True
+
+            if uploaded_file is not None:
+                # Obtenemos el tamaño del archivo subido en bytes y lo convertimos a MB
+                file_size_mb = uploaded_file.size / (1024 * 1024)
+                if file_size_mb > MAX_FILE_SIZE_MB:
+                    st.error(f"❌ El archivo '{uploaded_file.name}' es demasiado grande ({file_size_mb:.1f} MB). El tamaño máximo permitido es {MAX_FILE_SIZE_MB} MB. Por favor, comprime el archivo antes de subirlo.")
+                    file_is_valid = False
+            # ---------------------------------------
+
+            if not file_is_valid:
+                pass # Se detiene el proceso si el archivo es muy grande, mostrando el error
+            elif not leave_dates:
                 st.error("Debes seleccionar obligatoriamente al menos una fecha de inicio.")
-            elif type(leave_dates) not in (tuple, list) and not leave_dates:
-                 st.error("Revisa la fecha seleccionada.")
             else:
-                d_start = leave_dates[0] if type(leave_dates) in (tuple, list) else leave_dates
-                d_end = leave_dates[1] if (type(leave_dates) in (tuple, list) and len(leave_dates) > 1) else d_start
+                d_start = leave_dates[0] if isinstance(leave_dates, (list, tuple)) else leave_dates
+                d_end = leave_dates[1] if isinstance(leave_dates, (list, tuple)) and len(leave_dates) > 1 else d_start
                 str_ts = time_s.strftime("%H:%M") if time_s else ""
                 str_te = time_e.strftime("%H:%M") if time_e else ""
                 
-                # Manejo de archivo adjunto
                 attachment_path = None
                 if uploaded_file is not None:
                     import os
@@ -167,15 +252,12 @@ def page_employee_portal():
                     uploads_dir = os.path.join(DATA_DIR, "uploads")
                     os.makedirs(uploads_dir, exist_ok=True)
                     
-                    # Nombre único basado en DNI y timestamp para evitar sobreescrituras
                     file_extension = os.path.splitext(uploaded_file.name)[1]
                     safe_filename = f"{user['username']}_{int(time.time())}{file_extension}"
                     full_path = os.path.join(uploads_dir, safe_filename)
                     
                     with open(full_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
-                        
-                    # Guardamos solo el nombre del archivo o ruta relativa para ser portable
                     attachment_path = safe_filename
                 
                 req_id = db_create_leave_request(
@@ -183,63 +265,47 @@ def page_employee_portal():
                     total_time, reason_type, r_desc, makeup, is_paid == "Sí", attachment_path
                 )
                 
-                # --- ALERTA DE CORREO INTELIGENTE ---
                 try:
-                    conn = db_conn()
-                    # Verificar el estado en el que quedó
-                    req_df = pd.read_sql_query("SELECT status FROM leave_requests WHERE id = ?", conn, params=(req_id,))
-                    
-                    if not req_df.empty:
-                        target_status = req_df.iloc[0]['status']
-                        target_emails = []
-                        
-                        if target_status == 'PENDING_COORD':
-                            # Buscar departamento del empleado en la tabla employees
-                            emp_df = pd.read_sql_query("SELECT department FROM employees WHERE user_id = ?", conn, params=(user["username"],))
-                            dept = emp_df.iloc[0]['department'] if not emp_df.empty else ""
+                    with db_conn() as conn:
+                        req_df = pd.read_sql_query("SELECT status FROM leave_requests WHERE id = ?", conn, params=(req_id,))
+                        if not req_df.empty:
+                            target_status = req_df.iloc[0]['status']
+                            target_emails = []
                             
-                            coord_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'coordinador' AND managed_department = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(dept,))
-                            target_emails = coord_df['emp_email'].tolist()
+                            if target_status == 'PENDING_COORD':
+                                emp_df = pd.read_sql_query("SELECT department FROM employees WHERE user_id = ?", conn, params=(user["username"],))
+                                dept = emp_df.iloc[0]['department'] if not emp_df.empty else ""
+                                coord_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'coordinador' AND managed_department = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(dept,))
+                                target_emails = coord_df['emp_email'].tolist()
+                            elif target_status == 'PENDING_JEFE':
+                                user_app_df = pd.read_sql_query("SELECT emp_area FROM users_app WHERE username = ?", conn, params=(user["username"],))
+                                area = user_app_df.iloc[0]['emp_area'] if not user_app_df.empty else ""
+                                jefe_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(area,))
+                                target_emails = jefe_df['emp_email'].tolist()
+                            elif target_status == 'PENDING_RRHH':
+                                admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
+                                target_emails = admin_df['emp_email'].tolist()
                             
-                        elif target_status == 'PENDING_JEFE':
-                            # Buscar área del empleado en la tabla users_app
-                            user_app_df = pd.read_sql_query("SELECT emp_area FROM users_app WHERE username = ?", conn, params=(user["username"],))
-                            area = user_app_df.iloc[0]['emp_area'] if not user_app_df.empty else ""
-                            
-                            jefe_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(area,))
-                            target_emails = jefe_df['emp_email'].tolist()
-                            
-                        elif target_status == 'PENDING_RRHH':
-                            admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
-                            target_emails = admin_df['emp_email'].tolist()
-                            
-                        conn.close()
-                        
-                        if target_emails:
-                            ok, msg = send_novedad_alert(target_emails, user["full_name"], reason_type, r_desc, total_time, d_start)
-                            if not ok:
-                                st.warning(f"La solicitud fue creada, pero hubo un fallo enviando la alerta: {msg}")
-                        else:
-                            st.info("Solicitud creada. (No se encontró un correo configurado para el aprobador en este nivel).")
+                            if target_emails:
+                                ok, msg = send_novedad_alert(target_emails, user["full_name"], reason_type, r_desc, total_time, d_start)
+                                if not ok: st.warning(f"Solicitud creada, pero fallo la alerta: {msg}")
+                            else:
+                                st.info("Solicitud creada. (No se encontró correo para el aprobador).")
                 except Exception as e:
                     st.warning(f"Error interno al enviar correo: {e}")
                 
-                st.success("✅ Solicitud enviada exitosamente. Conserva tu historial en la pestaña 'Mis Solicitudes'.")
+                st.success("✅ Solicitud enviada exitosamente.")
                 
     with t2:
-        conn = db_conn()
-        df_reqs = pd.read_sql_query("""
-            SELECT 
-                id as Radicado, 
-                request_date as Fecha_Solicitud, 
-                leave_date_start, 
-                leave_date_end, 
-                total_time as Duración,
-                reason_type as Motivo, 
-                status as Estado 
-            FROM leave_requests WHERE user_id = ? ORDER BY id DESC
-        """, conn, params=(user["username"],))
-        conn.close()
+        with db_conn() as conn:
+            df_reqs = pd.read_sql_query("""
+                SELECT id as Radicado, request_date as Fecha_Solicitud, leave_date_start, 
+                       leave_date_end, total_time as Duración, reason_type as Motivo, status as Estado,
+                       full_name
+                FROM leave_requests lr
+                JOIN users_app ua ON lr.user_id = ua.username
+                WHERE lr.user_id = ? ORDER BY id DESC
+            """, conn, params=(user["username"],))
         
         if df_reqs.empty:
             st.info("No tienes solicitudes históricas radicas.")
@@ -249,27 +315,52 @@ def page_employee_portal():
                 else f"{r['leave_date_start']} al {r['leave_date_end']}", 
                 axis=1
             )
-            
-            # =========================================================================
-            # ARQUITECTURA "MOBILE-FRIENDLY" DE TARJETAS (CARDS)
-            # =========================================================================
-            # En lugar de usar st.dataframe (lo cual genera un scroll horizontal muy
-            # molesto en teléfonos pequeños), pintamos la información en cajas hermosas.
-            # Al usar `st.columns` aquí dentro, Streamlit detectará cuando la pantalla
-            # sea pequeña (Smartphone) y automáticamente apilará la Columna 2 debajo
-            # de la Columna 1, eliminando eficientemente el scroll.
-            
+
             st.info("💡 Desliza hacia abajo o haz clic en 'Ver Detalles' en la solicitud que desees auditar.")
             
-            for _, r in df_reqs.iterrows():
-                # Borde en la tarjeta para resaltar individualidad
-                with st.container(border=True):
-                    # Usamos columnas asimétricas: texto amplio a la izquierda, botón a la derecha
-                    cols = st.columns([3, 1])
-                    with cols[0]:
-                        st.markdown(f"🗓️ **{r['Fechas']}** | Radicado: `#{r['Radicado']}`")
-                        st.write(f"**Motivo:** {r['Motivo']} | **Duración:** {r['Duración']}")
-                        st.caption(f"Enviado el {r['Fecha_Solicitud']} — Estado actual: **{r['Estado']}**")
-                    with cols[1]:
-                        if st.button("👁️ Ver Detalles", key=f"btn_detalles_{r['Radicado']}", use_container_width=True):
-                            show_leave_request_details(r['Radicado'])
+            # Filtro de solicitudes
+            filter_status = st.radio(
+                "Mostrar solicitudes:",
+                ("Todas", "Pendientes", "Aprobadas", "Rechazadas/Canceladas"),
+                horizontal=True,
+                key="employee_portal_filter"
+            )
+
+            filtered_df_reqs = df_reqs.copy()
+
+            if filter_status == "Pendientes":
+                filtered_df_reqs = filtered_df_reqs[filtered_df_reqs['Estado'].isin(['PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH'])]
+            elif filter_status == "Aprobadas":
+                filtered_df_reqs = filtered_df_reqs[filtered_df_reqs['Estado'] == 'APPROVED']
+            elif filter_status == "Rechazadas/Canceladas":
+                filtered_df_reqs = filtered_df_reqs[filtered_df_reqs['Estado'].isin(['REJECTED', 'CANCELLED'])]
+
+            if filtered_df_reqs.empty:
+                st.info("No tienes solicitudes en esta categoría.")
+            else:
+                for _, r in filtered_df_reqs.iterrows(): # Usamos el DataFrame filtrado
+                    with st.container(border=True):
+                        cols = st.columns([3, 1])
+                        with cols[0]:
+                            status_badge = ""
+                            if r['Estado'] == 'REJECTED':
+                                status_badge = "🔴 RECHAZADA"
+                            elif r['Estado'] == 'CANCELLED':
+                                status_badge = "⚪ CANCELADA"
+
+                            st.markdown(f"🗓️ **{r['Fechas']}** | Radicado: `#{r['Radicado']}` {status_badge}")
+                            st.write(f"**Motivo:** {r['Motivo']} | **Duración:** {r['Duración']}")
+                            # Reemplazamos el texto simple por el tracker visual
+                            st.markdown(create_status_tracker(r['Estado']), unsafe_allow_html=True)
+                        with cols[1]:
+                            if st.button("👁️ Ver Detalles", key=f"btn_detalles_{r['Radicado']}", use_container_width=True):
+                                show_leave_request_details(r['Radicado'])
+
+                            # Botón de Cancelar solo si el estado es PENDIENTE
+                            if r['Estado'] in ['PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH']:
+                                if st.button("❌ Cancelar Solicitud", key=f"btn_cancel_{r['Radicado']}", use_container_width=True):
+                                    st.session_state[f"show_cancellation_dialog_{r['Radicado']}"] = True
+                                    st.rerun()
+
+                                if st.session_state.get(f"show_cancellation_dialog_{r['Radicado']}", False):
+                                    cancel_leave_request_dialog(r['Radicado'], user['username'], r['full_name'], r['Motivo'])
