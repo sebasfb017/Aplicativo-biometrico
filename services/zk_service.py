@@ -100,13 +100,13 @@ def download_attendance_from_device(device: dict):
 def sync_device_time(device: dict):
     """Sincroniza la hora del biométrico con la del servidor local."""
     ip = device["ip"]
-    try: port = int(device.get("port", 4370))
-    except Exception: port = device.get("port", 4370)
+    try: port = int(device.get("port", DEFAULT_PORT))
+    except Exception: port = device.get("port", DEFAULT_PORT)
     password = device.get("password", 0)
     try: password = int(password)
     except Exception: pass
-    try: timeout = int(device.get("timeout", 10))
-    except Exception: timeout = device.get("timeout", 10)
+    try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
+    except Exception: timeout = device.get("timeout", DEFAULT_TIMEOUT)
     name = device.get("name", ip)
 
     zk = ZK(ip, port=port, timeout=timeout, password=password)
@@ -155,12 +155,12 @@ def upsert_attendance(rows: list[dict]):
 
 def get_device_users_status(device: dict):
     ip = device["ip"]
-    try: port = int(device.get("port", 4370))
-    except Exception: port = 4370
+    try: port = int(device.get("port", DEFAULT_PORT))
+    except Exception: port = DEFAULT_PORT
     try: password = int(device.get("password", 0))
     except Exception: password = 0
-    try: timeout = int(device.get("timeout", 10))
-    except Exception: timeout = 10
+    try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
+    except Exception: timeout = DEFAULT_TIMEOUT
     
     zk = ZK(ip, port=port, timeout=timeout, password=password)
     conn = None
@@ -198,12 +198,12 @@ def get_device_users_status(device: dict):
 
 def upload_user_to_device(device: dict, user_id: str, name: str, privilege: int = 0):
     ip = device["ip"]
-    try: port = int(device.get("port", 4370))
-    except Exception: port = 4370
+    try: port = int(device.get("port", DEFAULT_PORT))
+    except Exception: port = DEFAULT_PORT
     try: password = int(device.get("password", 0))
     except Exception: password = 0
-    try: timeout = int(device.get("timeout", 10))
-    except Exception: timeout = 10
+    try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
+    except Exception: timeout = DEFAULT_TIMEOUT
     
     zk = ZK(ip, port=port, timeout=timeout, password=password)
     conn = None
@@ -236,12 +236,12 @@ def upload_user_to_device(device: dict, user_id: str, name: str, privilege: int 
 
 def delete_user_from_device(device: dict, uid: int):
     ip = device["ip"]
-    try: port = int(device.get("port", 4370))
-    except Exception: port = 4370
+    try: port = int(device.get("port", DEFAULT_PORT))
+    except Exception: port = DEFAULT_PORT
     try: password = int(device.get("password", 0))
     except Exception: password = 0
-    try: timeout = int(device.get("timeout", 10))
-    except Exception: timeout = 10
+    try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
+    except Exception: timeout = DEFAULT_TIMEOUT
     
     zk = ZK(ip, port=port, timeout=timeout, password=password)
     conn = None
@@ -273,12 +273,12 @@ def sync_all_devices(devices_list: list):
     # --- PASO 1: RECOLECTAR MAESTRO ---
     for dev in devices_list:
         ip = dev["ip"]
-        try: port = int(dev.get("port", 4370))
-        except Exception: port = 4370
+        try: port = int(dev.get("port", DEFAULT_PORT))
+        except Exception: port = DEFAULT_PORT
         try: password = int(dev.get("password", 0))
         except Exception: password = 0
-        try: timeout = int(dev.get("timeout", 10))
-        except Exception: timeout = 10
+        try: timeout = int(dev.get("timeout", DEFAULT_TIMEOUT))
+        except Exception: timeout = DEFAULT_TIMEOUT
         
         zk = ZK(ip, port=port, timeout=timeout, password=password)
         conn = None
@@ -326,12 +326,12 @@ def sync_all_devices(devices_list: list):
     # --- PASO 2: DISTRIBUIR MAESTRO ---
     for dev in devices_list:
         ip = dev["ip"]
-        try: port = int(dev.get("port", 4370))
-        except Exception: port = 4370
+        try: port = int(dev.get("port", DEFAULT_PORT))
+        except Exception: port = DEFAULT_PORT
         try: password = int(dev.get("password", 0))
         except Exception: password = 0
-        try: timeout = int(dev.get("timeout", 10))
-        except Exception: timeout = 10
+        try: timeout = int(dev.get("timeout", DEFAULT_TIMEOUT))
+        except Exception: timeout = DEFAULT_TIMEOUT
         
         zk = ZK(ip, port=port, timeout=timeout, password=password)
         conn = None
@@ -397,3 +397,25 @@ def sync_all_devices(devices_list: list):
                 pass
                 
     return logs
+
+def automated_daily_sync():
+    """Descarga de marcaciones en background para todos los dispositivos."""
+    try:
+        from database_conn.connection import db_session
+        from datetime import datetime
+        devices = load_devices()
+        for dev in devices:
+            if dev.get("enabled", True):
+                try:
+                    rows, err = download_attendance_from_device(dev)
+                    if rows:
+                        upsert_attendance(rows)
+                except Exception as e:
+                    print(f"Error auto-sync {dev.get('name')}: {e}")
+        
+        with db_session() as conn:
+            cur = conn.cursor()
+            cur.execute("INSERT INTO audit_logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)", 
+                        ('system', 'AUTO_SYNC', 'Sincronización automática de marcaciones completada.', datetime.now().isoformat(timespec="seconds")))
+    except Exception as e:
+        print(f"Fallo crítico en sincronización automática: {e}")

@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 from datetime import datetime, date, timedelta
-from database_conn.connection import db_conn
+from database_conn.connection import db_conn, db_session
 from services.notifications import send_notification_email
 
 # --- GESTIÓN DE USUARIOS (Corrección de Errores y Consultas) ---
@@ -47,30 +47,28 @@ def get_all_employees():
 
 def upsert_employees_df(df: pd.DataFrame):
     """Carga o actualiza empleados desde un DataFrame (CSV o Manual)."""
-    conn = db_conn()
-    cur = conn.cursor()
-    for _, r in df.iterrows():
-        profile_id = None
-        if "profile_id" in df.columns and r.get("profile_id"):
-            profile_val = r["profile_id"]
-            if isinstance(profile_val, str):
-                cur.execute("SELECT profile_id FROM profiles WHERE name = ?", (profile_val.strip(),))
-                profile_row = cur.fetchone()
-                if profile_row:
-                    profile_id = profile_row[0]
-            else:
-                profile_id = int(profile_val)
-        
-        cur.execute("""
-            INSERT INTO employees(user_id, full_name, email, department, profile_id, created_at)
-            VALUES(?,?,?,?,?,?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                full_name=excluded.full_name, email=excluded.email,
-                department=excluded.department, profile_id=excluded.profile_id
-        """, (r["user_id"], r["full_name"], r.get("email", ""), r.get("department", ""), 
-              profile_id, datetime.now().isoformat(timespec="seconds")))
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cur = conn.cursor()
+        for _, r in df.iterrows():
+            profile_id = None
+            if "profile_id" in df.columns and r.get("profile_id"):
+                profile_val = r["profile_id"]
+                if isinstance(profile_val, str):
+                    cur.execute("SELECT profile_id FROM profiles WHERE name = ?", (profile_val.strip(),))
+                    profile_row = cur.fetchone()
+                    if profile_row:
+                        profile_id = profile_row[0]
+                else:
+                    profile_id = int(profile_val)
+            
+            cur.execute("""
+                INSERT INTO employees(user_id, full_name, email, department, profile_id, created_at)
+                VALUES(?,?,?,?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    full_name=excluded.full_name, email=excluded.email,
+                    department=excluded.department, profile_id=excluded.profile_id
+            """, (r["user_id"], r["full_name"], r.get("email", ""), r.get("department", ""), 
+                  profile_id, datetime.now().isoformat(timespec="seconds")))
     get_all_employees.clear()
 
 
@@ -96,50 +94,44 @@ def get_shifts_df():
 
 def upsert_shift(name, start_time, grace_minutes, **kwargs):
     """Crea o actualiza un turno en el catálogo maestro."""
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO shifts(name, start_time, end_time, grace_minutes, has_break, 
-                           break_start, break_end, is_overnight, shift_code, created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(name) DO UPDATE SET
-            start_time=excluded.start_time, grace_minutes=excluded.grace_minutes,
-            shift_code=excluded.shift_code
-    """, (name.strip(), start_time.strip(), kwargs.get('end_time', ''), int(grace_minutes),
-          1 if kwargs.get('has_break') else 0, kwargs.get('break_start', ''), 
-          kwargs.get('break_end', ''), 1 if kwargs.get('is_overnight') else 0,
-          kwargs.get('shift_code'), datetime.now().isoformat(timespec="seconds")))
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO shifts(name, start_time, end_time, grace_minutes, has_break, 
+                               break_start, break_end, is_overnight, shift_code, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(name) DO UPDATE SET
+                start_time=excluded.start_time, grace_minutes=excluded.grace_minutes,
+                shift_code=excluded.shift_code
+        """, (name.strip(), start_time.strip(), kwargs.get('end_time', ''), int(grace_minutes),
+              1 if kwargs.get('has_break') else 0, kwargs.get('break_start', ''), 
+              kwargs.get('break_end', ''), 1 if kwargs.get('is_overnight') else 0,
+              kwargs.get('shift_code'), datetime.now().isoformat(timespec="seconds")))
     get_shifts_df.clear()
 
 def assign_shift(user_id, week_start, dow, shift_id):
     """Asigna un turno a un empleado para un día de la semana específico."""
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO shift_assignments(user_id, week_start, dow, shift_id, created_at)
-        VALUES(?,?,?,?,?)
-        ON CONFLICT(user_id, week_start, dow) DO UPDATE SET shift_id=excluded.shift_id
-    """, (str(user_id), week_start, int(dow), int(shift_id), 
-          datetime.now().isoformat(timespec="seconds")))
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO shift_assignments(user_id, week_start, dow, shift_id, created_at)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(user_id, week_start, dow) DO UPDATE SET shift_id=excluded.shift_id
+        """, (str(user_id), week_start, int(dow), int(shift_id), 
+              datetime.now().isoformat(timespec="seconds")))
 
 
 # --- NOVEDADES Y PERMISOS (F-TH-012) ---
 
 def upsert_exception(user_id, date_str, exc_type, notes):
     """Registra una novedad manual (incapacidad, vacaciones, etc.)."""
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO exceptions(user_id, date, type, notes, created_at)
-        VALUES(?,?,?,?,?)
-        ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
-    """, (user_id, date_str, exc_type, notes, datetime.now().isoformat(timespec="seconds")))
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO exceptions(user_id, date, type, notes, created_at)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
+        """, (user_id, date_str, exc_type, notes, datetime.now().isoformat(timespec="seconds")))
 
 def get_exceptions_df():
     """Obtiene el histórico de todas las novedades para el visor administrativo."""
@@ -168,19 +160,18 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
     elif role in ["jefe_area", "admin", "nomina"]:
         target_status = "PENDING_RRHH"
 
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO leave_requests (
-            user_id, request_date, leave_date_start, leave_date_end, start_time, end_time, 
-            total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status, attachment_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (user_id, datetime.now().date().isoformat(), leave_start.isoformat(), leave_end.isoformat(),
-          t_start, t_end, total_time, r_type, r_desc, makeup, 1 if is_paid else 0,
-          datetime.now().isoformat(timespec="seconds"), target_status, attachment_path))
-    
-    req_id = cur.lastrowid
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO leave_requests (
+                user_id, request_date, leave_date_start, leave_date_end, start_time, end_time, 
+                total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status, attachment_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, datetime.now().date().isoformat(), leave_start.isoformat(), leave_end.isoformat(),
+              t_start, t_end, total_time, r_type, r_desc, makeup, 1 if is_paid else 0,
+              datetime.now().isoformat(timespec="seconds"), target_status, attachment_path))
+        
+        req_id = cur.lastrowid
     
     
     # Aquí podríamos notificar al coordinador de su departamento, 
@@ -188,80 +179,68 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
     return req_id
 
 def db_approve_leave_request_coord(req_id, coord_username):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE leave_requests 
-        SET status = 'PENDING_JEFE', approved_by_coord = ?, coord_approval_date = ?
-        WHERE id = ? AND status = 'PENDING_COORD'
-    """, (coord_username, datetime.now().isoformat(timespec="seconds"), req_id))
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE leave_requests 
+            SET status = 'PENDING_JEFE', approved_by_coord = ?, coord_approval_date = ?
+            WHERE id = ? AND status = 'PENDING_COORD'
+        """, (coord_username, datetime.now().isoformat(timespec="seconds"), req_id))
 
 def db_approve_leave_request_jefe(req_id, jefe_username):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE leave_requests 
-        SET status = 'PENDING_RRHH', approved_by_jefe = ?, jefe_approval_date = ?
-        WHERE id = ? AND status = 'PENDING_JEFE'
-    """, (jefe_username, datetime.now().isoformat(timespec="seconds"), req_id))
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE leave_requests 
+            SET status = 'PENDING_RRHH', approved_by_jefe = ?, jefe_approval_date = ?
+            WHERE id = ? AND status = 'PENDING_JEFE'
+        """, (jefe_username, datetime.now().isoformat(timespec="seconds"), req_id))
 
 def db_approve_leave_request_rrhh(req_id, rrhh_username):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE leave_requests 
-        SET status = 'APPROVED', approved_by_rrhh = ?, rrhh_approval_date = ?
-        WHERE id = ? AND status = 'PENDING_RRHH'
-    """, (rrhh_username, datetime.now().isoformat(timespec="seconds"), req_id))
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE leave_requests 
+            SET status = 'APPROVED', approved_by_rrhh = ?, rrhh_approval_date = ?
+            WHERE id = ? AND status = 'PENDING_RRHH'
+        """, (rrhh_username, datetime.now().isoformat(timespec="seconds"), req_id))
 
 def db_reject_leave_request(req_id, rejected_by, rejection_reason):
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE leave_requests 
-        SET status = 'REJECTED', rejection_reason = ?
-        WHERE id = ?
-    """, (rejection_reason, req_id,))
-    
-    # Log the rejection in audit logs
-    cur.execute("""
-        INSERT INTO audit_logs (user_id, action, details, timestamp)
-        VALUES (?, ?, ?, ?)
-    """, (rejected_by, "REJECT_LEAVE", f"Rechazó la solicitud #{req_id}. Motivo: {rejection_reason}", datetime.now().isoformat(timespec="seconds")))
-    
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE leave_requests 
+            SET status = 'REJECTED', rejection_reason = ?
+            WHERE id = ?
+        """, (rejection_reason, req_id,))
+        
+        # Log the rejection in audit logs
+        cur.execute("""
+            INSERT INTO audit_logs (user_id, action, details, timestamp)
+            VALUES (?, ?, ?, ?)
+        """, (rejected_by, "REJECT_LEAVE", f"Rechazó la solicitud #{req_id}. Motivo: {rejection_reason}", datetime.now().isoformat(timespec="seconds")))
 
 def db_cancel_leave_request(req_id, user_id, reason):
     """
     Cancela una solicitud de permiso por parte del empleado.
     Solo se puede cancelar si no ha sido aprobada o rechazada definitivamente.
     """
-    conn = db_conn()
-    cur = conn.cursor()
-    
-    cur.execute("""
-        UPDATE leave_requests 
-        SET status = 'CANCELLED', cancellation_reason = ?
-        WHERE id = ? AND user_id = ? AND status IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')
-    """, (reason, req_id, user_id))
-    
-    # Verificar si se actualizó alguna fila (por si el estado ya no era PENDING)
-    if cur.rowcount > 0:
+    with db_session() as conn:
+        cur = conn.cursor()
+        
         cur.execute("""
-            INSERT INTO audit_logs (user_id, action, details, timestamp)
-            VALUES (?, ?, ?, ?)
-        """, (user_id, "CANCEL_LEAVE", f"El empleado canceló la solicitud #{req_id}. Motivo: {reason}", datetime.now().isoformat(timespec="seconds")))
-        success = True
-    else:
-        success = False
-
-    conn.commit()
-    conn.close()
+            UPDATE leave_requests 
+            SET status = 'CANCELLED', cancellation_reason = ?
+            WHERE id = ? AND user_id = ? AND status IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')
+        """, (reason, req_id, user_id))
+        
+        # Verificar si se actualizó alguna fila (por si el estado ya no era PENDING)
+        if cur.rowcount > 0:
+            cur.execute("""
+                INSERT INTO audit_logs (user_id, action, details, timestamp)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, "CANCEL_LEAVE", f"El empleado canceló la solicitud #{req_id}. Motivo: {reason}", datetime.now().isoformat(timespec="seconds")))
+            success = True
+        else:
+            success = False
     return success

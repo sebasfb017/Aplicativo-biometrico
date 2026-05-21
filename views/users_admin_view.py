@@ -6,7 +6,7 @@ from datetime import datetime
 from database_conn.connection import db_conn
 from services.notifications import log_audit
 from database_conn.queries import get_users_by_role, get_all_employees
-from utils.auth import require_role
+from utils.auth import require_role, validate_password
 from utils.constants import AREA_MAPPING
 from services.email_service import load_smtp_config, save_smtp_config, send_welcome_email
 
@@ -91,6 +91,11 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
         
         try:
             if new_pw:
+                is_valid, err_msg = validate_password(new_pw)
+                if not is_valid:
+                    st.error(err_msg)
+                    return
+                
                 pw_hash = bcrypt.hashpw(new_pw.encode("utf-8"), bcrypt.gensalt())
                 cur.execute("""
                     UPDATE users_app 
@@ -179,8 +184,12 @@ def page_users_admin():
                 if not pw:
                     st.error("Completa la contraseña.")
                 else:
-                    u = str(selected_emp).strip()
-                    full = emp_df[emp_df['user_id']==selected_emp]['full_name'].values[0]
+                    is_valid, err_msg = validate_password(pw)
+                    if not is_valid:
+                        st.error(err_msg)
+                    else:
+                        u = str(selected_emp).strip()
+                        full = emp_df[emp_df['user_id']==selected_emp]['full_name'].values[0]
                     
                     if role != "coordinador":
                         managed_dept = ""

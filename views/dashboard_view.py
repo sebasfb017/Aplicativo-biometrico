@@ -7,8 +7,25 @@ from database_conn.connection import db_conn
 from services.analytics import compute_month_lateness
 
 def page_dashboard():
+    st.markdown("""
+        <style>
+        /* Glassmorphism y animaciones para KPIs */
+        div[data-testid="stMetric"] {
+            background: linear-gradient(135deg, rgba(13, 110, 253, 0.05), rgba(13, 110, 253, 0.01));
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        div[data-testid="stMetric"]:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(13, 110, 253, 0.15);
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
     st.title("📊 Panel Principal - Dolormed")
-    st.write("Resumen rápido del sistema de Recursos Humanos.")
+    st.write("Resumen rápido y visual del sistema de Recursos Humanos.")
     
     conn = db_conn()
     cur = conn.cursor()
@@ -88,6 +105,42 @@ def page_dashboard():
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No hay suficientes datos recientes para mostrar el gráfico.")
+
+    st.markdown("---")
+    
+    # Gráfico de Dona de Permisos
+    st.subheader("📋 Estado Global de Permisos")
+    st.write("Proporción de solicitudes de permisos en el sistema.")
+    df_permisos = pd.read_sql_query("""
+        SELECT status, COUNT(*) as cantidad 
+        FROM leave_requests 
+        GROUP BY status
+    """, conn)
+    
+    if not df_permisos.empty:
+        def simplificar_estado(x):
+            if x == 'APPROVED': return 'Aprobados'
+            if x == 'REJECTED': return 'Rechazados'
+            if x == 'CANCELLED': return 'Cancelados'
+            if 'PENDING' in x: return 'Pendientes'
+            return x
+            
+        df_permisos['estado_simp'] = df_permisos['status'].apply(simplificar_estado)
+        df_group = df_permisos.groupby('estado_simp')['cantidad'].sum().reset_index()
+        
+        fig_dona = px.pie(df_group, values='cantidad', names='estado_simp', hole=0.45, 
+                          color='estado_simp',
+                          color_discrete_map={
+                              'Aprobados': '#198754',
+                              'Pendientes': '#ffc107',
+                              'Rechazados': '#dc3545',
+                              'Cancelados': '#6c757d'
+                          })
+        fig_dona.update_traces(textposition='inside', textinfo='percent+label')
+        fig_dona.update_layout(showlegend=False)
+        st.plotly_chart(fig_dona, use_container_width=True)
+    else:
+        st.info("No hay permisos registrados en el sistema.")
 
     st.markdown("---")
     st.subheader("🔔 Panel de Auto-Auditoría (Alertas RRHH)")

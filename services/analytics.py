@@ -116,6 +116,48 @@ def compute_month_lateness(year: int, month: int):
     for _, row in exc_df.iterrows():
         exceptions_set.add((str(row["user_id"]), row["date"]))
 
+    # --- BULK LOAD SCHEDULES (N+1 FIX) ---
+    start_week_str = (first_day - timedelta(days=first_day.weekday())).isoformat()
+    end_week_str = (last_day - timedelta(days=last_day.weekday())).isoformat()
+    
+    # 1. Load user-specific shift assignments
+    sa_df = pd.read_sql_query("""
+        SELECT sa.user_id, sa.week_start, sa.dow, s.start_time, s.grace_minutes
+        FROM shift_assignments sa
+        JOIN shifts s ON sa.shift_id = s.id
+        WHERE sa.week_start >= ? AND sa.week_start <= ?
+    """, conn, params=(start_week_str, end_week_str))
+    
+    user_shifts = {}
+    for _, row in sa_df.iterrows():
+        try:
+            hh, mm = row["start_time"].split(":")
+            user_shifts[(str(row["user_id"]), row["week_start"], int(row["dow"]))] = {
+                "start_time": time(int(hh), int(mm)),
+                "grace_minutes": int(row["grace_minutes"])
+            }
+        except: pass
+        
+    # 2. Load default schedules
+    def_sched_df = pd.read_sql_query("""
+        SELECT week_start, dow, start_time, grace_minutes
+        FROM schedules
+        WHERE week_start >= ? AND week_start <= ?
+    """, conn, params=(start_week_str, end_week_str))
+    
+    default_schedules = {}
+    for _, row in def_sched_df.iterrows():
+        try:
+            hh, mm = row["start_time"].split(":")
+            default_schedules[(row["week_start"], int(row["dow"]))] = {
+                "start_time": time(int(hh), int(mm)),
+                "grace_minutes": int(row["grace_minutes"])
+            }
+        except: pass
+        
+    conn.close()
+    # ------------------------------------
+
     # Tomar solo el primer 'punch' del día (llegada)
     first_punch = (df.sort_values("ts")
                      .groupby(["user_id", "day"], as_index=False)
@@ -130,7 +172,14 @@ def compute_month_lateness(year: int, month: int):
         if (uid, d.isoformat()) in exceptions_set:
             continue
             
-        sched = schedule_for_user_date(uid, d, conn)
+        week_start_str = (d - timedelta(days=d.weekday())).isoformat()
+        dow = d.weekday()
+        
+        # Local lookup instead of DB query
+        sched = user_shifts.get((uid, week_start_str, dow))
+        if not sched:
+            sched = default_schedules.get((week_start_str, dow))
+            
         if not sched:
             continue
 
@@ -150,7 +199,6 @@ def compute_month_lateness(year: int, month: int):
                 "device_name": r["device_name"],
                 "device_ip": r["device_ip"],
             })
-    conn.close()
 
     detail_df = pd.DataFrame(details)
     if detail_df.empty:

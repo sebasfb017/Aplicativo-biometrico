@@ -57,12 +57,41 @@ def main():
     st.set_page_config(page_title="Nómina Dolormed", layout="wide", page_icon="🏢")
     init_db()
 
+    # --- INICIO BACKGROUND SCHEDULER ---
+    @st.cache_resource
+    def init_scheduler():
+        try:
+            from apscheduler.schedulers.background import BackgroundScheduler
+            from services.zk_service import automated_daily_sync
+            scheduler = BackgroundScheduler()
+            # Sincronizar todos los días a las 23:59
+            scheduler.add_job(automated_daily_sync, 'cron', hour=23, minute=59)
+            scheduler.start()
+            return scheduler
+        except ImportError:
+            return None
+            
+    _ = init_scheduler()
+    # --- FIN BACKGROUND SCHEDULER ---
+
     user = st.session_state.get("user")
     if not user:
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             page_login()
         return
+
+    # --- INACTIVITY TIMEOUT (10 min) ---
+    from datetime import datetime, timedelta
+    last_activity = st.session_state.get("last_activity")
+    now = datetime.now()
+    if last_activity:
+        if now - last_activity > timedelta(minutes=10):
+            st.session_state.clear()
+            st.warning("⏱️ Sesión cerrada automáticamente por 10 minutos de inactividad por seguridad.")
+            st.rerun()
+    st.session_state["last_activity"] = now
+    # ------------------------------------
 
     st.sidebar.markdown(f"<h2 style='text-align: center; color: #0066cc;'>Dolormed RRHH</h2>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='text-align: center; color: gray; margin-bottom: 20px;'>Hola, <b>{user['full_name']}</b><br><small>({user['role'].upper()})</small></div>", unsafe_allow_html=True)

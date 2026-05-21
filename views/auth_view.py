@@ -5,6 +5,7 @@ import random
 from datetime import datetime, timedelta
 
 from database_conn.connection import db_conn
+from database_conn.queries import get_users_by_role
 from utils.auth import verify_login, validate_password # Importar validate_password
 from utils.constants import AREA_MAPPING
 from services.email_service import send_welcome_email, send_password_reset_pin, send_password_changed_email
@@ -86,6 +87,9 @@ def register_employee_dialog():
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
             """, (st.session_state["reg_dni"], st.session_state["reg_name"], role, pw_hash, 1, datetime.now().isoformat(timespec="seconds"), managed_dept, sel_area, sel_subarea, phone, email, managed_area))
             conn.commit()
+            
+            # Limpiar la caché de usuarios para que el Administrador pueda verlo inmediatamente
+            get_users_by_role.clear()
             
             # Intentar enviar correo de bienvenida de forma silente
             try:
@@ -359,14 +363,14 @@ def page_login():
 
                 if st.button("Ingresar al Sistema", type="primary", use_container_width=True):
                     user = verify_login(username.strip(), password)
-                    if user:
+                    if user and "error" not in user:
                         st.session_state["user"] = user
                         st.success(f"¡Bienvenido, {user['full_name']}!")
                         import time
                         time.sleep(0.5)
                         st.rerun()
                     else:
-                        st.error("❌ Credenciales inválidas o acceso deshabilitado.")
+                        st.error(user["error"] if user else "❌ Credenciales inválidas.")
 
             with tab2:
                 st.write("**Acceso por Documento de Identidad:**")
@@ -378,14 +382,14 @@ def page_login():
                 if st.button("Ingresar al Portal", type="primary", use_container_width=True):
                     if cedula_log.strip() and pw_log:
                         user = verify_login(cedula_log.strip(), pw_log)
-                        if user:
+                        if user and "error" not in user:
                             st.session_state["user"] = user
                             st.success(f"Acceso exitoso: {user['full_name']}")
                             import time
                             time.sleep(0.5)
                             st.rerun()
                         else:
-                            st.error("❌ Credenciales incorrectas.")
+                            st.error(user["error"] if user else "❌ Credenciales incorrectas.")
                     else:
                         st.warning("⚠️ Debes digitar tu número de documento completo y la contraseña.")
                         

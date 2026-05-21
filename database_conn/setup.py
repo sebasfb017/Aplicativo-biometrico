@@ -223,6 +223,7 @@ def init_db():
     maybe_load_default_schedules()
     migrate_schema_cancellation()
     migrate_schema_rejection_reason() # Nueva migración
+    migrate_schema_lockouts()
 
 def migrate_schema_cancellation():
     """Añade la columna para la razón de cancelación si no existe."""
@@ -251,6 +252,24 @@ def migrate_schema_rejection_reason():
             conn.commit()
     except Exception as e:
         print(f"Error en migrate_schema_rejection_reason: {e}")
+    finally:
+        conn.close()
+
+def migrate_schema_lockouts():
+    """Añade columnas para el bloqueo por intentos fallidos."""
+    conn = db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("PRAGMA table_info(users_app)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "failed_attempts" not in columns:
+            cur.execute("ALTER TABLE users_app ADD COLUMN failed_attempts INTEGER DEFAULT 0")
+            conn.commit()
+        if "locked_until" not in columns:
+            cur.execute("ALTER TABLE users_app ADD COLUMN locked_until TEXT")
+            conn.commit()
+    except Exception as e:
+        print(f"Error en migrate_schema_lockouts: {e}")
     finally:
         conn.close()
 

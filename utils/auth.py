@@ -7,25 +7,67 @@ def get_user(username: str):
     """Obtiene los datos de un usuario desde la base de datos."""
     conn = db_conn()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT username, full_name, role, password_hash, active, managed_department
-        FROM users_app WHERE username = ?
-    """, (username,))
-    row = cur.fetchone()
+    try:
+        cur.execute("""
+            SELECT username, full_name, role, password_hash, active, managed_department, failed_attempts, locked_until
+            FROM users_app WHERE username = ?
+        """, (username,))
+        row = cur.fetchone()
+    except Exception:
+        # Fallback por si no han migrado la tabla aún
+        cur.execute("""
+            SELECT username, full_name, role, password_hash, active, managed_department
+            FROM users_app WHERE username = ?
+        """, (username,))
+        r = cur.fetchone()
+        row = (*r, 0, None) if r else None
     conn.close()
     return row
 
 def verify_login(username: str, password: str):
-    """Verifica las credenciales contra el hash guardado."""
+    """Verifica las credenciales contra el hash guardado e implementa bloqueos."""
     row = get_user(username)
     if not row:
-        return None
-    _username, full_name, role, pw_hash, active, managed_dept = row
+        return {"error": "Credenciales incorrectas o usuario no existe."}
+        
+    _username, full_name, role, pw_hash, active, managed_dept, failed_attempts, locked_until = row
+    
     if active != 1:
-        return None
+        return {"error": "Tu cuenta está inactiva."}
+        
+    from datetime import datetime, timedelta
+    if locked_until:
+        locked_time = datetime.fromisoformat(locked_until)
+        if datetime.now() < locked_time:
+            remaining = int((locked_time - datetime.now()).total_seconds() / 60)
+            return {"error": f"Cuenta bloqueada temporalmente por seguridad. Intenta de nuevo en {remaining} minutos."}
+            
     if bcrypt.checkpw(password.encode("utf-8"), pw_hash):
+        # Login exitoso, limpiar intentos
+        conn = db_conn()
+        cur = conn.cursor()
+        cur.execute("UPDATE users_app SET failed_attempts = 0, locked_until = NULL WHERE username = ?", (username,))
+        conn.commit()
+        conn.close()
+        
         return {"username": _username, "full_name": full_name, "role": role, "managed_department": managed_dept}
-    return None
+    else:
+        # Login fallido
+        conn = db_conn()
+        cur = conn.cursor()
+        new_attempts = (failed_attempts or 0) + 1
+        new_locked_until = None
+        if new_attempts >= 3:
+            new_locked_until = (datetime.now() + timedelta(minutes=30)).isoformat(timespec="seconds")
+            
+        cur.execute("UPDATE users_app SET failed_attempts = ?, locked_until = ? WHERE username = ?", (new_attempts, new_locked_until, username))
+        conn.commit()
+        conn.close()
+        
+        if new_attempts >= 3:
+            return {"error": "Has alcanzado el límite de intentos fallidos. Tu cuenta ha sido bloqueada por 30 minutos."}
+        else:
+            return {"error": f"Contraseña incorrecta. Intento {new_attempts}/3."}
 
 def require_role(*allowed_roles):
     """Bloquea el acceso a vistas si el usuario no tiene el rol necesario."""
@@ -39,8 +81,8 @@ def validate_password(password: str):
     Valida que la contraseña cumpla con políticas de seguridad robustas.
     Retorna (True, "") si es válida, o (False, "Mensaje de error") si no lo es.
     """
-    if len(password) < 8:
-        return False, "La contraseña debe tener al menos 8 caracteres."
+    if len(password) < 6:
+        return False, "La contraseña debe tener al menos 6 caracteres."
     if not re.search(r"[A-Z]", password):
         return False, "La contraseña debe contener al menos una letra mayúscula."
     if not re.search(r"[a-z]", password):
