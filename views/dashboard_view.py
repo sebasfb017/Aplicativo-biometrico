@@ -63,7 +63,7 @@ def page_dashboard():
         if summary_df.empty:
             st.success("¡Excelente! No hay tardanzas acumuladas este mes.")
         else:
-            nombres = pd.read_sql_query("SELECT user_id, department FROM employees", conn)
+            nombres = pd.read_sql_query("SELECT user_id, full_name, department FROM employees", conn)
             
             merged = pd.merge(summary_df, nombres, on="user_id", how="left")
             
@@ -74,16 +74,27 @@ def page_dashboard():
                 
             merged['Area'] = merged['department'].apply(get_main_area)
             
-            area_tarde = merged.groupby('Area')['minutos_tarde_total'].sum().reset_index()
-            area_tarde = area_tarde[area_tarde['minutos_tarde_total'] > 0]
-            
-            if not area_tarde.empty:
-                fig_tarde = px.bar(area_tarde, x='Area', y='minutos_tarde_total', color='Area',
-                             labels={'Area': 'Área', 'minutos_tarde_total': 'Minutos Acumulados'},
-                             title="")
-                st.plotly_chart(fig_tarde, use_container_width=True)
-            else:
-                st.success("¡Excelente! No hay tardanzas acumuladas este mes.")
+            col_chart, col_top5 = st.columns([2, 1])
+            with col_chart:
+                area_tarde = merged.groupby('Area')['minutos_tarde_total'].sum().reset_index()
+                area_tarde = area_tarde[area_tarde['minutos_tarde_total'] > 0]
+                
+                if not area_tarde.empty:
+                    fig_tarde = px.bar(area_tarde, x='Area', y='minutos_tarde_total', color='Area',
+                                 labels={'Area': 'Área', 'minutos_tarde_total': 'Minutos Acumulados'},
+                                 title="")
+                    st.plotly_chart(fig_tarde, use_container_width=True)
+                else:
+                    st.success("¡Excelente! No hay tardanzas acumuladas este mes.")
+                    
+            with col_top5:
+                st.markdown("**Top 5: Retrasos Críticos**")
+                top5_df = merged.sort_values(by="minutos_tarde_total", ascending=False).head(5)
+                top5_df = top5_df[top5_df["minutos_tarde_total"] > 0]
+                if not top5_df.empty:
+                    st.dataframe(top5_df[['full_name', 'minutos_tarde_total']].rename(columns={'full_name': 'Empleado', 'minutos_tarde_total': 'Minutos'}), hide_index=True, use_container_width=True)
+                else:
+                    st.info("No hay retrasos registrados.")
                 
     except Exception as e:
         st.error(f"No se pudo cargar el gráfico de tardanzas: {e}")
@@ -108,39 +119,31 @@ def page_dashboard():
 
     st.markdown("---")
     
-    # Gráfico de Dona de Permisos
-    st.subheader("📋 Estado Global de Permisos")
-    st.write("Proporción de solicitudes de permisos en el sistema.")
-    df_permisos = pd.read_sql_query("""
-        SELECT status, COUNT(*) as cantidad 
-        FROM leave_requests 
-        GROUP BY status
+    # Solicitudes Pendientes de Acción
+    st.subheader("📋 Solicitudes Pendientes de Acción")
+    st.write("Los permisos más recientes que esperan aprobación.")
+    
+    df_pendientes = pd.read_sql_query("""
+        SELECT lr.id as Radicado, lr.request_date as Fecha, u.full_name as Empleado, 
+               e.department as Departamento, lr.reason_type as Motivo, lr.status as Estado
+        FROM leave_requests lr
+        JOIN users_app u ON lr.user_id = u.username
+        LEFT JOIN employees e ON u.username = e.user_id
+        WHERE lr.status LIKE 'PENDING_%'
+        ORDER BY lr.id DESC LIMIT 10
     """, conn)
     
-    if not df_permisos.empty:
-        def simplificar_estado(x):
-            if x == 'APPROVED': return 'Aprobados'
-            if x == 'REJECTED': return 'Rechazados'
-            if x == 'CANCELLED': return 'Cancelados'
-            if 'PENDING' in x: return 'Pendientes'
+    if not df_pendientes.empty:
+        # Simplificar el estado para hacerlo más legible
+        def simplificar_pendiente(x):
+            if x == 'PENDING_COORD': return '🕒 Coord.'
+            if x == 'PENDING_JEFE': return '🕒 Jefe Área'
+            if x == 'PENDING_RRHH': return '🕒 RRHH'
             return x
-            
-        df_permisos['estado_simp'] = df_permisos['status'].apply(simplificar_estado)
-        df_group = df_permisos.groupby('estado_simp')['cantidad'].sum().reset_index()
-        
-        fig_dona = px.pie(df_group, values='cantidad', names='estado_simp', hole=0.45, 
-                          color='estado_simp',
-                          color_discrete_map={
-                              'Aprobados': '#198754',
-                              'Pendientes': '#ffc107',
-                              'Rechazados': '#dc3545',
-                              'Cancelados': '#6c757d'
-                          })
-        fig_dona.update_traces(textposition='inside', textinfo='percent+label')
-        fig_dona.update_layout(showlegend=False)
-        st.plotly_chart(fig_dona, use_container_width=True)
+        df_pendientes['Estado'] = df_pendientes['Estado'].apply(simplificar_pendiente)
+        st.dataframe(df_pendientes, hide_index=True, use_container_width=True)
     else:
-        st.info("No hay permisos registrados en el sistema.")
+        st.success("¡Todo al día! No hay solicitudes pendientes de aprobación.")
 
     st.markdown("---")
     st.subheader("🔔 Panel de Auto-Auditoría (Alertas RRHH)")
@@ -152,7 +155,7 @@ def page_dashboard():
         yesterday = (date.today() - timedelta(days=1)).isoformat()
         
         missing_query = """
-            SELECT e.full_name, sa.user_id 
+            SELECT e.full_name as Empleado, sa.user_id as ID
             FROM shift_assignments sa
             JOIN employees e ON sa.user_id = e.user_id
             WHERE sa.week_start = ? AND sa.dow = ? 
@@ -172,14 +175,15 @@ def page_dashboard():
         if miss_df.empty:
             st.success(f"Todo en orden. No hay faltas detectadas para el {yesterday}.")
         else:
-            for _, r in miss_df.iterrows():
-                st.error(f"Falta ayer: {r['full_name']} (ID: {r['user_id']})")
+            st.warning(f"Se detectaron {len(miss_df)} posibles faltas.")
+            with st.expander("Ver lista de empleados con posibles faltas"):
+                st.dataframe(miss_df, hide_index=True, use_container_width=True)
                 
     with col_a2:
         st.markdown("**⚠️ Empleados sin Turno Asignado**")
         this_week_start = (date.today() - timedelta(days=date.today().weekday())).isoformat()
         no_shift_query = """
-            SELECT full_name, user_id
+            SELECT full_name as Empleado, user_id as ID
             FROM employees 
             WHERE user_id NOT IN (
                 SELECT DISTINCT user_id FROM shift_assignments WHERE week_start = ?
@@ -191,8 +195,6 @@ def page_dashboard():
         if no_sch_df.empty:
             st.success("Toda la planilla tiene turnos asignados esta semana.")
         else:
-            if len(no_sch_df) > 10:
-                st.warning(f"Hay {len(no_sch_df)} empleados sin asignación de horario esta semana.")
-            else:
-                for _, r in no_sch_df.iterrows():
-                    st.warning(f"Sin horario: {r['full_name']} (ID: {r['user_id']})")
+            st.error(f"Hay {len(no_sch_df)} empleados sin asignación de horario esta semana.")
+            with st.expander("Ver lista de empleados sin turno"):
+                st.dataframe(no_sch_df, hide_index=True, use_container_width=True)
