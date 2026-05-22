@@ -38,28 +38,40 @@ def create_status_tracker(status: str):
         </div>
         """
 
-    # Construcción de la barra de progreso con HTML y CSS
-    html = '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem;">'
+    # Construcción de la barra de progreso con HTML y CSS (Responsive)
+    css = """
+    <style>
+    .tracker-container { display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; margin-top: 10px; }
+    .tracker-step { padding: 5px 10px; border-radius: 15px; font-weight: bold; text-align: center; z-index: 2; }
+    .tracker-line { flex-grow: 1; height: 2px; margin: 0 -5px; z-index: 1; }
+    @media (max-width: 600px) {
+        .tracker-container { flex-direction: column; align-items: flex-start; gap: 8px; }
+        .tracker-line { display: none; }
+        .tracker-step { width: 100%; text-align: left; padding: 8px 15px; }
+    }
+    </style>
+    """
+    html = css + '<div class="tracker-container">'
     steps = ["Enviado", "Coord.", "Jefe Área", "RRHH"]
 
     for i, step_name in enumerate(steps):
         # Determinar el estilo de cada paso (completado, actual, pendiente)
         if i < current_step:
-            # Verde para los pasos ya completados
             style = 'background-color: #C8E6C9; color: #2E7D32; border: 1px solid #2E7D32;'
+            icon = "✅ "
         elif i == current_step:
-            # Azul para el paso actual
             style = 'background-color: #BBDEFB; color: #0D47A1; border: 1px solid #0D47A1;'
+            icon = "⏳ "
         else:
-            # Gris para los pasos futuros/pendientes
             style = 'background-color: #E0E0E0; color: #616161; border: 1px solid #BDBDBD;'
+            icon = "⚪ "
 
-        html += f'<div style="padding: 5px 10px; border-radius: 15px; font-weight: bold; {style}">{step_name}</div>'
+        html += f'<div class="tracker-step" style="{style}">{icon}{step_name}</div>'
 
         # Añadir una línea de conexión entre los pasos (excepto en el último)
         if i < len(steps) - 1:
             line_color = '#2E7D32' if i < current_step else '#BDBDBD'
-            html += f'<div style="flex-grow: 1; height: 2px; background-color: {line_color}; margin: 0 5px;"></div>'
+            html += f'<div class="tracker-line" style="background-color: {line_color};"></div>'
 
     html += '</div>'
     return html
@@ -169,6 +181,35 @@ def cancel_leave_request_dialog(req_id: int, user_id: str, full_name: str, reaso
 
 def page_employee_portal():
     user = st.session_state["user"]
+    
+    # CSS Global para Optimización Móvil
+    mobile_css = """
+    <style>
+    @media (max-width: 600px) {
+        /* Reducir padding lateral en móviles */
+        .block-container {
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+            padding-top: 1.5rem !important;
+        }
+        /* Botones e inputs touch-friendly */
+        .stButton>button, .stDownloadButton>button, .stFormSubmitButton>button {
+            min-height: 44px !important;
+            border-radius: 8px !important;
+        }
+        input, select, textarea {
+            font-size: 16px !important; /* Evita zoom automático en iOS */
+        }
+        /* Asegurar que las tabs no se corten */
+        .stTabs [data-baseweb="tab-list"] {
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+    }
+    </style>
+    """
+    st.markdown(mobile_css, unsafe_allow_html=True)
+
     st.title("🧑‍⚕️ Mi Portal de Autogestión (F-TH-012)")
     st.write(f"Bienvenido/a **{user['full_name']}** | {user.get('department', 'Sin Área Definida')}")
     
