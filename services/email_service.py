@@ -102,7 +102,28 @@ def _send_email_sync(to_email, subject, html_content, text_content=""):
         return False, str(e)
 
 def _send_email(to_email, subject, html_content, text_content=""):
-    """Wrapper asíncrono para evitar bloquear la interfaz de usuario."""
+    """
+    Despacha el envío de correos electrónicos en un hilo en segundo plano (Asíncrono).
+    
+    Esta envoltura evita que la interfaz gráfica de Streamlit se bloquee o experimente
+    retrasos mientras se establece la conexión con el servidor SMTP.
+    
+    Parámetros:
+    -----------
+    to_email : str | list
+        Dirección(es) de correo electrónico del destinatario.
+    subject : str
+        Asunto del correo electrónico.
+    html_content : str
+        Cuerpo del mensaje en formato HTML para clientes modernos.
+    text_content : str, opcional
+        Cuerpo del mensaje en texto plano como respaldo.
+        
+    Retorna:
+    --------
+    tuple(bool, str)
+        Estado de la operación inicial y un mensaje de confirmación.
+    """
     import threading
     
     def background_task():
@@ -303,7 +324,27 @@ def send_password_changed_email(to_email: str, full_name: str, new_password: str
     return _send_email([to_email], subject, html, text)
 
 def send_status_update_email(to_email: str, full_name: str, req_id: int, reason_type: str, new_status: str, message: str):
-    """Envia una notificación HTML al empleado cuando su permiso cambia de estado."""
+    """
+    Notifica al empleado sobre cambios en el estado de sus solicitudes (Novedades).
+    
+    Genera y envía una plantilla HTML dinámica que ajusta sus colores e íconos 
+    dependiendo de si la solicitud fue aprobada, rechazada o está en trámite.
+    
+    Parámetros:
+    -----------
+    to_email : str
+        Correo electrónico del empleado destino.
+    full_name : str
+        Nombre completo del empleado para personalización del mensaje.
+    req_id : int
+        Identificador único (Radicado) de la solicitud en la base de datos.
+    reason_type : str
+        Tipo de permiso solicitado (Ej. 'Vacaciones', 'Incapacidad Médica').
+    new_status : str
+        El estado actual al que avanzó la solicitud (Ej. 'PRE-APROBADA', 'RECHAZADA').
+    message : str
+        Observación o justificación adicional provista por el aprobador.
+    """
     subject = f"Actualización de Solicitud #{req_id} ({reason_type})"
     
     if "RECHAZA" in new_status.upper():
