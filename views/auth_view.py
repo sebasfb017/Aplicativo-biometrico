@@ -313,7 +313,7 @@ def forgot_password_dialog():
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             st.button("Cambiar Contraseña", type="primary", use_container_width=True, on_click=reset_pw)
-        with col2:
+        with col_btn2:
             if st.button("Volver a solicitar PIN", use_container_width=True):
                 st.session_state["fp_step"] = 1
                 st.rerun()
