@@ -6,7 +6,7 @@ from database_conn.connection import db_session, db_conn
 from database_conn.queries import (upsert_exception, get_exceptions_df, 
                                    db_approve_leave_request_coord, db_approve_leave_request_jefe, 
                                    db_approve_leave_request_rrhh, db_reject_leave_request)
-from services.notifications import log_audit, notify_employee
+from services.notifications import log_audit, notify_employee_status
 from utils.auth import require_role
 from views.employee_portal_view import show_leave_request_details
 
@@ -140,7 +140,7 @@ def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
             if reason:
                 db_reject_leave_request(req_id, user_id, reason)
                 log_audit("REJECT_LEAVE_L1", f"Permiso #{req_id} ({reason_type}) de {full_name} rechazado por {user_id}. Motivo: {reason}")
-                notify_employee(user_id, f"Dolormed: Novedad #{req_id} Rechazada", f"Hola {full_name},<br>Tu permiso de {reason_type} fue RECHAZADO por tu jefatura. Motivo: {reason}")
+                notify_employee_status(user_id, full_name, req_id, reason_type, "RECHAZADA", f"Tu permiso fue rechazado por la jefatura. Motivo: {reason}")
                 st.success("Solicitud rechazada y empleado notificado.")
                 st.rerun()
             else:
@@ -233,7 +233,7 @@ def page_exceptions():
                                         send_novedad_alert(target_emails, r['full_name'], r['reason_type'], r['reason_description'], "N/A", r['leave_date_start'])
                             
                             log_audit("APPROVE_LEAVE_L1", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} aprobado por {user['role']}. Pasa a {next_status}")
-                            notify_employee(r['user_id'], f"Dolormed: Novedad #{r['id']} Pre-Aprobada", f"Hola {r['full_name']},<br>Tu permiso de {r['reason_type']} avanzó en el flujo. Pasa a estado: {next_status}.")
+                            notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "PRE-APROBADA", f"Tu solicitud avanzó en el flujo de firmas hacia el siguiente aprobador ({next_status}).")
                             st.rerun()
                             
                         if st.button("❌ Rechazar", key=f"btn_rej_{r['id']}", use_container_width=True):
@@ -370,6 +370,7 @@ def page_exceptions():
                                     """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal: {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
                                 
                             log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO FINAL por RRHH.")
+                            notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "APROBACIÓN FINAL", "Tu solicitud fue completamente aprobada por Recursos Humanos y registrada oficialmente en el sistema.")
                             st.rerun()
                             
                         if st.button("❌ Rechazar Final", key=f"btn_rej_hr_{r['id']}", use_container_width=True):
