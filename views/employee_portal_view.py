@@ -148,7 +148,28 @@ def show_leave_request_details(req_id: int):
     if not req['is_paid'] and req['how_to_makeup']:
         st.markdown("**Acuerdo de Reposición Prometido:**")
         st.warning(req['how_to_makeup'])
-
+        
+    # --- GESTIÓN DOCUMENTAL: Soporte Médico o Legal Adjunto ---
+    if 'attachment_path' in req and pd.notna(req['attachment_path']) and req['attachment_path']:
+        import os
+        from database_conn.connection import DATA_DIR
+        file_path = os.path.join(DATA_DIR, "uploads", req['attachment_path'])
+        
+        st.divider()
+        st.markdown("**Soporte Adjunto (Incapacidad/Certificado):**")
+        
+        if os.path.exists(file_path):
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+            st.download_button(
+                label="📎 Descargar Evidencia Adjunta",
+                data=file_bytes,
+                file_name=req['attachment_path'],
+                use_container_width=True
+            )
+        else:
+            st.error("El archivo adjunto no se encuentra en el servidor. Puede haber sido eliminado.")
+    # -----------------------------------------------------------
     if not df_audit.empty:
         st.divider()
         st.markdown("**Trazabilidad de Aprobaciones:**")
