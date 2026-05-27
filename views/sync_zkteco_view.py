@@ -85,6 +85,83 @@ def edit_device_dialog(device_idx, devices_list):
                 else:
                     st.error("Error al guardar en devices.yaml.")
 
+@st.dialog("✏️ Editar Usuario Biométrico")
+def edit_remote_user_dialog(user_data, device, devices_list):
+    """
+    Ventana emergente interactiva para editar o eliminar un usuario directamente en la memoria del reloj biométrico.
+    
+    Permite modificar el nombre corto del empleado o eliminarlo de forma definitiva.
+    Integra una funcionalidad de propagación masiva ('Aplicar a TODOS') que itera 
+    sobre los dispositivos de la red para mantener sincronizada la base de datos de los equipos.
+    
+    Parámetros:
+    -----------
+    user_data : dict
+        Diccionario con los datos del usuario seleccionados de la tabla (ej. user_id, name, privilege).
+    device : dict
+        El reloj biométrico principal del cual se extrajo la información.
+    devices_list : list
+        Lista completa de todos los relojes ZKTeco configurados en el sistema (para sincronización en cascada).
+    """
+    st.write(f"Editando Cédula: **{user_data['user_id']}** (Encontrado en {device.get('name', device['ip'])})")
+    
+    new_name = st.text_input("Nombre Corto (Ej. J. PEREZ)", value=user_data['name'])
+    apply_all = st.checkbox("Aplicar cambio (o eliminación) en TODOS los relojes de la red", value=True)
+    
+    st.markdown("---")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("💾 Guardar Nuevo Nombre", type="primary", use_container_width=True):
+            if not new_name.strip():
+                st.error("El nombre no puede estar vacío.")
+                return
+            
+            devices_to_process = devices_list if apply_all else [device]
+            success_count = 0
+            with st.spinner("Transmitiendo a los relojes..."):
+                for d in devices_to_process:
+                    ok, err = upload_user_to_device(d, str(user_data['user_id']), new_name.strip(), user_data.get('privilege', 0))
+                    if ok:
+                        success_count += 1
+                        # Limpiar cache de la vista
+                        if "dev_users_" + d["ip"] in st.session_state:
+                            del st.session_state["dev_users_" + d["ip"]]
+                            
+            if success_count > 0:
+                st.success(f"✅ Usuario modificado en {success_count} relojes.")
+                import time
+                time.sleep(0.75)
+                st.rerun()
+            else:
+                st.error("❌ No se pudo modificar el usuario en ningún reloj.")
+
+    with c2:
+        del_confirm = st.checkbox("Confirmar eliminación")
+        if st.button("🗑️ Eliminar Usuario", type="secondary", disabled=not del_confirm, use_container_width=True):
+            devices_to_process = devices_list if apply_all else [device]
+            success_count = 0
+            with st.spinner("Eliminando de los relojes..."):
+                # Para eliminar, necesitamos buscar el UID en CADA dispositivo
+                for d in devices_to_process:
+                    users_status, err = get_device_users_status(d)
+                    if users_status:
+                        for u in users_status:
+                            if str(u['user_id']) == str(user_data['user_id']):
+                                ok, err_del = delete_user_from_device(d, u['uid'])
+                                if ok:
+                                    success_count += 1
+                                    if "dev_users_" + d["ip"] in st.session_state:
+                                        del st.session_state["dev_users_" + d["ip"]]
+                                break
+                                
+            if success_count > 0:
+                st.success(f"🗑️ Usuario eliminado en {success_count} relojes.")
+                import time
+                time.sleep(0.75)
+                st.rerun()
+            else:
+                st.error("❌ No se pudo eliminar el usuario en ningún reloj.")
+
 def page_sync():
     require_role("admin", "nomina")
     st.title("🔄 Sincronización Biométrica")
@@ -248,10 +325,26 @@ def page_sync():
                     df_users["user_id"] = df_users["user_id"].astype(str)
                     
                     st.write(f"Usuarios alojados en memoria: **{len(df_users)}**")
-                    st.dataframe(
+                    st.info("💡 Selecciona un usuario en la tabla para **Editar** su nombre o **Eliminarlo**.")
+                    
+                    if 'last_edited_user' not in st.session_state:
+                        st.session_state.last_edited_user = None
+                        
+                    event_users = st.dataframe(
                         df_users[["user_id", "name", "Huella Registrada"]].rename(columns={"user_id": "Cédula", "name": "Nombre en Reloj"}),
-                        use_container_width=True, hide_index=True
+                        use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key=f"tbl_users_{selected_dev['ip']}"
                     )
+                    
+                    if len(event_users.selection.rows) > 0:
+                        selected_idx = event_users.selection.rows[0]
+                        sel_user = users_data[selected_idx]
+                        
+                        # Evitar re-lanzamientos infinitos del dialog si la tabla se vuelve a renderizar
+                        if str(sel_user['user_id']) != st.session_state.last_edited_user:
+                            st.session_state.last_edited_user = str(sel_user['user_id'])
+                            edit_remote_user_dialog(sel_user, selected_dev, devices_config)
+                    else:
+                        st.session_state.last_edited_user = None
                     
             with c2:
                 st.subheader("Crear Remotamente")
@@ -281,3 +374,56 @@ def page_sync():
                                     
                                 if "dev_users_" + selected_dev["ip"] in st.session_state:
                                     del st.session_state["dev_users_" + selected_dev["ip"]]
+
+            # --- HERRAMIENTA AVANZADA: REASIGNACIÓN DE MARCACIONES ---
+            # Este módulo permite corregir errores humanos de enrolamiento en el biométrico.
+            # Cuando un empleado inscribe su huella bajo una cédula equivocada, esta herramienta 
+            # ejecuta un UPDATE masivo en SQL para trasladar sus marcaciones históricas 
+            # a la cédula verdadera, dejando un rastro de auditoría por seguridad.
+            st.markdown("---")
+            with st.expander("🛠️ Herramientas Avanzadas (Corrección de Datos Históricos)"):
+                st.write("Si una huella fue enrolada con el número de cédula equivocado, utiliza esta herramienta para trasladar todo el historial de marcaciones de la cédula incorrecta a la correcta.")
+                
+                with st.form("reassign_punches_form"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        bad_id = st.text_input("Cédula de Origen (INCORRECTA)")
+                    with col2:
+                        good_id = st.text_input("Cédula de Destino (CORRECTA)")
+                        
+                    submit_reassign = st.form_submit_button("🔄 Trasladar Marcaciones Históricas", type="primary")
+                    
+                    if submit_reassign:
+                        if not bad_id.strip() or not good_id.strip():
+                            st.error("Debes llenar ambas cédulas.")
+                        else:
+                            try:
+                                from database_conn.connection import db_conn
+                                from datetime import datetime
+                                
+                                conn = db_conn()
+                                cur = conn.cursor()
+                                
+                                # Verificar cuántas existen
+                                cur.execute("SELECT COUNT(*) FROM attendance_raw WHERE user_id = ?", (bad_id.strip(),))
+                                records_count = cur.fetchone()[0]
+                                
+                                if records_count == 0:
+                                    st.warning(f"No se encontraron marcaciones históricas para la cédula {bad_id.strip()}.")
+                                else:
+                                    # Ejecutar actualización
+                                    cur.execute("UPDATE attendance_raw SET user_id = ? WHERE user_id = ?", (good_id.strip(), bad_id.strip()))
+                                    
+                                    # Loggear la acción de seguridad
+                                    admin_user = st.session_state.get("user", {}).get("username", "admin_unknown")
+                                    details = f"Traslado masivo: Movió {records_count} marcaciones de la cédula {bad_id.strip()} hacia {good_id.strip()}."
+                                    cur.execute("INSERT INTO audit_logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)", 
+                                                (admin_user, "DATA_CORRECTION", details, datetime.now().isoformat(timespec="seconds")))
+                                    
+                                    conn.commit()
+                                    st.success(f"✅ ¡Éxito! Se han transferido {records_count} marcaciones a la cédula {good_id.strip()}.")
+                                    st.info("💡 IMPORTANTE: Recuerda borrar la huella equivocada desde la tabla superior y pedirle al empleado que ponga su huella nuevamente con su cédula correcta, para que el problema no se repita mañana.")
+                                
+                                conn.close()
+                            except Exception as e:
+                                st.error(f"Error en base de datos: {e}")
