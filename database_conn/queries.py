@@ -153,12 +153,15 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
     # Por defecto inicia en el nivel más bajo (Coordinador)
     target_status = "PENDING_COORD"
     
-    # Si el que radica es un coordinador, salta a Jefe de Área
     if role == "coordinador":
-        target_status = "PENDING_JEFE"
-    # Si el que radica es Jefe o Admin/Nómina, va directo a RRHH
-    elif role in ["jefe_area", "admin", "nomina"]:
+        # Salta al siguiente paso: RRHH
         target_status = "PENDING_RRHH"
+    elif role in ["admin", "nomina"]:
+        # Si radica RRHH, salta al siguiente paso: Jefe de Área
+        target_status = "PENDING_JEFE"
+    elif role == "jefe_area":
+        # Si radica el Jefe, se auto-aprueba (es la última instancia)
+        target_status = "APPROVED"
 
     with db_session() as conn:
         cur = conn.cursor()
@@ -183,7 +186,7 @@ def db_approve_leave_request_coord(req_id, coord_username):
         cur = conn.cursor()
         cur.execute("""
             UPDATE leave_requests 
-            SET status = 'PENDING_JEFE', approved_by_coord = ?, coord_approval_date = ?
+            SET status = 'PENDING_RRHH', approved_by_coord = ?, coord_approval_date = ?
             WHERE id = ? AND status = 'PENDING_COORD'
         """, (coord_username, datetime.now().isoformat(timespec="seconds"), req_id))
 
@@ -192,18 +195,20 @@ def db_approve_leave_request_jefe(req_id, jefe_username):
         cur = conn.cursor()
         cur.execute("""
             UPDATE leave_requests 
-            SET status = 'PENDING_RRHH', approved_by_jefe = ?, jefe_approval_date = ?
+            SET status = 'APPROVED', approved_by_jefe = ?, jefe_approval_date = ?
             WHERE id = ? AND status = 'PENDING_JEFE'
         """, (jefe_username, datetime.now().isoformat(timespec="seconds"), req_id))
 
-def db_approve_leave_request_rrhh(req_id, rrhh_username):
+def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
     with db_session() as conn:
         cur = conn.cursor()
+        now = datetime.now().isoformat(timespec="seconds")
+        status = 'APPROVED' if is_final else 'PENDING_JEFE'
         cur.execute("""
             UPDATE leave_requests 
-            SET status = 'APPROVED', approved_by_rrhh = ?, rrhh_approval_date = ?
-            WHERE id = ? AND status = 'PENDING_RRHH'
-        """, (rrhh_username, datetime.now().isoformat(timespec="seconds"), req_id))
+            SET status = ?, approved_by_rrhh = ?, rrhh_approval_date = ? 
+            WHERE id = ?
+        """, (status, approver_user, now, req_id))
 
 def db_reject_leave_request(req_id, rejected_by, rejection_reason):
     with db_session() as conn:
@@ -240,6 +245,25 @@ def db_cancel_leave_request(req_id, user_id, reason):
                 INSERT INTO audit_logs (user_id, action, details, timestamp)
                 VALUES (?, ?, ?, ?)
             """, (user_id, "CANCEL_LEAVE", f"El empleado canceló la solicitud #{req_id}. Motivo: {reason}", datetime.now().isoformat(timespec="seconds")))
+            success = True
+        else:
+            success = False
+    return success
+
+def db_hide_leave_request(req_id, user_id):
+    """
+    Oculta lógicamente una solicitud de permiso para el empleado (Soft Delete).
+    Solo se puede ocultar si no está en un estado pendiente activo.
+    """
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE leave_requests 
+            SET hidden_by_employee = 1
+            WHERE id = ? AND user_id = ? AND status NOT IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')
+        """, (req_id, user_id))
+        
+        if cur.rowcount > 0:
             success = True
         else:
             success = False
