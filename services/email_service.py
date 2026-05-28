@@ -187,7 +187,7 @@ Te recomendamos cambiar tu contraseña una vez que ingreses.
 """
     return _send_email(to_email, subject, html, text)
 
-def send_novedad_alert(to_emails, full_name, reason_type, details, total_time, start_date):
+def send_novedad_alert(to_emails, full_name, reason_type, details, total_time, start_date, prev_approver=None):
     subject = f"Nueva Solicitud Radicada: {full_name} ({reason_type})"
     
     html = f"""
@@ -220,6 +220,8 @@ def send_novedad_alert(to_emails, full_name, reason_type, details, total_time, s
                 <li><strong>Detalles/Justificación:</strong> {details}</li>
               </ul>
             </div>
+            
+            {f'<p style="background-color: #e2f0d9; padding: 10px; border-radius: 5px; color: #2e7d32;"><strong>✅ Aprobado previamente por:</strong> {prev_approver}</p>' if prev_approver else ''}
             
             <p>Por favor, ingresa al portal administrativo en la sección de <strong>Control de Novedades</strong> para revisar y aprobar/rechazar esta solicitud.</p>
           </div>
@@ -323,7 +325,7 @@ def send_password_changed_email(to_email: str, full_name: str, new_password: str
     text = f"Tu nueva contraseña es: {new_password}"
     return _send_email([to_email], subject, html, text)
 
-def send_status_update_email(to_email: str, full_name: str, req_id: int, reason_type: str, new_status: str, message: str):
+def send_status_update_email(to_email: str, full_name: str, req_id: int, reason_type: str, new_status: str, message: str, approver_name: str = None):
     """
     Notifica al empleado sobre cambios en el estado de sus solicitudes (Novedades).
     
@@ -382,6 +384,7 @@ def send_status_update_email(to_email: str, full_name: str, req_id: int, reason_
             <div class="status-box">
               <p><strong>Nuevo Estado:</strong> {new_status}</p>
               <p><strong>Mensaje/Detalle:</strong> {message}</p>
+              {f'<p><strong>Procesado/Aprobado por:</strong> {approver_name}</p>' if approver_name else ''}
             </div>
             
             <p>Puedes verificar los detalles completos ingresando al Portal de Autogestión.</p>
@@ -399,5 +402,6 @@ Hola {full_name},
 Tu solicitud de {reason_type} ha cambiado de estado.
 Nuevo Estado: {new_status}
 Mensaje: {message}
+{f'Procesado/Aprobado por: {approver_name}' if approver_name else ''}
     """
     return _send_email([to_email], subject, html, text)

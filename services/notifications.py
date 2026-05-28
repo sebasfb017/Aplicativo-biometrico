@@ -18,7 +18,7 @@ def send_notification_email(to_email, subject, body):
     else:
         print(f"📧 [EMAIL] Enviado a {to_email} | Asunto: {subject}")
 
-def notify_employee_status(user_id, full_name, req_id, reason_type, new_status, message):
+def notify_employee_status(user_id, full_name, req_id, reason_type, new_status, message, approver_name=None):
     """Busca el correo del empleado y le envía una notificación HTML de actualización de estado."""
     conn = db_conn()
     cur = conn.cursor()
@@ -27,7 +27,7 @@ def notify_employee_status(user_id, full_name, req_id, reason_type, new_status, 
     conn.close()
     if row and row[0]:
         from services.email_service import send_status_update_email
-        send_status_update_email(row[0], full_name, req_id, reason_type, new_status, message)
+        send_status_update_email(row[0], full_name, req_id, reason_type, new_status, message, approver_name)
 
 def log_audit(action, details):
     """Registra una acción en la tabla de auditoría."""
