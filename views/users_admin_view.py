@@ -29,7 +29,10 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
     role_idx = roles_list.index(u['role']) if u['role'] in roles_list else len(roles_list)-1
     new_role = st.selectbox("Rol", roles_list, index=role_idx)
     
-    depts = sorted([d for d in emp_df['department'].unique() if d])
+    all_subareas = []
+    for subs in AREA_MAPPING.values():
+        all_subareas.extend(subs)
+    depts = sorted(list(set(all_subareas)))
     dept_idx = 0
     if u.get('managed_department') in depts:
         dept_idx = depts.index(u['managed_department']) + 1
@@ -157,7 +160,10 @@ def page_users_admin():
             )
             role = st.selectbox("Rol", ["admin", "nomina", "jefe_area", "coordinador", "empleado"])
             
-            depts = sorted([d for d in emp_df['department'].unique() if d])
+            all_subareas = []
+            for subs in AREA_MAPPING.values():
+                all_subareas.extend(subs)
+            depts = sorted(list(set(all_subareas)))
             managed_dept = st.selectbox("Departamento a Cargo (Solo aplica para Coordinadores)", options=[""] + depts)
             
             areas = list(AREA_MAPPING.keys())

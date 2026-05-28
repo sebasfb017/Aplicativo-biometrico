@@ -224,6 +224,22 @@ def init_db():
     migrate_schema_cancellation()
     migrate_schema_rejection_reason() # Nueva migración
     migrate_schema_lockouts()
+    migrate_schema_hidden_requests()
+
+def migrate_schema_hidden_requests():
+    """Añade la columna para ocultar permisos por parte del empleado."""
+    conn = db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("PRAGMA table_info(leave_requests)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "hidden_by_employee" not in columns:
+            cur.execute("ALTER TABLE leave_requests ADD COLUMN hidden_by_employee INTEGER DEFAULT 0")
+            conn.commit()
+    except Exception as e:
+        print(f"Error en migrate_schema_hidden_requests: {e}")
+    finally:
+        conn.close()
 
 def migrate_schema_cancellation():
     """Añade la columna para la razón de cancelación si no existe."""
@@ -329,31 +345,7 @@ def migrate_schema_coordinators():
             cur.execute("ALTER TABLE users_app ADD COLUMN emp_email TEXT DEFAULT ''")
             conn.commit()
 
-        cur.execute("PRAGMA foreign_keys=off;")
-        cur.execute("BEGIN TRANSACTION;")
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users_app_new (
-                username TEXT PRIMARY KEY,
-                full_name TEXT NOT NULL,
-                role TEXT NOT NULL,
-                password_hash BLOB NOT NULL,
-                active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL,
-                managed_department TEXT DEFAULT '',
-                emp_area TEXT DEFAULT '',
-                emp_subarea TEXT DEFAULT '',
-                emp_phone TEXT DEFAULT '',
-                emp_email TEXT DEFAULT ''
-            );
-        """)
-        cur.execute("""
-            INSERT INTO users_app_new (username, full_name, role, password_hash, active, created_at, managed_department, emp_area, emp_subarea, emp_phone, emp_email)
-            SELECT username, full_name, role, password_hash, active, created_at, managed_department, COALESCE(emp_area, ''), COALESCE(emp_subarea, ''), COALESCE(emp_phone, ''), COALESCE(emp_email, '') FROM users_app;
-        """)
-        cur.execute("DROP TABLE users_app;")
-        cur.execute("ALTER TABLE users_app_new RENAME TO users_app;")
-        cur.execute("COMMIT;")
-        cur.execute("PRAGMA foreign_keys=on;")
+
     except Exception:
         pass
     finally:

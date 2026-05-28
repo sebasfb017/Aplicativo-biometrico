@@ -9,18 +9,18 @@ def get_user(username: str):
     cur = conn.cursor()
     try:
         cur.execute("""
-            SELECT username, full_name, role, password_hash, active, managed_department, failed_attempts, locked_until
+            SELECT username, full_name, role, password_hash, active, managed_department, failed_attempts, locked_until, managed_area, emp_area
             FROM users_app WHERE username = ?
         """, (username,))
         row = cur.fetchone()
     except Exception:
         # Fallback por si no han migrado la tabla aún
         cur.execute("""
-            SELECT username, full_name, role, password_hash, active, managed_department
+            SELECT username, full_name, role, password_hash, active, managed_department, NULL, NULL
             FROM users_app WHERE username = ?
         """, (username,))
         r = cur.fetchone()
-        row = (*r, 0, None) if r else None
+        row = (*r, 0, None, None, None) if r else None
     conn.close()
     return row
 
@@ -30,8 +30,13 @@ def verify_login(username: str, password: str):
     if not row:
         return {"error": "Credenciales incorrectas o usuario no existe."}
         
-    _username, full_name, role, pw_hash, active, managed_dept, failed_attempts, locked_until = row
-    
+    if len(row) == 10:
+        _username, full_name, role, pw_hash, active, managed_dept, failed_attempts, locked_until, managed_area, emp_area = row
+    else:
+        _username, full_name, role, pw_hash, active, managed_dept, failed_attempts, locked_until = row
+        managed_area = None
+        emp_area = None
+        
     if active != 1:
         return {"error": "Tu cuenta está inactiva."}
         
@@ -50,7 +55,14 @@ def verify_login(username: str, password: str):
         conn.commit()
         conn.close()
         
-        return {"username": _username, "full_name": full_name, "role": role, "managed_department": managed_dept}
+        return {
+            "username": _username, 
+            "full_name": full_name, 
+            "role": role, 
+            "managed_department": managed_dept,
+            "managed_area": managed_area,
+            "emp_area": emp_area
+        }
     else:
         # Login fallido
         conn = db_conn()

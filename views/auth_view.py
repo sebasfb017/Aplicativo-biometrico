@@ -141,7 +141,7 @@ def register_employee_dialog():
         selected_role = st.selectbox("Rol en el Sistema", list(rol_options.keys()), format_func=lambda x: rol_options[x], key="reg_role")
         
         if selected_role == "coordinador":
-            depts = ["Sistemas", "Facturación", "Glosas", "Cartera", "Admisiones", "Enfermería", "SIAU", "Calidad", "SST", "Contabilidad", "Imagenología"]
+            depts = ["Sistemas", "Facturación", "Glosas", "Cartera", "Admisiones", "Enfermería", "SIAU", "Calidad", "SST", "Contabilidad", "Imagenología", "Talento Humano"]
             st.selectbox("¿Qué Departamento coordinas?", [""] + sorted(depts), key="reg_managed_dept")
             
         elif selected_role == "jefe_area":
