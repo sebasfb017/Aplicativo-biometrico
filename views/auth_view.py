@@ -137,7 +137,7 @@ def register_employee_dialog():
         st.selectbox("Sub-área / Cargo", AREA_MAPPING[selected_a], key="reg_sel_subarea")
         
         st.markdown("---")
-        rol_options = {"empleado": "Empleado Regular", "coordinador": "Coordinador de Departamento", "jefe_area": "Jefe de Área"}
+        rol_options = {"empleado": "Auxiliar", "coordinador": "Coordinador de Departamento", "jefe_area": "Jefe de Área"}
         selected_role = st.selectbox("Rol en el Sistema", list(rol_options.keys()), format_func=lambda x: rol_options[x], key="reg_role")
         
         if selected_role == "coordinador":
