@@ -216,7 +216,7 @@ def auto_assign_shifts_from_schedules():
     return count
 
 def page_schedules():
-    require_role("admin")
+    require_role("admin", "nomina")
     st.title("🕒 Maestro de Horarios")
     st.write("Configura y administra las rejillas horarias base para los empleados de Dolormed.")
 
@@ -337,7 +337,7 @@ def page_schedules():
     ensure_schedules_columns()
 
 def page_shifts():
-    require_role("admin")
+    require_role("admin", "nomina")
     st.title("🏭 Catálogo de Turnos Dolormed")
     st.write("Crea bloques horarios reutilizables (ej: Mañana Enfermería, Tarde, Noche, etc).")
 
@@ -386,7 +386,7 @@ def page_shifts():
         st.dataframe(shifts_df, use_container_width=True)
 
 def page_assign_shifts():
-    require_role("admin")
+    require_role("admin", "nomina")
     st.title("📝 Asignación Manual de Turnos")
     st.write("Forzar turno para empleados específicos en días concretos.")
 

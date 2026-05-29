@@ -111,7 +111,7 @@ def edit_employee_dialog(user_id):
                 st.error(f"Error al eliminar: {exc}")
 
 def page_employees():
-    require_role("admin")
+    require_role("admin", "nomina")
     st.title("👨‍💼 Directorio de Empleados")
     st.write("Administra la plantilla de personal y asocia los perfiles de Dolormed.")
 
