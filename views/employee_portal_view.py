@@ -7,6 +7,8 @@ def create_status_tracker(current_status, reason_type):
     """
     Crea una barra de progreso visual (Tracker) indicando en qué paso está el permiso.
     """
+    solo_rrhh = reason_type == "Incapacidad"
+    
     requiere_jefe = reason_type in [
         "Vacaciones", 
         "Calamidad Doméstica", 
@@ -18,15 +20,24 @@ def create_status_tracker(current_status, reason_type):
         "Licencia No Remunerada"
     ]
 
-    # Define los estados y su orden en el flujo de aprobación
-    status_order = {
-        "PENDING_COORD": 0,
-        "PENDING_RRHH": 1,
-        "PENDING_JEFE": 2 if requiere_jefe else -1, # Ignorado si no requiere jefe
-        "APPROVED": 3 if requiere_jefe else 2,
-        "REJECTED": -1, # Estado terminal de rechazo
-        "CANCELLED": -1 # Estado terminal de cancelación
-    }
+    if solo_rrhh:
+        steps = ["Enviado", "RRHH (Final)"]
+        status_order = {
+            "PENDING_RRHH": 0,
+            "APPROVED": 2,
+            "REJECTED": -2,
+            "CANCELLED": -3
+        }
+    else:
+        steps = ["Enviado", "Coord.", "Jefe Área (Final)"] if requiere_jefe else ["Enviado", "Coord.", "RRHH (Final)"]
+        status_order = {
+            "PENDING_COORD": 0,
+            "PENDING_RRHH": 1,
+            "PENDING_JEFE": 2 if requiere_jefe else -1, # Ignorado si no requiere jefe
+            "APPROVED": 4 if requiere_jefe else 3,
+            "REJECTED": -2, # Estado terminal de rechazo
+            "CANCELLED": -3 # Estado terminal de cancelación
+        }
 
     # Mapeo de estados a un texto más legible para el usuario
     status_labels = {
@@ -245,7 +256,11 @@ def page_employee_portal():
     st.markdown(mobile_css, unsafe_allow_html=True)
 
     st.title("🧑‍⚕️ Mi Portal de Autogestión (F-TH-012)")
-    st.write(f"Bienvenido/a **{user['full_name']}** | {user.get('department', 'Sin Área Definida')}")
+    
+    area = user.get('emp_area') or 'Sin Área Definida'
+    subarea = user.get('emp_subarea')
+    area_display = f"{area} - {subarea}" if area != 'Sin Área Definida' and subarea else area
+    st.write(f"Bienvenido/a **{user['full_name']}** | {area_display}")
     
     t1, t2 = st.tabs(["📝 Radicar Nuevo Permiso", "🗂️ Mis Solicitudes"])
     
@@ -258,7 +273,7 @@ def page_employee_portal():
             with c1:
                 leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona uno o varios días de ausencia.", format="YYYY-MM-DD")
                 
-                categoria = st.selectbox("Categoría de Novedad", ["Citas", "Permisos", "Licencias", "Vacaciones"])
+                categoria = st.selectbox("Categoría de Novedad", ["Citas", "Permisos", "Licencias", "Vacaciones", "Incapacidad"])
                 
                 if categoria == "Citas":
                     reason_type = st.selectbox("Detalle", ["Cita Médica", "Cita Médica con desplazamiento a otra ciudad"])
@@ -266,6 +281,9 @@ def page_employee_portal():
                     reason_type = st.selectbox("Detalle", ["Permiso Personal", "Permiso Laboral"])
                 elif categoria == "Licencias":
                     reason_type = st.selectbox("Detalle", ["Calamidad Doméstica", "Licencia de Luto", "Licencia de Paternidad", "Licencia por Votación", "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"])
+                elif categoria == "Incapacidad":
+                    reason_type = "Incapacidad"
+                    st.text_input("Detalle", value="Incapacidad", disabled=True)
                 else: # Vacaciones
                     reason_type = "Vacaciones"
                     st.text_input("Detalle", value="Vacaciones", disabled=True)
@@ -365,12 +383,19 @@ def page_employee_portal():
                             if target_status == 'PENDING_COORD':
                                 user_app_df = pd.read_sql_query("SELECT emp_subarea FROM users_app WHERE username = ?", conn, params=(user["username"],))
                                 subarea = user_app_df.iloc[0]['emp_subarea'] if not user_app_df.empty else ""
-                                coord_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'coordinador' AND managed_department = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(subarea,))
+                                target_coord_dept = subarea
+                                if subarea == 'Servicios Generales': target_coord_dept = 'Calidad'
+                                elif subarea == 'Orientador': target_coord_dept = 'Seguridad'
+                                coord_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'coordinador' AND managed_department = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(target_coord_dept,))
                                 target_emails = coord_df['emp_email'].tolist()
                             elif target_status == 'PENDING_JEFE':
-                                user_app_df = pd.read_sql_query("SELECT emp_area FROM users_app WHERE username = ?", conn, params=(user["username"],))
+                                user_app_df = pd.read_sql_query("SELECT emp_area, emp_subarea FROM users_app WHERE username = ?", conn, params=(user["username"],))
                                 area = user_app_df.iloc[0]['emp_area'] if not user_app_df.empty else ""
-                                jefe_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(area,))
+                                subarea = user_app_df.iloc[0]['emp_subarea'] if not user_app_df.empty else ""
+                                target_jefe_area = area
+                                if subarea == 'Admisiones': target_jefe_area = 'Administrativo'
+                                elif subarea == 'Auditor Médico': target_jefe_area = 'Auditoria Médica'
+                                jefe_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(target_jefe_area,))
                                 target_emails = jefe_df['emp_email'].tolist()
                             elif target_status == 'PENDING_RRHH':
                                 admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
