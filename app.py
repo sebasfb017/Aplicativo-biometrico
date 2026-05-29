@@ -57,6 +57,42 @@ def main():
     st.set_page_config(page_title="Nómina Dolormed", layout="wide", page_icon="🏢")
     init_db()
 
+    # --- CSS GLOBAL (EMBELLECIMIENTO VISUAL) ---
+    st.markdown("""
+    <style>
+    /* Efecto Glassmorphism en métricas y tarjetas */
+    div[data-testid="stMetric"] {
+        border-radius: 12px;
+        padding: 15px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        border: 1px solid rgba(200, 200, 200, 0.2);
+    }
+    div[data-testid="stMetric"]:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 15px rgba(0, 0, 0, 0.15);
+    }
+    /* Estilizar botones para efecto premium */
+    button[kind="primary"] {
+        border-radius: 8px !important;
+        transition: all 0.3s ease !important;
+    }
+    button[kind="primary"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(13, 110, 253, 0.4) !important;
+    }
+    /* Contenedores con hover */
+    div[data-testid="stExpander"] {
+        border-radius: 8px !important;
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+    div[data-testid="stExpander"]:hover {
+        border-color: #0D6EFD;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     # --- INICIO BACKGROUND SCHEDULER ---
     @st.cache_resource
     def init_scheduler():
@@ -93,6 +129,37 @@ def main():
     st.session_state["last_activity"] = now
     # ------------------------------------
 
+    # --- NOTIFICACIONES EN PANTALLA (TOASTS) ---
+    if not st.session_state.get("notified"):
+        st.session_state["notified"] = True
+        
+        if user["role"] == "empleado":
+            st.toast(f"¡Hola {user['full_name'].split()[0]}! Bienvenido a tu Portal de Autogestión.", icon="👋")
+        else:
+            try:
+                conn = db_conn()
+                cur = conn.cursor()
+                if user["role"] == "coordinador":
+                    cur.execute("SELECT count(*) FROM leave_requests WHERE status = 'PENDING_COORD'")
+                elif user["role"] == "jefe_area":
+                    cur.execute("SELECT count(*) FROM leave_requests WHERE status = 'PENDING_JEFE'")
+                elif user["role"] in ["admin", "nomina"]:
+                    cur.execute("SELECT count(*) FROM leave_requests WHERE status IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')")
+                else:
+                    cur.execute("SELECT 0")
+                
+                pendientes = cur.fetchone()
+                pendientes = pendientes[0] if pendientes else 0
+                conn.close()
+                
+                if pendientes > 0:
+                    st.toast(f"Tienes {pendientes} solicitudes pendientes de aprobación en tu bandeja.", icon="🔔")
+                else:
+                    st.toast(f"¡Hola {user['full_name'].split()[0]}! Tu bandeja de aprobaciones está al día.", icon="✅")
+            except Exception:
+                pass
+    # -------------------------------------------
+
     st.sidebar.markdown(f"<h2 style='text-align: center; color: #0066cc;'>Dolormed RRHH</h2>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='text-align: center; color: gray; margin-bottom: 20px;'>Hola, <b>{user['full_name']}</b><br><small>({user['role'].upper()})</small></div>", unsafe_allow_html=True)
 
@@ -100,9 +167,10 @@ def main():
         "admin": (["Dashboard", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"],
                   ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"]),
         "empleado": (["Mi Portal de Autogestión"], ["person-vcard"]),
-        "coordinador": (["Dashboard", "Autorización de Permisos", "Visualizar Data"], ["house", "check2-square", "table"]),
-        "nomina": (["Dashboard", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data"], 
-                   ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table"])
+        "coordinador": (["Autorización de Permisos", "Carga Masiva de Turnos"], ["check2-square", "file-earmark-excel"]),
+        "jefe_area": (["Autorización de Permisos"], ["check2-square"]),
+        "nomina": (["Dashboard", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"], 
+                   ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"])
     }
     menu_options, menu_icons = ROLES_MENU.get(user["role"], ROLES_MENU["nomina"])
 
@@ -157,8 +225,10 @@ def main():
             page_assign_shifts()
         with tab3:
             page_bulk_assign_shifts()
+    elif sel == "Carga Masiva de Turnos":
+        page_bulk_assign_shifts()
     elif sel in router:
         router[sel]()
 
 if __name__ == "__main__":
-    main()
+    main()
