@@ -26,8 +26,9 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
     st.markdown(f"**Nombre:** {u['full_name']}")
     
     roles_list = ["admin", "nomina", "jefe_area", "coordinador", "empleado"]
+    rol_names = {"admin": "Administrador", "nomina": "Nómina/RRHH", "jefe_area": "Jefe de Área", "coordinador": "Coordinador", "empleado": "Auxiliar"}
     role_idx = roles_list.index(u['role']) if u['role'] in roles_list else len(roles_list)-1
-    new_role = st.selectbox("Rol", roles_list, index=role_idx)
+    new_role = st.selectbox("Rol", roles_list, index=role_idx, format_func=lambda x: rol_names[x])
     
     all_subareas = []
     for subs in AREA_MAPPING.values():
@@ -39,7 +40,7 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
         
     new_managed_dept = st.selectbox("Departamento a Cargo (Aplica para Coordinadores)", options=[""] + depts, index=dept_idx)
     
-    areas_list = list(AREA_MAPPING.keys())
+    areas_list = list(AREA_MAPPING.keys()) + ["Auditoria Médica"]
     area_idx = 0
     if u.get('managed_area') in areas_list:
         area_idx = areas_list.index(u['managed_area']) + 1
@@ -138,11 +139,15 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
         st.rerun()
 
 def page_users_admin():
-    require_role("admin")
+    require_role("admin", "nomina")
     st.title("👥 Gestión de Usuarios")
     st.write("Administra los accesos al portal de Nómina Dolormed.")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados", "⚙️ Servidor de Correos"])
+    is_admin = st.session_state.get("user", {}).get("role") == "admin"
+    if is_admin:
+        tab1, tab2, tab3, tab4 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados", "⚙️ Servidor de Correos"])
+    else:
+        tab1, tab2, tab3 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados"])
 
     with tab1:
         st.subheader("Datos del Nuevo Usuario")
@@ -158,7 +163,9 @@ def page_users_admin():
                 options=emp_df['user_id'].tolist(),
                 format_func=lambda uid: f"{uid} - {emp_df[emp_df['user_id']==uid]['full_name'].values[0]}"
             )
-            role = st.selectbox("Rol", ["admin", "nomina", "jefe_area", "coordinador", "empleado"])
+            roles_list = ["admin", "nomina", "jefe_area", "coordinador", "empleado"]
+            rol_names = {"admin": "Administrador", "nomina": "Nómina/RRHH", "jefe_area": "Jefe de Área", "coordinador": "Coordinador", "empleado": "Auxiliar"}
+            role = st.selectbox("Rol", roles_list, format_func=lambda x: rol_names.get(x, x))
             
             all_subareas = []
             for subs in AREA_MAPPING.values():
@@ -166,7 +173,7 @@ def page_users_admin():
             depts = sorted(list(set(all_subareas)))
             managed_dept = st.selectbox("Departamento a Cargo (Solo aplica para Coordinadores)", options=[""] + depts)
             
-            areas = list(AREA_MAPPING.keys())
+            areas = list(AREA_MAPPING.keys()) + ["Auditoria Médica"]
             managed_area = st.selectbox("Área a Cargo (Solo aplica para Jefes de Área)", options=[""] + areas)
             
             st.markdown("---")
@@ -294,9 +301,10 @@ def page_users_admin():
             else:
                 st.session_state.last_processed_emp_user = None
 
-    with tab4:
-        st.subheader("Configuración del Servidor de Correo (SMTP)")
-        st.write("Configura la cuenta de correo desde donde el sistema enviará las alertas y credenciales.")
+    if is_admin:
+        with tab4:
+            st.subheader("Configuración del Servidor de Correo (SMTP)")
+            st.write("Configura la cuenta de correo desde donde el sistema enviará las alertas y credenciales.")
         
         cfg = load_smtp_config()
         with st.form("smtp_form"):
@@ -320,22 +328,22 @@ def page_users_admin():
                     st.success("✅ Configuración SMTP guardada correctamente.")
                 else:
                     st.error("❌ Error al guardar la configuración.")
-        
-        st.markdown("---")
-        st.subheader("Herramientas de Diagnóstico")
-        if st.button("🧪 Enviar Correo de Prueba"):
-            with st.spinner("Conectando al servidor SMTP..."):
-                from services.email_service import _send_email
-                test_email = cfg.get("smtp_user", "")
-                if not test_email:
-                    st.warning("Debes guardar un correo emisor primero.")
-                else:
-                    ok, msg = _send_email(
-                        test_email, 
-                        "Prueba de Conexión SMTP - Dolormed", 
-                        "<h1>¡Conexión Exitosa!</h1><p>Si recibes este correo, el servidor SMTP está configurado correctamente y enviando correos sin problemas.</p>"
-                    )
-                    if ok:
-                        st.success(f"✅ ¡Éxito! El servidor se conectó y el correo de prueba fue enviado a {test_email}.")
+            
+            st.markdown("---")
+            st.subheader("Herramientas de Diagnóstico")
+            if st.button("🧪 Enviar Correo de Prueba"):
+                with st.spinner("Conectando al servidor SMTP..."):
+                    from services.email_service import _send_email
+                    test_email = cfg.get("smtp_user", "")
+                    if not test_email:
+                        st.warning("Debes guardar un correo emisor primero.")
                     else:
-                        st.error(f"❌ Falló el envío. El servidor arrojó el siguiente error:\n\n`{msg}`")
+                        ok, msg = _send_email(
+                            test_email, 
+                            "Prueba de Conexión SMTP - Dolormed", 
+                            "<h1>¡Conexión Exitosa!</h1><p>Si recibes este correo, el servidor SMTP está configurado correctamente y enviando correos sin problemas.</p>"
+                        )
+                        if ok:
+                            st.success(f"✅ ¡Éxito! El servidor se conectó y el correo de prueba fue enviado a {test_email}.")
+                        else:
+                            st.error(f"❌ Falló el envío. El servidor arrojó el siguiente error:\n\n`{msg}`")
