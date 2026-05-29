@@ -166,10 +166,15 @@ def page_exceptions():
                 FROM leave_requests lr
                 JOIN employees e ON lr.user_id = e.user_id
                 JOIN users_app ua ON lr.user_id = ua.username
-                WHERE lr.status = 'PENDING_COORD' AND ua.emp_subarea = ?
+                WHERE lr.status = 'PENDING_COORD' AND 
+                      (
+                          ua.emp_subarea = ? OR 
+                          (ua.emp_subarea = 'Servicios Generales' AND ? = 'Calidad') OR
+                          (ua.emp_subarea = 'Orientador' AND ? = 'Seguridad')
+                      )
                 ORDER BY lr.id ASC
             """
-            params = (user.get('managed_department', ''),)
+            params = (user.get('managed_department', ''), user.get('managed_department', ''), user.get('managed_department', ''))
         else:
             query = """
                 SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -179,10 +184,15 @@ def page_exceptions():
                 FROM leave_requests lr
                 JOIN employees e ON lr.user_id = e.user_id
                 JOIN users_app ua ON lr.user_id = ua.username
-                WHERE lr.status = 'PENDING_JEFE' AND ua.emp_area = ?
+                WHERE lr.status = 'PENDING_JEFE' AND 
+                      (
+                          ua.emp_area = ? OR 
+                          (ua.emp_subarea = 'Admisiones' AND ? = 'Administrativo') OR
+                          (ua.emp_subarea = 'Auditor Médico' AND ? = 'Auditoria Médica')
+                      )
                 ORDER BY lr.id ASC
             """
-            params = (user.get('managed_area', ''),)
+            params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
             
         with db_session() as conn:
             df_pend = pd.read_sql_query(query, conn, params=params)
@@ -402,7 +412,14 @@ def page_exceptions():
                                     jefe_df = pd.read_sql_query("""
                                         SELECT emp_email FROM users_app 
                                         WHERE role = 'jefe_area' AND active = 1 AND emp_email IS NOT NULL AND emp_email != '' 
-                                        AND managed_area = (SELECT emp_area FROM users_app WHERE username = ?)
+                                        AND managed_area = (
+                                            SELECT CASE 
+                                                WHEN emp_subarea = 'Admisiones' THEN 'Administrativo' 
+                                                WHEN emp_subarea = 'Auditor Médico' THEN 'Auditoria Médica'
+                                                ELSE emp_area 
+                                            END
+                                            FROM users_app WHERE username = ?
+                                        )
                                     """, conn, params=(r['user_id'],))
                                     if not jefe_df.empty:
                                         target_emails = jefe_df['emp_email'].tolist()
@@ -416,7 +433,6 @@ def page_exceptions():
                                 db_approve_leave_request_rrhh(r['id'], user['username'], is_final=True)
                                 
                                 # Generar fechas e insertar en exceptions
-                                from datetime import datetime, timedelta
                                 start_d = datetime.strptime(r['leave_date_start'], "%Y-%m-%d").date()
                                 end_d = datetime.strptime(r['leave_date_end'], "%Y-%m-%d").date()
                                 days_diff = (end_d - start_d).days + 1
@@ -426,8 +442,9 @@ def page_exceptions():
                                     for i in range(days_diff):
                                         day_to_log = (start_d + timedelta(days=i)).strftime("%Y-%m-%d")
                                         cur.execute("""
-                                            INSERT INTO exceptions (user_id, exc_date, exc_type, reason, created_at)
+                                            INSERT INTO exceptions (user_id, date, type, notes, created_at)
                                             VALUES (?, ?, ?, ?, ?)
+                                            ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
                                         """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal (RRHH): {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
                                 
                                 log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO FINAL por RRHH.")
