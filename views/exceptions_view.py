@@ -5,7 +5,7 @@ from datetime import date, timedelta, datetime
 from database_conn.connection import db_session, db_conn
 from database_conn.queries import (upsert_exception, get_exceptions_df, 
                                    db_approve_leave_request_coord, db_approve_leave_request_jefe, 
-                                   db_approve_leave_request_rrhh, db_reject_leave_request)
+                                   db_reject_leave_request)
 from services.notifications import log_audit, notify_employee_status
 from utils.auth import require_role
 from views.employee_portal_view import show_leave_request_details
@@ -188,11 +188,12 @@ def page_exceptions():
                       (
                           ua.emp_area = ? OR 
                           (ua.emp_subarea = 'Admisiones' AND ? = 'Administrativo') OR
-                          (ua.emp_subarea = 'Auditor Médico' AND ? = 'Auditoria Médica')
+                          (ua.emp_subarea = 'Auditor Médico' AND ? = 'Auditoria Médica') OR
+                          (ua.emp_subarea = 'Control Interno' AND ? = 'Control Interno')
                       )
                 ORDER BY lr.id ASC
             """
-            params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
+            params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
             
         with db_session() as conn:
             df_pend = pd.read_sql_query(query, conn, params=params)
@@ -416,6 +417,7 @@ def page_exceptions():
                                             SELECT CASE 
                                                 WHEN emp_subarea = 'Admisiones' THEN 'Administrativo' 
                                                 WHEN emp_subarea = 'Auditor Médico' THEN 'Auditoria Médica'
+                                                WHEN emp_subarea = 'Control Interno' THEN 'Control Interno'
                                                 ELSE emp_area 
                                             END
                                             FROM users_app WHERE username = ?
@@ -427,7 +429,7 @@ def page_exceptions():
                                         send_novedad_alert(target_emails, r['full_name'], r['reason_type'], r['reason_description'], "N/A", r['leave_date_start'], user['full_name'])
                                 
                                 log_audit("APPROVE_LEAVE_L2", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} aprobado por RRHH. Pasa a {next_status}")
-                                notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "PRE-APROBADA", f"Tu solicitud fue revisada por RRHH y avanzó al Jefe de Área para aprobación final.", user['full_name'])
+                                notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "PRE-APROBADA", "Tu solicitud fue revisada por RRHH y avanzó al Jefe de Área para aprobación final.", user['full_name'])
                                 st.rerun()
                             else:
                                 db_approve_leave_request_rrhh(r['id'], user['username'], is_final=True)

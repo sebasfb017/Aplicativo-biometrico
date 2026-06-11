@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from database_conn.connection import db_conn, db_session
+from database_conn.connection import db_session
 from database_conn.queries import upsert_employees_df, get_all_employees
 from utils.auth import require_role
 from utils.constants import AREA_MAPPING
@@ -105,7 +105,12 @@ def edit_employee_dialog(user_id):
                 from database_conn.queries import get_users_by_role
                 get_users_by_role.clear()
                 
-                st.success("🗑️ Empleado eliminado.")
+                if "employees_table" in st.session_state:
+                    del st.session_state["employees_table"]
+                
+                st.success("🗑️ Empleado eliminado. Cerrando...")
+                import time
+                time.sleep(0.75)
                 st.rerun()
             except Exception as exc:
                 st.error(f"Error al eliminar: {exc}")
@@ -162,11 +167,14 @@ def page_employees():
             selected_rows = event.selection.rows
             if selected_rows:
                 idx = selected_rows[0]
-                selected_user_id = str(df_show.iloc[idx]["DNI / ID Biométrico"])
-                
-                if selected_user_id != st.session_state.last_processed_employee:
-                    st.session_state.last_processed_employee = selected_user_id
-                    edit_employee_dialog(selected_user_id)
+                if idx < len(df_show):
+                    selected_user_id = str(df_show.iloc[idx]["DNI / ID Biométrico"])
+                    
+                    if selected_user_id != st.session_state.last_processed_employee:
+                        st.session_state.last_processed_employee = selected_user_id
+                        edit_employee_dialog(selected_user_id)
+                else:
+                    st.session_state.last_processed_employee = None
             else:
                 st.session_state.last_processed_employee = None
 

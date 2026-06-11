@@ -395,6 +395,7 @@ def page_employee_portal():
                                 target_jefe_area = area
                                 if subarea == 'Admisiones': target_jefe_area = 'Administrativo'
                                 elif subarea == 'Auditor Médico': target_jefe_area = 'Auditoria Médica'
+                                elif subarea == 'Control Interno': target_jefe_area = 'Control Interno'
                                 jefe_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(target_jefe_area,))
                                 target_emails = jefe_df['emp_email'].tolist()
                             elif target_status == 'PENDING_RRHH':

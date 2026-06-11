@@ -40,7 +40,7 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
         
     new_managed_dept = st.selectbox("Departamento a Cargo (Aplica para Coordinadores)", options=[""] + depts, index=dept_idx)
     
-    areas_list = list(AREA_MAPPING.keys()) + ["Auditoria Médica"]
+    areas_list = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
     area_idx = 0
     if u.get('managed_area') in areas_list:
         area_idx = areas_list.index(u['managed_area']) + 1
@@ -173,7 +173,7 @@ def page_users_admin():
             depts = sorted(list(set(all_subareas)))
             managed_dept = st.selectbox("Departamento a Cargo (Solo aplica para Coordinadores)", options=[""] + depts)
             
-            areas = list(AREA_MAPPING.keys()) + ["Auditoria Médica"]
+            areas = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
             managed_area = st.selectbox("Área a Cargo (Solo aplica para Jefes de Área)", options=[""] + areas)
             
             st.markdown("---")
@@ -305,30 +305,30 @@ def page_users_admin():
         with tab4:
             st.subheader("Configuración del Servidor de Correo (SMTP)")
             st.write("Configura la cuenta de correo desde donde el sistema enviará las alertas y credenciales.")
-        
-        cfg = load_smtp_config()
-        with st.form("smtp_form"):
-            s_host = st.text_input("Servidor SMTP (Ej. smtp.gmail.com)", value=cfg.get("smtp_server", "smtp.gmail.com"))
-            s_port = st.number_input("Puerto (Ej. 587 para TLS o 465 para SSL)", value=int(cfg.get("smtp_port", 587)), min_value=1)
-            s_user = st.text_input("Correo Emisor", value=cfg.get("smtp_user", ""))
-            s_pass = st.text_input("Contraseña del Correo (o Contraseña de Aplicación)", value=cfg.get("smtp_password", ""), type="password")
-            s_name = st.text_input("Nombre del Remitente", value=cfg.get("sender_name", "Nómina Dolormed"))
             
-            st.info("Nota: Si usas un correo corporativo, ingresa tu contraseña normal. Si usas Gmail/Outlook, recuerda habilitar la Verificación en 2 Pasos y generar una 'Contraseña de Aplicación'.")
-            sub_smtp = st.form_submit_button("💾 Guardar Configuración", type="primary")
-            if sub_smtp:
-                new_cfg = {
-                    "smtp_server": s_host.strip(),
-                    "smtp_port": s_port,
-                    "smtp_user": s_user.strip(),
-                    "smtp_password": s_pass.strip(),
-                    "sender_name": s_name.strip()
-                }
-                if save_smtp_config(new_cfg):
-                    st.success("✅ Configuración SMTP guardada correctamente.")
-                else:
-                    st.error("❌ Error al guardar la configuración.")
-            
+            cfg = load_smtp_config()
+            with st.form("smtp_form"):
+                s_host = st.text_input("Servidor SMTP (Ej. smtp.gmail.com)", value=cfg.get("smtp_server", "smtp.gmail.com"))
+                s_port = st.number_input("Puerto (Ej. 587 para TLS o 465 para SSL)", value=int(cfg.get("smtp_port", 587)), min_value=1)
+                s_user = st.text_input("Correo Emisor", value=cfg.get("smtp_user", ""))
+                s_pass = st.text_input("Contraseña del Correo (o Contraseña de Aplicación)", value=cfg.get("smtp_password", ""), type="password")
+                s_name = st.text_input("Nombre del Remitente", value=cfg.get("sender_name", "Nómina Dolormed"))
+                
+                st.info("Nota: Si usas un correo corporativo, ingresa tu contraseña normal. Si usas Gmail/Outlook, recuerda habilitar la Verificación en 2 Pasos y generar una 'Contraseña de Aplicación'.")
+                sub_smtp = st.form_submit_button("💾 Guardar Configuración", type="primary")
+                if sub_smtp:
+                    new_cfg = {
+                        "smtp_server": s_host.strip(),
+                        "smtp_port": s_port,
+                        "smtp_user": s_user.strip(),
+                        "smtp_password": s_pass.strip(),
+                        "sender_name": s_name.strip()
+                    }
+                    if save_smtp_config(new_cfg):
+                        st.success("✅ Configuración SMTP guardada correctamente.")
+                    else:
+                        st.error("❌ Error al guardar la configuración.")
+                
             st.markdown("---")
             st.subheader("Herramientas de Diagnóstico")
             if st.button("🧪 Enviar Correo de Prueba"):
