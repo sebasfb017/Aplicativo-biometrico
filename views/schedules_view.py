@@ -3,11 +3,12 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime, date, timedelta
 
-from database_conn.connection import db_session, DATA_DIR
+from database_conn.connection import db_session
 from database_conn.queries import is_holiday, get_shifts_df, upsert_shift, assign_shift
 from utils.auth import require_role
 
 def default_schedules_path():
+    from database_conn.connection import DATA_DIR
     return os.path.join(DATA_DIR, "default_schedules.csv")
 
 def ensure_schedules_columns():
@@ -306,6 +307,7 @@ def page_schedules():
                 upsert_schedule_df(df)
                 st.success("Registros procesados.")
                 if st.button("Establecer como Plantilla Definitiva"):
+                    from database_conn.connection import DATA_DIR
                     os.makedirs(DATA_DIR, exist_ok=True)
                     df.to_csv(default_schedules_path(), index=False)
                     st.success("Guardado como plantilla por defecto.")
@@ -502,14 +504,42 @@ def page_bulk_assign_shifts():
         - `M`: Mañana (06:00 - 14:00)
         - `T`: Tarde (14:00 - 22:00)
         - `N`: Noche (22:00 - 06:00)
+        - `Ta`: Turno Ta 8 (14:00 - 18:00)
+        - `C1`: Corrido 1 (08:00 - 12:00)
+        - `C2`: Corrido 2 (14:00 - 18:00)
+        - `M2`: Mañana 2 (07:00 - 15:00)
+        - `T2`: Tarde 2 (12:00 - 20:00)
+        - `C3`: Corrido 3 (07:00 - 12:00)
+        - `C4`: Corrido 4 (14:00 - 18:00)
+        - `M3`: Mañana 3 (07:00 - 14:00)
+        - `T3`: Tarde 3 (13:00 - 20:00)
+        - `M4`: Mañana 4 (08:00 - 12:00)
+        - `AP`: Turno de Apoyo (10:00 - 14:00)
+        - `AP1`: Turno de Apoyo 1 (18:00 - 22:00)
+        - `AP2`: Turno de Apoyo 2 (16:00 - 20:00)
         - `TE1`: 12h Día (06:00 - 18:00)
         - `TE2`: 12h Tarde (10:00 - 22:00)
         - `TP`: Partido (10:00-14:00 y 18:00-22:00)
+        - `M5`: Mañana 5 (07:00 - 10:00)
+        - `M6`: Mañana 6 (07:00 - 11:00)
+        - `C5`: Corrido 5 (13:00 - 16:00)
+        - `M8`: Mañana 8 (06:00 - 10:00)
+        - `M9`: Mañana 9 (10:00 - 18:00)
+        - `C6`: Corrido 6 (08:00 - 16:00)
+        - `C7`: Corrido 7 (08:30 - 12:30)
+        - `C8`: Corrido 8 (12:00 - 16:00)
+        - `C9`: Corrido 9 (06:00 - 10:00)
+        - `C10`: Corrido 10 (12:30 - 16:30)
         
         **Excepciones y Libres:**
         - `V`: Vacaciones
         - `D`: Día de la Familia
         - `I`: Incapacidad
+        - `PR`: Permiso Remunerado
+        - `LM`: Licencia Remunerada
+        - `J`: Jurado de Votación
+        - `S`: Suspensión
+        - `LNR`: Licencia No Remunerada
         - `L` o (Vacio): Día Libre
         """)
 
@@ -581,18 +611,49 @@ def process_bulk_shifts(df, year, month, num_days):
         st.error(f"El Excel no tiene columnas para los días: {', '.join(missing_days)}. Deben ser números del 1 al {num_days}.")
         return
         
+    # Mapa de códigos estándar de turnos con sus respectivos horarios (formato 24h)
+    # Estos turnos se crearán automáticamente en la base de datos si no existen.
     SHIFT_CODES_MAP = {
         "M": {"name": "Turno_M", "start": "06:00", "end": "14:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
         "T": {"name": "Turno_T", "start": "14:00", "end": "22:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
         "N": {"name": "Turno_N", "start": "22:00", "end": "06:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 1},
+        "TA": {"name": "Turno_Ta", "start": "14:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "C1": {"name": "Turno_C1", "start": "08:00", "end": "12:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "C2": {"name": "Turno_C2", "start": "14:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "M2": {"name": "Turno_M2", "start": "07:00", "end": "15:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "T2": {"name": "Turno_T2", "start": "12:00", "end": "20:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "C3": {"name": "Turno_C3", "start": "07:00", "end": "12:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "C4": {"name": "Turno_C4", "start": "14:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "M3": {"name": "Turno_M3", "start": "07:00", "end": "14:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "T3": {"name": "Turno_T3", "start": "13:00", "end": "20:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "M4": {"name": "Turno_M4", "start": "08:00", "end": "12:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "AP": {"name": "Turno_AP", "start": "10:00", "end": "14:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "AP1": {"name": "Turno_AP1", "start": "18:00", "end": "22:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "AP2": {"name": "Turno_AP2", "start": "16:00", "end": "20:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
         "TE1": {"name": "Turno_TE1", "start": "06:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
         "TE2": {"name": "Turno_TE2", "start": "10:00", "end": "22:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
         "TP": {"name": "Turno_TP", "start": "10:00", "end": "22:00", "has_break": 1, "break_start": "14:00", "break_end": "18:00", "is_overnight": 0},
+        "M5": {"name": "Turno_M5", "start": "07:00", "end": "10:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "M6": {"name": "Turno_M6", "start": "07:00", "end": "11:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "C5": {"name": "Turno_C5", "start": "13:00", "end": "16:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "M8": {"name": "Turno_M8", "start": "06:00", "end": "10:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "M9": {"name": "Turno_M9", "start": "10:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "C6": {"name": "Turno_C6", "start": "08:00", "end": "16:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "C7": {"name": "Turno_C7", "start": "08:30", "end": "12:30", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "C8": {"name": "Turno_C8", "start": "12:00", "end": "16:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "C9": {"name": "Turno_C9", "start": "06:00", "end": "10:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "C10": {"name": "Turno_C10", "start": "12:30", "end": "16:30", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
     }
+    # Mapa de códigos de excepciones (días libres y licencias especiales)
     EXCEPTION_CODES_MAP = {
         "V": "Vacaciones",
         "D": "Día de la Familia",
-        "I": "Incapacidad"
+        "I": "Incapacidad",
+        "PR": "Permiso Remunerado",
+        "LM": "Licencia Remunerada",
+        "J": "Licencia por Jurado de Votación",
+        "S": "Suspensión",
+        "LNR": "Licencia No Remunerada",
     }
     
     shift_ids = {}
