@@ -1,9 +1,7 @@
-import os
 import pandas as pd
 import streamlit as st
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from database_conn.connection import db_conn, db_session
-from services.notifications import send_notification_email
 
 # --- GESTIÓN DE USUARIOS (Corrección de Errores y Consultas) ---
 
@@ -107,7 +105,12 @@ def upsert_shift(name, start_time, grace_minutes, **kwargs):
               1 if kwargs.get('has_break') else 0, kwargs.get('break_start', ''), 
               kwargs.get('break_end', ''), 1 if kwargs.get('is_overnight') else 0,
               kwargs.get('shift_code'), datetime.now().isoformat(timespec="seconds")))
+        
+        cur.execute("SELECT id FROM shifts WHERE name = ?", (name.strip(),))
+        row = cur.fetchone()
+        shift_id = row[0] if row else None
     get_shifts_df.clear()
+    return shift_id
 
 def assign_shift(user_id, week_start, dow, shift_id):
     """Asigna un turno a un empleado para un día de la semana específico."""
@@ -147,7 +150,6 @@ def get_exceptions_df():
 
 def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, total_time, r_type, r_desc, makeup, is_paid, attachment_path=None):
     """Crea una solicitud digital y define el flujo de aprobación inicial."""
-    conn = db_conn()
     role = st.session_state.get("user", {}).get("role", "empleado")
     
     # Por defecto inicia en el nivel más bajo (Coordinador)
@@ -270,3 +272,27 @@ def db_hide_leave_request(req_id, user_id):
         else:
             success = False
     return success
+
+def get_profile_by_name(name: str):
+    """Obtiene los detalles de un perfil por su nombre."""
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT name, works_holidays FROM profiles WHERE name = ?", (name,))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return {"name": row[0], "works_holidays": row[1]}
+    return None
+
+def calculate_overnight_surcharge(start_time: str, end_time: str) -> float:
+    """Calcula el recargo nocturno (35%) para turnos que cruzan o entran en horario nocturno (21:00-06:00)."""
+    try:
+        sh, sm = map(int, start_time.split(":"))
+        eh, em = map(int, end_time.split(":"))
+        
+        # Un turno nocturno es el que cruza medianoche, o inicia/termina en periodo nocturno (21:00 a 06:00)
+        if (eh < sh) or (sh >= 21 or sh <= 6) or (eh >= 21 or eh <= 6):
+            return 1.35
+    except Exception:
+        pass
+    return 1.0
