@@ -184,17 +184,15 @@ def compute_month_lateness(year: int, month: int):
             continue
 
         sched_start = datetime.combine(d, sched["start_time"])
-        grace = timedelta(minutes=sched["grace_minutes"])
-        late_after = sched_start + grace
+        late_min = int((r["ts"] - sched_start).total_seconds() // 60)
 
-        if r["ts"] > late_after:
-            late_min = int((r["ts"] - late_after).total_seconds() // 60)
+        if late_min >= 1:
             details.append({
                 "user_id": r["user_id"],
                 "fecha": d.isoformat(),
                 "hora_marcacion": r["ts"].strftime("%H:%M:%S"),
                 "hora_inicio": sched_start.strftime("%H:%M"),
-                "gracia_min": sched["grace_minutes"],
+                "gracia_min": 0,
                 "minutos_tarde": late_min,
                 "device_name": r["device_name"],
                 "device_ip": r["device_ip"],
@@ -221,3 +219,110 @@ def to_excel_bytes(summary_df: pd.DataFrame, detail_df: pd.DataFrame, raw_df: pd
             raw_df.to_excel(writer, index=False, sheet_name="MARCACIONES_RAW")
     output.seek(0)
     return output.getvalue()
+
+def get_late_punch_ids(start_date: date, end_date: date) -> dict:
+    """
+    Calcula qué marcaciones corresponden a llegadas tarde en un rango de fechas.
+    Retorna un diccionario mapeando ID de la marcación (int) -> minutos tarde (int).
+    """
+    # 1. Ajustar el rango de tiempo de datetime para la consulta de marcaciones
+    start_dt = datetime.combine(start_date, time(0, 0))
+    end_dt = datetime.combine(end_date + timedelta(days=1), time(0, 0))
+    
+    # 2. Extraer todas las marcaciones crudas del periodo ordenadas por user_id y ts
+    conn = db_conn()
+    df = pd.read_sql_query("""
+        SELECT id, user_id, ts, device_name, device_ip
+        FROM attendance_raw
+        WHERE ts >= ? AND ts < ? AND is_ignored = 0
+        ORDER BY user_id, ts
+    """, conn, params=(start_dt.isoformat(sep=" ", timespec="seconds"),
+                       end_dt.isoformat(sep=" ", timespec="seconds")))
+    
+    if df.empty:
+        conn.close()
+        return {}
+        
+    df["ts"] = pd.to_datetime(df["ts"])
+    df["day"] = df["ts"].dt.date
+    
+    # 3. Cargar excepciones para ese periodo
+    start_date_str = start_date.isoformat()
+    end_date_str = end_date.isoformat()
+    exc_df = pd.read_sql_query(
+        "SELECT user_id, date FROM exceptions WHERE date >= ? AND date <= ?",
+        conn, params=(start_date_str, end_date_str)
+    )
+    exceptions_set = set()
+    for _, row in exc_df.iterrows():
+        exceptions_set.add((str(row["user_id"]), row["date"]))
+        
+    # 4. Cargar horarios y asignaciones
+    start_week_str = (start_date - timedelta(days=start_date.weekday())).isoformat()
+    end_week_str = (end_date - timedelta(days=end_date.weekday())).isoformat()
+    
+    sa_df = pd.read_sql_query("""
+        SELECT sa.user_id, sa.week_start, sa.dow, s.start_time, s.grace_minutes
+        FROM shift_assignments sa
+        JOIN shifts s ON sa.shift_id = s.id
+        WHERE sa.week_start >= ? AND sa.week_start <= ?
+    """, conn, params=(start_week_str, end_week_str))
+    
+    user_shifts = {}
+    for _, row in sa_df.iterrows():
+        try:
+            hh, mm = row["start_time"].split(":")
+            user_shifts[(str(row["user_id"]), row["week_start"], int(row["dow"]))] = {
+                "start_time": time(int(hh), int(mm)),
+                "grace_minutes": int(row["grace_minutes"])
+            }
+        except: pass
+        
+    def_sched_df = pd.read_sql_query("""
+        SELECT week_start, dow, start_time, grace_minutes
+        FROM schedules
+        WHERE week_start >= ? AND week_start <= ?
+    """, conn, params=(start_week_str, end_week_str))
+    
+    default_schedules = {}
+    for _, row in def_sched_df.iterrows():
+        try:
+            hh, mm = row["start_time"].split(":")
+            default_schedules[(row["week_start"], int(row["dow"]))] = {
+                "start_time": time(int(hh), int(mm)),
+                "grace_minutes": int(row["grace_minutes"])
+            }
+        except: pass
+        
+    conn.close()
+    
+    # 5. Tomar el primer punch de cada usuario por día
+    first_punch = (df.sort_values("ts")
+                     .groupby(["user_id", "day"], as_index=False)
+                     .first())
+                     
+    late_dict = {}
+    for _, r in first_punch.iterrows():
+        d = r["day"]
+        uid = str(r["user_id"])
+        
+        if (uid, d.isoformat()) in exceptions_set:
+            continue
+            
+        week_start_str = (d - timedelta(days=d.weekday())).isoformat()
+        dow = d.weekday()
+        
+        sched = user_shifts.get((uid, week_start_str, dow))
+        if not sched:
+            sched = default_schedules.get((week_start_str, dow))
+            
+        if not sched:
+            continue
+            
+        sched_start = datetime.combine(d, sched["start_time"])
+        late_min = int((r["ts"] - sched_start).total_seconds() // 60)
+        
+        if late_min >= 1:
+            late_dict[int(r["id"])] = late_min
+            
+    return late_dict
