@@ -231,4 +231,77 @@ def main():
         router[sel]()
 
 if __name__ == "__main__":
-    main()
+    main()
+
+# --- EXPOSICIÓN DE ATRIBUTOS Y FUNCIONES PARA PRUEBAS (TESTS BACKWARD COMPATIBILITY) ---
+import bcrypt # noqa: E402, F401
+from datetime import datetime # noqa: E402, F401
+import types
+import sys
+
+from database_conn.connection import DATA_DIR as _DATA_DIR, DB_PATH as _DB_PATH # noqa: E402, F401
+from database_conn.setup import init_db # noqa: E402, F401
+from utils.auth import get_user, verify_login # noqa: E402, F401
+from views.schedules_view import ( # noqa: E402, F401
+    ensure_schedules_columns,
+    maybe_load_default_schedules,
+    upsert_schedule_df,
+    resolve_shift_from_code,
+    upsert_shifts_from_code_csv,
+    generate_rotating_schedule,
+    auto_assign_shifts_from_schedules
+)
+from services.analytics import ( # noqa: E402, F401
+    schedule_for_date,
+    compute_month_lateness,
+    to_excel_bytes,
+    get_shift_for_user_date,
+    schedule_for_user_date,
+    get_late_punch_ids
+)
+from services.zk_service import upsert_attendance, load_devices # noqa: E402, F401
+from database_conn.queries import ( # noqa: E402, F401
+    upsert_employees_df,
+    upsert_shift,
+    get_shifts_df,
+    assign_shift,
+    is_holiday,
+    get_profile_by_name,
+    calculate_overnight_surcharge
+)
+
+# Custom namespace wrapper to allow dynamic routing and patching during tests
+class AppNamespace(types.ModuleType):
+    @property
+    def DATA_DIR(self):
+        import database_conn.connection
+        return database_conn.connection.DATA_DIR
+
+    @DATA_DIR.setter
+    def DATA_DIR(self, value):
+        import database_conn.connection
+        database_conn.connection.DATA_DIR = value
+
+    @property
+    def DB_PATH(self):
+        import database_conn.connection
+        return database_conn.connection.DB_PATH
+
+    @DB_PATH.setter
+    def DB_PATH(self, value):
+        import database_conn.connection
+        database_conn.connection.DB_PATH = value
+        database_conn.connection.DATA_DIR = os.path.dirname(value)
+
+    @property
+    def DEVICES_YAML(self):
+        import services.zk_service
+        return services.zk_service.DEVICES_YAML
+
+    @DEVICES_YAML.setter
+    def DEVICES_YAML(self, value):
+        import services.zk_service
+        services.zk_service.DEVICES_YAML = value
+
+sys.modules[__name__].__class__ = AppNamespace
+
