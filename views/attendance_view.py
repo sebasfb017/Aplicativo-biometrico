@@ -7,6 +7,7 @@ from datetime import datetime, date, time, timedelta
 from database_conn.connection import db_conn
 from services.notifications import log_audit
 from utils.auth import require_role
+from services.analytics import get_late_punch_ids
 
 @st.dialog("✏️ Editar Marcación", width="large")
 def edit_attendance_dialog(record_id: int):
@@ -136,6 +137,7 @@ def page_view_attendance():
             selected_device = st.selectbox("Reloj de Origen", options=["Todos los Dispositivos"] + devices)
         with col4:
             user_filter = st.text_input("Filtrar Empleado (DNI o Nombre)")
+            show_only_late = st.checkbox("⏰ Mostrar solo llegadas tarde", value=False)
 
     conn = db_conn()
     start_dt = datetime.combine(start_date, time(0, 0))
@@ -191,31 +193,64 @@ def page_view_attendance():
         punch_map = {0: "Entrada", 1: "Salida", 2: "Break In", 3: "Break Out", 4: "OT In", 5: "OT Out"}
         df["Tipo"] = df["Tipo"].map(punch_map).fillna(df["Tipo"])
 
-        st.info(f"💡 Selecciona una marcación para editar manualmente su hora o eliminarla. Total de registros: {len(df)}")
+        # Calcular tardanzas
+        late_punch_map = get_late_punch_ids(start_date, end_date)
         
-        if 'last_processed_attendance' not in st.session_state:
-            st.session_state.last_processed_attendance = None
+        def get_lateness_label(row):
+            if row["Tipo"] == "Entrada":
+                rid = int(row["ID"])
+                if rid in late_punch_map:
+                    return f"⏰ {late_punch_map[rid]} min tarde"
+                return "✅ A tiempo"
+            return "-"
             
-        event = st.dataframe(df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="view_attendance_table")
-        
-        if len(event.selection.rows) > 0:
-            row_idx = event.selection.rows[0]
-            selected_id = int(df.iloc[row_idx]["ID"])
-            
-            if selected_id != st.session_state.last_processed_attendance:
-                st.session_state.last_processed_attendance = selected_id
-                edit_attendance_dialog(selected_id)
+        df["Tardanza"] = df.apply(get_lateness_label, axis=1)
+
+        # Filtrar si está seleccionado 'Mostrar solo llegadas tarde'
+        if show_only_late:
+            df = df[df["ID"].astype(int).isin(late_punch_map.keys())]
+
+        if df.empty:
+            st.info("💡 No hay llegadas tarde registradas para los filtros seleccionados.")
         else:
-            st.session_state.last_processed_attendance = None
+            # Reordenar las columnas para colocar Tardanza después de Hora Marcación
+            cols_order = [
+                "ID", "Dispositivo", "IP", "ID Usuario", "Nombre", "Hora Marcación", "Tardanza", "Status", "Tipo", "Descargado en"
+            ]
+            df = df[[c for c in cols_order if c in df.columns]]
 
-        excel_bytes = io.BytesIO()
-        with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Marcaciones")
-        excel_bytes.seek(0)
+            is_admin = st.session_state.get("user", {}).get("role") == "admin"
+            if is_admin:
+                st.info(f"💡 Selecciona una marcación para editar manualmente su hora o eliminarla. Total de registros: {len(df)}")
+            else:
+                st.info(f"💡 Total de registros: {len(df)}")
+            
+            if 'last_processed_attendance' not in st.session_state:
+                st.session_state.last_processed_attendance = None
+                
+            event = st.dataframe(df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="view_attendance_table")
+            
+            if len(event.selection.rows) > 0:
+                if is_admin:
+                    row_idx = event.selection.rows[0]
+                    selected_id = int(df.iloc[row_idx]["ID"])
+                    
+                    if selected_id != st.session_state.last_processed_attendance:
+                        st.session_state.last_processed_attendance = selected_id
+                        edit_attendance_dialog(selected_id)
+                else:
+                    st.session_state.last_processed_attendance = None
+            else:
+                st.session_state.last_processed_attendance = None
 
-        st.download_button(
-            "📥 Descargar registros en Excel",
-            data=excel_bytes.getvalue(),
-            file_name=f"marcaciones_{start_date.isoformat()}_{end_date.isoformat()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            excel_bytes = io.BytesIO()
+            with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
+                df.to_excel(writer, index=False, sheet_name="Marcaciones")
+            excel_bytes.seek(0)
+
+            st.download_button(
+                "📥 Descargar registros en Excel",
+                data=excel_bytes.getvalue(),
+                file_name=f"marcaciones_{start_date.isoformat()}_{end_date.isoformat()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
