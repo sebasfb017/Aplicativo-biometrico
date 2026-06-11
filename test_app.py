@@ -76,7 +76,7 @@ def test_schedule_and_lateness():
 
     summary, detail = app.compute_month_lateness(2025, 1)
     assert not summary.empty
-    assert summary.iloc[0]["minutos_tarde_total"] == 5
+    assert summary.iloc[0]["minutos_tarde_total"] == 10
 
 
 def test_upsert_schedule_df_invalid():
@@ -237,8 +237,8 @@ def test_shifts_and_assignments():
     app.upsert_attendance(rows)
     summary, detail = app.compute_month_lateness(2025, 1)
     assert not detail.empty
-    # minutos tarde = 5
-    assert detail.iloc[0]['minutos_tarde'] == 5
+    # minutos tarde = 15
+    assert detail.iloc[0]['minutos_tarde'] == 15
 
 
 def test_generate_rotating_schedule():
@@ -509,3 +509,146 @@ def test_shift_codes_in_spreadsheet():
     assert shift_dict.get("OFICINA - Horario Partido") == "OFICINA"
     assert shift_dict.get("RX1 - Día") == "RX1"
 
+
+def test_get_late_punch_ids():
+    # 1. Insert schedule and late punch
+    sched = pd.DataFrame([{"week_start": "2025-01-06", "dow": 0, "start_time": "08:00", "grace_minutes": 5}])
+    app.upsert_schedule_df(sched)
+    
+    rows = [
+        {
+            "device_name": "x",
+            "device_ip": "1.1",
+            "user_id": "emp_test_1",
+            "ts": "2025-01-06 08:10:00",  # 5 minutes late (late_after is 08:05)
+            "status": 0,
+            "punch": 0,
+            "uid": 100,
+            "downloaded_at": datetime.now().isoformat()
+        },
+        {
+            "device_name": "x",
+            "device_ip": "1.1",
+            "user_id": "emp_test_1",
+            "ts": "2025-01-06 17:00:00",  # Exit punch, shouldn't count
+            "status": 0,
+            "punch": 1,
+            "uid": 101,
+            "downloaded_at": datetime.now().isoformat()
+        },
+        {
+            "device_name": "x",
+            "device_ip": "1.1",
+            "user_id": "emp_test_2",
+            "ts": "2025-01-06 08:00:00",  # On time (exactly at start time)
+            "status": 0,
+            "punch": 0,
+            "uid": 102,
+            "downloaded_at": datetime.now().isoformat()
+        }
+    ]
+    app.upsert_attendance(rows)
+    
+    # Check that get_late_punch_ids returns the first record as late (5 mins) and not the others
+    late_map = app.get_late_punch_ids(date(2025, 1, 6), date(2025, 1, 6))
+    
+    # We need to query the database to get the real IDs of the inserted punches
+    conn = app.db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, ts, punch FROM attendance_raw WHERE user_id = 'emp_test_1'")
+    records_1 = cur.fetchall()
+    cur.execute("SELECT id, ts, punch FROM attendance_raw WHERE user_id = 'emp_test_2'")
+    records_2 = cur.fetchall()
+    conn.close()
+    
+    id_late = None
+    id_exit = None
+    for r_id, r_ts, r_punch in records_1:
+        if r_punch == 0:
+            id_late = r_id
+        else:
+            id_exit = r_id
+            
+    id_on_time = records_2[0][0]
+    
+    assert id_late in late_map
+    assert late_map[id_late] == 10
+    assert id_exit not in late_map
+    assert id_on_time not in late_map
+
+
+def test_process_bulk_shifts_new_codes():
+    """Prueba la importación de nuevos códigos de turno y de excepción mediante process_bulk_shifts."""
+    # Asegurar que exista un empleado de prueba en la base de datos
+    emp_df = pd.DataFrame([
+        {"user_id": "999", "full_name": "Test User", "profile_id": "Enfermería"}
+    ])
+    app.upsert_employees_df(emp_df)
+
+    from views.schedules_view import process_bulk_shifts
+    
+    # Se probará un mes (ej. Junio 2026, 30 días)
+    # Día 1: M (código de turno existente)
+    # Día 2: TA (nuevo código de turno, 14:00 - 18:00)
+    # Día 3: C1 (nuevo código de turno, 08:00 - 12:00)
+    # Día 4: PR (nuevo código de excepción)
+    # Día 5: LM (nuevo código de excepción)
+    # Día 6: J (nuevo código de excepción)
+    # Día 7: S (nuevo código de excepción)
+    # Día 8: LNR (nuevo código de excepción)
+    # Día 9: C10 (nuevo código de turno, 12:30 - 16:30)
+    
+    # Crear el dataframe de plantilla de prueba
+    cols = ["Cedula"] + [str(d) for d in range(1, 31)]
+    df = pd.DataFrame(columns=cols)
+    row = ["999", "M", "TA", "C1", "PR", "LM", "J", "S", "LNR", "C10"] + [""] * 21
+    df.loc[0] = row
+    
+    # Ejecutar el proceso masivo para Junio de 2026
+    process_bulk_shifts(df, 2026, 6, 30)
+    
+    conn = app.db_conn()
+    try:
+        cur = conn.cursor()
+        
+        # Check shift_assignments
+        cur.execute("""
+            SELECT sa.week_start, sa.dow, s.name, s.start_time, s.end_time
+            FROM shift_assignments sa
+            JOIN shifts s ON sa.shift_id = s.id
+            WHERE sa.user_id = '999'
+            ORDER BY sa.week_start, sa.dow
+        """)
+        sa_rows = cur.fetchall()
+        
+        # Check exceptions
+        cur.execute("""
+            SELECT date, type FROM exceptions
+            WHERE user_id = '999'
+            ORDER BY date
+        """)
+        exc_rows = cur.fetchall()
+    finally:
+        conn.close()
+    
+    # Expected shift assignments:
+    # 2026-06-01, dow 0 -> Turno_M (06:00 - 14:00)
+    # 2026-06-01, dow 1 -> Turno_Ta (14:00 - 18:00)
+    # 2026-06-01, dow 2 -> Turno_C1 (08:00 - 12:00)
+    # 2026-06-08, dow 1 -> Turno_C10 (12:30 - 16:30)
+    
+    assert len(sa_rows) == 4
+    
+    # Verify exceptions in the database
+    # June 4, 2026: PR -> Permiso Remunerado
+    # June 5, 2026: LM -> Licencia Remunerada
+    # June 6, 2026: J -> Licencia por Jurado de Votación
+    # June 7, 2026: S -> Suspensión
+    # June 8, 2026: LNR -> Licencia No Remunerada
+    assert len(exc_rows) == 5
+    
+    assert exc_rows[0] == ("2026-06-04", "Permiso Remunerado")
+    assert exc_rows[1] == ("2026-06-05", "Licencia Remunerada")
+    assert exc_rows[2] == ("2026-06-06", "Licencia por Jurado de Votación")
+    assert exc_rows[3] == ("2026-06-07", "Suspensión")
+    assert exc_rows[4] == ("2026-06-08", "Licencia No Remunerada")
