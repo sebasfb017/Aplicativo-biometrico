@@ -121,11 +121,9 @@ def page_employee_360():
                 else:
                     primer_punch = dia_punches[0]
                     sched_start = datetime.combine(current_date, sched["start_time"])
-                    grace = timedelta(minutes=sched["grace_minutes"])
-                    late_after = sched_start + grace
+                    late_min = int((primer_punch - sched_start).total_seconds() // 60)
                     
-                    if primer_punch > late_after:
-                        late_min = int((primer_punch - late_after).total_seconds() // 60)
+                    if late_min >= 1:
                         tipo_dia = "retardo"
                         llegadas_tarde_count += 1
                         minutos_tarde_acum += late_min
