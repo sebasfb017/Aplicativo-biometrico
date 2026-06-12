@@ -143,6 +143,8 @@ def page_users_admin():
     st.title("👥 Gestión de Usuarios")
     st.write("Administra los accesos al portal de Nómina Dolormed.")
     
+    user_to_edit = None
+    
     is_admin = st.session_state.get("user", {}).get("role") == "admin"
     if is_admin:
         tab1, tab2, tab3, tab4 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados", "⚙️ Servidor de Correos"])
@@ -249,7 +251,15 @@ def page_users_admin():
         if not admin_df.empty:
             admin_df_view = admin_df.copy()
             admin_df_view['active'] = admin_df_view['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
-            admin_df_view.columns = ["Usuario (DNI)", "Nombre Completo", "Rol", "Depto. a Cargo", "Activo", "Creado el"]
+            
+            def get_managed_entity(row):
+                if row['role'] == 'coordinador': return row['managed_department']
+                if row['role'] == 'jefe_area': return row['managed_area']
+                return ''
+                
+            admin_df_view['Depto. / Área a Cargo'] = admin_df_view.apply(get_managed_entity, axis=1)
+            admin_df_view = admin_df_view[["username", "full_name", "role", "Depto. / Área a Cargo", "active", "created_at"]]
+            admin_df_view.columns = ["Usuario (DNI)", "Nombre Completo", "Rol", "Depto. / Área a Cargo", "Activo", "Creado el"]
         
             st.info("💡 Haz clic en una fila para editar o eliminar.")
             
@@ -268,8 +278,7 @@ def page_users_admin():
                     
                     if selected_username != st.session_state.last_processed_admin_user:
                         st.session_state.last_processed_admin_user = selected_username
-                        emp_df = get_all_employees()
-                        edit_user_dialog(selected_username, emp_df)
+                        user_to_edit = selected_username
             else:
                 st.session_state.last_processed_admin_user = None
 
@@ -296,8 +305,8 @@ def page_users_admin():
                     
                     if selected_username != st.session_state.last_processed_emp_user:
                         st.session_state.last_processed_emp_user = selected_username
-                        emp_df = get_all_employees()
-                        edit_user_dialog(selected_username, emp_df)
+                        if not user_to_edit:
+                            user_to_edit = selected_username
             else:
                 st.session_state.last_processed_emp_user = None
 
@@ -347,3 +356,7 @@ def page_users_admin():
                             st.success(f"✅ ¡Éxito! El servidor se conectó y el correo de prueba fue enviado a {test_email}.")
                         else:
                             st.error(f"❌ Falló el envío. El servidor arrojó el siguiente error:\n\n`{msg}`")
+                            
+    if user_to_edit:
+        emp_df = get_all_employees()
+        edit_user_dialog(user_to_edit, emp_df)
