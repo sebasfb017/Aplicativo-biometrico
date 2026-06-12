@@ -21,7 +21,7 @@ def get_users_by_role(roles_list):
         df = pd.read_sql_query(query, conn)
     else:
         query = f"""
-            SELECT username, full_name, role, managed_department, active, created_at 
+            SELECT username, full_name, role, managed_department, managed_area, active, created_at 
             FROM users_app 
             WHERE role IN ({roles_placeholders}) 
             ORDER BY username
