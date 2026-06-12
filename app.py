@@ -19,6 +19,9 @@ def apply_theme(theme):
 primaryColor="#0D6EFD"
 base="{theme}"
 font="sans serif"
+
+[server]
+maxUploadSize = 20
 '''
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     with open(config_path, "w", encoding="utf-8") as f:
@@ -167,8 +170,8 @@ def main():
         "admin": (["Dashboard", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"],
                   ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"]),
         "empleado": (["Mi Portal de Autogestión"], ["person-vcard"]),
-        "coordinador": (["Autorización de Permisos", "Carga Masiva de Turnos"], ["check2-square", "file-earmark-excel"]),
-        "jefe_area": (["Autorización de Permisos"], ["check2-square"]),
+        "coordinador": (["Mi Portal de Autogestión", "Autorización de Permisos", "Carga Masiva de Turnos"], ["person-vcard", "check2-square", "file-earmark-excel"]),
+        "jefe_area": (["Mi Portal de Autogestión", "Autorización de Permisos"], ["person-vcard", "check2-square"]),
         "nomina": (["Dashboard", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"], 
                    ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"])
     }
