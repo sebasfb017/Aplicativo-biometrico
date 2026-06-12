@@ -157,120 +157,193 @@ def page_exceptions():
     user = st.session_state["user"]
 
     if user["role"] in ["coordinador", "jefe_area"]:
-        st.write(f"Bandeja de Aprobación para: **{user.get('managed_department') or user.get('managed_area')}**")
+        st.write(f"Panel de Gestión para: **{user.get('managed_department') or user.get('managed_area')}**")
         
-        if user["role"] == "coordinador":
-            query = """
-                SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
-                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path
-                FROM leave_requests lr
-                JOIN employees e ON lr.user_id = e.user_id
-                JOIN users_app ua ON lr.user_id = ua.username
-                WHERE lr.status = 'PENDING_COORD' AND 
-                      (
-                          ua.emp_subarea = ? OR 
-                          (ua.emp_subarea = 'Servicios Generales' AND ? = 'Calidad') OR
-                          (ua.emp_subarea = 'Orientador' AND ? = 'Seguridad')
-                      )
-                ORDER BY lr.id ASC
-            """
-            params = (user.get('managed_department', ''), user.get('managed_department', ''), user.get('managed_department', ''))
-        else:
-            query = """
-                SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
-                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path,
-                       (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
-                       (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
-                FROM leave_requests lr
-                JOIN employees e ON lr.user_id = e.user_id
-                JOIN users_app ua ON lr.user_id = ua.username
-                WHERE lr.status = 'PENDING_JEFE' AND 
-                      (
-                          ua.emp_area = ? OR 
-                          (ua.emp_subarea = 'Admisiones' AND ? = 'Administrativo') OR
-                          (ua.emp_subarea = 'Auditor Médico' AND ? = 'Auditoria Médica') OR
-                          (ua.emp_subarea = 'Control Interno' AND ? = 'Control Interno')
-                      )
-                ORDER BY lr.id ASC
-            """
-            params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
+        tab1, tab2 = st.tabs(["📥 Bandeja de Aprobación", "🕰️ Historial de Decisiones"])
+        
+        with tab1:
+            if user["role"] == "coordinador":
+                query = """
+                    SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path
+                    FROM leave_requests lr
+                    JOIN employees e ON lr.user_id = e.user_id
+                    JOIN users_app ua ON lr.user_id = ua.username
+                    WHERE lr.status = 'PENDING_COORD' AND 
+                          (
+                              ua.emp_subarea = ? OR 
+                              (ua.emp_subarea = 'Servicios Generales' AND ? = 'Calidad') OR
+                              (ua.emp_subarea = 'Orientador' AND ? = 'Seguridad')
+                          )
+                    ORDER BY lr.id ASC
+                """
+                params = (user.get('managed_department', ''), user.get('managed_department', ''), user.get('managed_department', ''))
+            else:
+                query = """
+                    SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path,
+                           (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
+                           (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
+                    FROM leave_requests lr
+                    JOIN employees e ON lr.user_id = e.user_id
+                    JOIN users_app ua ON lr.user_id = ua.username
+                    WHERE lr.status = 'PENDING_JEFE' AND 
+                          (
+                              ua.emp_area = ? OR 
+                              (ua.emp_subarea = 'Admisiones' AND ? = 'Administrativo') OR
+                              (ua.emp_subarea = 'Auditor Médico' AND ? = 'Auditoria Médica') OR
+                              (ua.emp_subarea = 'Control Interno' AND ? = 'Control Interno')
+                          )
+                    ORDER BY lr.id ASC
+                """
+                params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
+                
+            with db_session() as conn:
+                df_pend = pd.read_sql_query(query, conn, params=params)
             
-        with db_session() as conn:
-            df_pend = pd.read_sql_query(query, conn, params=params)
-        
-        if df_pend.empty:
-            st.success("No hay solicitudes pendientes de revisión para tu área.")
-        else:
-            st.write(f"Tienes **{len(df_pend)}** solicitud(es) por revisar.")
-            for _, r in df_pend.iterrows():
-                with st.container(border=True):
-                    cols = st.columns([3, 1])
-                    with cols[0]:
-                        st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}*")
-                        st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
-                        if 'coord_name' in r and pd.notna(r['coord_name']):
-                            st.info(f"✅ **Visto Bueno Previo:** Coordinador {r['coord_name']}")
-                        if 'rrhh_name' in r and pd.notna(r['rrhh_name']):
-                            st.info(f"✅ **Revisado por RRHH:** {r['rrhh_name']}")
-                        st.write(f"**Justificación:** {r['reason_description']}")
-                        
-                        # --- Llamada al detector de conflictos ---
-                        managed_entity = user.get('managed_department') if user["role"] == "coordinador" else user.get('managed_area')
-                        check_schedule_conflicts(r, user["role"], managed_entity)
-                        
-                        if r['attachment_path']:
-                            import os
-                            from database_conn.connection import DATA_DIR
-                            file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
-                            if os.path.exists(file_path):
-                                with open(file_path, "rb") as f:
-                                    st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_coord_{r['id']}")
-                    with cols[1]:
-                        if st.button("👍 Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True):
-                            if user["role"] == "coordinador":
-                                db_approve_leave_request_coord(r['id'], user['username'])
-                                next_status = 'PENDING_RRHH'
+            if df_pend.empty:
+                st.success("No hay solicitudes pendientes de revisión para tu área.")
+            else:
+                st.write(f"Tienes **{len(df_pend)}** solicitud(es) por revisar.")
+                for _, r in df_pend.iterrows():
+                    with st.container(border=True):
+                        cols = st.columns([3, 1])
+                        with cols[0]:
+                            st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}*")
+                            st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
+                            if 'coord_name' in r and pd.notna(r['coord_name']):
+                                st.info(f"✅ **Visto Bueno Previo:** Coordinador {r['coord_name']}")
+                            if 'rrhh_name' in r and pd.notna(r['rrhh_name']):
+                                st.info(f"✅ **Revisado por RRHH:** {r['rrhh_name']}")
+                            st.write(f"**Justificación:** {r['reason_description']}")
+                            
+                            # --- Llamada al detector de conflictos ---
+                            managed_entity = user.get('managed_department') if user["role"] == "coordinador" else user.get('managed_area')
+                            check_schedule_conflicts(r, user["role"], managed_entity)
+                            
+                            if r['attachment_path']:
+                                import os
+                                from database_conn.connection import DATA_DIR
+                                file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
+                                if os.path.exists(file_path):
+                                    with open(file_path, "rb") as f:
+                                        st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_coord_{r['id']}")
+                        with cols[1]:
+                            if st.button("👍 Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True):
+                                if user["role"] == "coordinador":
+                                    db_approve_leave_request_coord(r['id'], user['username'])
+                                    next_status = 'PENDING_RRHH'
+                                    
+                                    # Notificar a RRHH
+                                    with db_session() as conn:
+                                        admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
+                                        if not admin_df.empty:
+                                            target_emails = admin_df['emp_email'].tolist()
+                                            from services.email_service import send_novedad_alert
+                                            send_novedad_alert(target_emails, r['full_name'], r['reason_type'], r['reason_description'], "N/A", r['leave_date_start'], user['full_name'])
+                                    
+                                    log_audit("APPROVE_LEAVE_L1", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} aprobado por {user['role']}. Pasa a {next_status}")
+                                    notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "PRE-APROBADA", f"Tu solicitud avanzó en el flujo de firmas hacia el siguiente aprobador ({next_status}).", user['full_name'])
+                                    st.rerun()
+                                    
+                                else:
+                                    db_approve_leave_request_jefe(r['id'], user['username'])
+                                    next_status = 'APPROVED'
+                                    
+                                    with db_session() as conn:
+                                        cur = conn.cursor()
+                                        # Inyectar en excepciones (eximir faltas)
+                                        d_start = date.fromisoformat(r['leave_date_start'])
+                                        d_end = date.fromisoformat(r['leave_date_end'])
+                                        delta = d_end - d_start
+                                        for i in range(delta.days + 1):
+                                            day_to_log = (d_start + timedelta(days=i)).isoformat()
+                                            cur.execute("""
+                                                INSERT INTO exceptions(user_id, date, type, notes, created_at)
+                                                VALUES(?,?,?,?,?)
+                                                ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
+                                            """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal: {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
+                                    
+                                    log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO FINAL por Jefe de Área.")
+                                    notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "APROBACIÓN FINAL", "Tu solicitud fue completamente aprobada por tu Jefatura y registrada oficialmente en el sistema.", user['full_name'])
+                                    st.rerun()
                                 
-                                # Notificar a RRHH
-                                with db_session() as conn:
-                                    admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
-                                    if not admin_df.empty:
-                                        target_emails = admin_df['emp_email'].tolist()
-                                        from services.email_service import send_novedad_alert
-                                        send_novedad_alert(target_emails, r['full_name'], r['reason_type'], r['reason_description'], "N/A", r['leave_date_start'], user['full_name'])
-                                
-                                log_audit("APPROVE_LEAVE_L1", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} aprobado por {user['role']}. Pasa a {next_status}")
-                                notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "PRE-APROBADA", f"Tu solicitud avanzó en el flujo de firmas hacia el siguiente aprobador ({next_status}).", user['full_name'])
-                                st.rerun()
-                                
-                            else:
-                                db_approve_leave_request_jefe(r['id'], user['username'])
-                                next_status = 'APPROVED'
-                                
-                                with db_session() as conn:
-                                    cur = conn.cursor()
-                                    # Inyectar en excepciones (eximir faltas)
-                                    d_start = date.fromisoformat(r['leave_date_start'])
-                                    d_end = date.fromisoformat(r['leave_date_end'])
-                                    delta = d_end - d_start
-                                    for i in range(delta.days + 1):
-                                        day_to_log = (d_start + timedelta(days=i)).isoformat()
-                                        cur.execute("""
-                                            INSERT INTO exceptions(user_id, date, type, notes, created_at)
-                                            VALUES(?,?,?,?,?)
-                                            ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
-                                        """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal: {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
-                                
-                                log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO FINAL por Jefe de Área.")
-                                notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "APROBACIÓN FINAL", "Tu solicitud fue completamente aprobada por tu Jefatura y registrada oficialmente en el sistema.", user['full_name'])
+                            if st.button("❌ Rechazar", key=f"btn_rej_{r['id']}", use_container_width=True):
+                                st.session_state[f"show_rejection_dialog_{r['id']}"] = True
                                 st.rerun()
                             
-                        if st.button("❌ Rechazar", key=f"btn_rej_{r['id']}", use_container_width=True):
-                            st.session_state[f"show_rejection_dialog_{r['id']}"] = True
-                            st.rerun()
-                        
-                        if st.session_state.get(f"show_rejection_dialog_{r['id']}", False):
-                            rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
+                            if st.session_state.get(f"show_rejection_dialog_{r['id']}", False):
+                                rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
+                                
+        with tab2:
+            if user["role"] == "coordinador":
+                query_hist = """
+                    SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                           lr.reason_type, lr.status
+                    FROM leave_requests lr
+                    JOIN employees e ON lr.user_id = e.user_id
+                    JOIN users_app ua ON lr.user_id = ua.username
+                    WHERE lr.approved_by_coord = ? 
+                       OR (lr.status = 'REJECTED' AND (
+                              ua.emp_subarea = ? OR 
+                              (ua.emp_subarea = 'Servicios Generales' AND ? = 'Calidad') OR
+                              (ua.emp_subarea = 'Orientador' AND ? = 'Seguridad')
+                          ))
+                    ORDER BY lr.id DESC
+                """
+                params_hist = (user['username'], user.get('managed_department', ''), user.get('managed_department', ''), user.get('managed_department', ''))
+            else:
+                query_hist = """
+                    SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                           lr.reason_type, lr.status
+                    FROM leave_requests lr
+                    JOIN employees e ON lr.user_id = e.user_id
+                    JOIN users_app ua ON lr.user_id = ua.username
+                    WHERE lr.approved_by_jefe = ?
+                       OR (lr.status = 'REJECTED' AND (
+                              ua.emp_area = ? OR 
+                              (ua.emp_subarea = 'Admisiones' AND ? = 'Administrativo') OR
+                              (ua.emp_subarea = 'Auditor Médico' AND ? = 'Auditoria Médica') OR
+                              (ua.emp_subarea = 'Control Interno' AND ? = 'Control Interno')
+                          ))
+                    ORDER BY lr.id DESC
+                """
+                params_hist = (user['username'], user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
+
+            with db_session() as conn:
+                df_hist = pd.read_sql_query(query_hist, conn, params=params_hist)
+                
+            if df_hist.empty:
+                st.info("Aún no has procesado ninguna solicitud.")
+            else:
+                st.write(f"Has procesado **{len(df_hist)}** solicitud(es) históricamente.")
+                
+                df_hist["Fechas"] = df_hist.apply(
+                    lambda r: r['leave_date_start'] if r['leave_date_start'] == r['leave_date_end'] 
+                    else f"{r['leave_date_start']} al {r['leave_date_end']}", 
+                    axis=1
+                )
+                
+                display_df = df_hist[["id", "user_id", "full_name", "Fechas", "reason_type", "status", "request_date"]]
+                display_df.columns = ["Radicado", "DNI", "Empleado", "Fechas", "Tipo", "Estado de Aprobación", "Fecha Solicitud"]
+                
+                st.info("💡 Haz clic en cualquier fila para ver los detalles completos.")
+                
+                if 'last_processed_hist' not in st.session_state:
+                    st.session_state.last_processed_hist = None
+                    
+                event_h = st.dataframe(display_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="admin_hist_table")
+                
+                if len(event_h.selection.rows) > 0:
+                    row_idx = event_h.selection.rows[0]
+                    req_id = int(display_df.iloc[row_idx]["Radicado"])
+                    
+                    if req_id != st.session_state.last_processed_hist:
+                        st.session_state.last_processed_hist = req_id
+                        show_leave_request_details(req_id)
+                else:
+                    st.session_state.last_processed_hist = None
+
         return
 
     st.write("Registra permisos, incapacidades médicas o vacaciones. El sistema **no penalizará** a estos empleados en los reportes de tardanzas para los días seleccionados.")
