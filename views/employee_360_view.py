@@ -33,7 +33,10 @@ def get_employee_raw_punches(year, month, user_id):
     return user_df
 
 def page_employee_360():
-    require_role("admin", "nomina")
+    user = st.session_state.get("user", {})
+    if not (user.get("role") in ["admin", "nomina"] or (user.get("role") == "empleado" and user.get("emp_subarea") == "Nomina")):
+        st.error("No tienes permiso para ver esta página.")
+        st.stop()
     st.markdown("<h2 style='text-align:center; font-weight:700;'>📇 Expediente 360</h2>", unsafe_allow_html=True)
     st.markdown("<p style='text-align:center; color:gray; font-size:1.1rem; margin-bottom:2rem;'>Vista gerencial avanzada del historial de tiempos por empleado.</p>", unsafe_allow_html=True)
 
