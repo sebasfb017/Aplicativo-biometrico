@@ -145,7 +145,7 @@ def register_employee_dialog():
             st.selectbox("¿Qué Departamento coordinas?", [""] + sorted(depts), key="reg_managed_dept")
             
         elif selected_role == "jefe_area":
-            areas = ["Administrativa", "Financiera", "Asistencial", "Médica"]
+            areas = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
             st.selectbox("¿Qué Área tienes a cargo?", [""] + sorted(areas), key="reg_managed_area")
             
         st.markdown("---")
