@@ -322,13 +322,13 @@ def page_employee_portal():
             
             st.markdown("---")
             st.write("📄 **Documento de Soporte (Opcional)**")
-            uploaded_file = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal. Tamaño máximo: 5MB", type=["pdf", "png", "jpg", "jpeg"])
+            uploaded_file = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal. Tamaño máximo: 20MB", type=["pdf", "png", "jpg", "jpeg"])
             
             submitted = st.button("Firmar y Enviar a RRHH", type="primary", use_container_width=True)
             
         if submitted:
             # --- Validación de Tamaño del Archivo ---
-            MAX_FILE_SIZE_MB = 5
+            MAX_FILE_SIZE_MB = 20
             file_is_valid = True
 
             if uploaded_file is not None:
