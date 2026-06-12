@@ -5,3 +5,4 @@ __pycache__/
 smtp_config.yaml
 .vscode/
 ruff_errors.txt
+.idea/
