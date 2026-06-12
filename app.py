@@ -194,8 +194,8 @@ def main():
         )
         st.markdown("<br><br>", unsafe_allow_html=True)
         
-        current_mode_icon = "🌙" if current_theme == "dark" else "☀️"
-        current_mode_text = "Oscuro" if current_theme == "dark" else "Claro"
+        current_mode_icon = "☀️" if current_theme == "dark" else "🌙"
+        current_mode_text = "Claro" if current_theme == "dark" else "Oscuro"
         
         if st.button(f"Cambiar a Tema {current_mode_icon} {current_mode_text}", use_container_width=True):
             new_theme = "dark" if current_theme == "light" else "light"
