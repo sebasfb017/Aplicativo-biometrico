@@ -652,3 +652,102 @@ def test_process_bulk_shifts_new_codes():
     assert exc_rows[2] == ("2026-06-06", "Licencia por Jurado de Votación")
     assert exc_rows[3] == ("2026-06-07", "Suspensión")
     assert exc_rows[4] == ("2026-06-08", "Licencia No Remunerada")
+
+
+def test_lateness_on_break_return():
+    """Prueba que se calcule y detecte correctamente la tardanza en el retorno del break."""
+    # 1. Crear un empleado de prueba
+    emp_df = pd.DataFrame([
+        {"user_id": "emp_break_test", "full_name": "Nathalia Test", "profile_id": "Administrativo"}
+    ])
+    app.upsert_employees_df(emp_df)
+
+    # 2. Crear un turno con break (horario partido)
+    # Turno de 08:00 a 17:30, con break de 12:30 a 14:00 (has_break = 1)
+    sid = app.upsert_shift(
+        name="Turno Partido Test",
+        start_time="08:00",
+        grace_minutes=0,
+        end_time="17:30",
+        has_break=True,
+        break_start="12:30",
+        break_end="14:00",
+        shift_code="TP_TEST"
+    )
+    assert sid is not None
+
+    # Asignar el turno al empleado para el día lunes (dow = 0)
+    # La semana que contiene al 2026-05-25 inicia el lunes 2026-05-25 (semana iso/lunes)
+    app.assign_shift("emp_break_test", "2026-05-25", 0, sid)
+
+    # 3. Insertar las marcaciones del día
+    # Entrada mañana: 08:00 (A tiempo)
+    # Salida break: 12:30 (Salida) -> punch=1
+    # Entrada break (retorno): 14:03:00 (Llega tarde por 3 minutos) -> punch=0
+    # Salida tarde: 17:30 (Salida) -> punch=1
+    rows = [
+        {
+            "device_name": "x",
+            "device_ip": "1.1",
+            "user_id": "emp_break_test",
+            "ts": "2026-05-25 08:00:00",
+            "status": 0,
+            "punch": 0,
+            "uid": 200,
+            "downloaded_at": datetime.now().isoformat()
+        },
+        {
+            "device_name": "x",
+            "device_ip": "1.1",
+            "user_id": "emp_break_test",
+            "ts": "2026-05-25 12:30:00",
+            "status": 0,
+            "punch": 1,
+            "uid": 201,
+            "downloaded_at": datetime.now().isoformat()
+        },
+        {
+            "device_name": "x",
+            "device_ip": "1.1",
+            "user_id": "emp_break_test",
+            "ts": "2026-05-25 14:03:00",
+            "status": 0,
+            "punch": 0,
+            "uid": 202,
+            "downloaded_at": datetime.now().isoformat()
+        },
+        {
+            "device_name": "x",
+            "device_ip": "1.1",
+            "user_id": "emp_break_test",
+            "ts": "2026-05-25 17:30:00",
+            "status": 0,
+            "punch": 1,
+            "uid": 203,
+            "downloaded_at": datetime.now().isoformat()
+        }
+    ]
+    inserted, skipped = app.upsert_attendance(rows)
+    assert inserted == 4
+
+    # 4. Validar que get_late_punch_ids retorne la marcación del retorno del break como tardía
+    late_map = app.get_late_punch_ids(date(2026, 5, 25), date(2026, 5, 25))
+    
+    # Consultar ID en BD de la marcación de las 14:03
+    conn = app.db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM attendance_raw WHERE user_id = 'emp_break_test' AND ts = '2026-05-25 14:03:00'")
+    punch_id_1403 = cur.fetchone()[0]
+    conn.close()
+
+    assert punch_id_1403 in late_map
+    assert late_map[punch_id_1403] == 3
+
+    # 5. Validar que compute_month_lateness registre 3 minutos tarde totales en el mes
+    summary, detail = app.compute_month_lateness(2026, 5)
+    assert not summary.empty
+    
+    emp_summary = summary[summary["user_id"] == "emp_break_test"]
+    assert not emp_summary.empty
+    assert emp_summary.iloc[0]["minutos_tarde_total"] == 3
+
