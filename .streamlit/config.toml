@@ -2,3 +2,6 @@
 primaryColor="#0D6EFD"
 base="dark"
 font="sans serif"
+
+[server]
+maxUploadSize = 20
