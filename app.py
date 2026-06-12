@@ -173,6 +173,10 @@ def main():
                    ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"])
     }
     menu_options, menu_icons = ROLES_MENU.get(user["role"], ROLES_MENU["nomina"])
+    
+    if user["role"] == "empleado" and user.get("emp_subarea") == "Nomina":
+        menu_options = ["Mi Portal de Autogestión", "Expediente 360", "Visualizar Data"]
+        menu_icons = ["person-vcard", "person-badge-fill", "table"]
 
     with st.sidebar:
         sel = option_menu(
