@@ -753,11 +753,12 @@ def test_lateness_on_break_return():
 
 
 def test_auxiliar_privilege_mapping(monkeypatch):
-    # Set up session state mock
+    # Simular el estado de sesión (session_state) de Streamlit usando monkeypatch
     session_state = {}
     monkeypatch.setattr(app.st, "session_state", session_state)
     
-    # 1. User with role 'empleado' and sub-area 'Talento humano'
+    # Caso 1: Usuario con rol 'empleado' (Auxiliar) y sub-área 'Talento humano'
+    # Debería recibir acceso efectivo equivalente al rol 'nomina'.
     session_state["user"] = {
         "role": "empleado",
         "emp_subarea": "Talento humano"

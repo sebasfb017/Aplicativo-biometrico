@@ -119,8 +119,12 @@ def edit_attendance_dialog(record_id: int):
 def page_view_attendance():
     user = st.session_state.get("user", {})
     user_role = user.get("role")
+    
+    # Asignación de rol efectivo para auxiliares de Nómina o Talento Humano
     if user_role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
         user_role = "nomina"
+        
+    # Verificar si el rol efectivo tiene acceso a la vista de marcaciones
     if user_role not in ["admin", "nomina"]:
         st.error("No tienes permiso para ver esta página.")
         st.stop()

@@ -120,7 +120,11 @@ def main():
             page_login()
         return
 
+    # Obtener el rol real del usuario
     user_role = user["role"]
+    
+    # Asignación de rol efectivo: si el rol es auxiliar ('empleado') y su sub-área es Nómina o Talento Humano,
+    # le asignamos dinámicamente los permisos y la interfaz del rol administrativo 'nomina'
     if user_role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
         user_role = "nomina"
 

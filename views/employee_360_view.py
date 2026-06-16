@@ -35,8 +35,12 @@ def get_employee_raw_punches(year, month, user_id):
 def page_employee_360():
     user = st.session_state.get("user", {})
     user_role = user.get("role")
+    
+    # Si es auxiliar ('empleado') de Nómina o Talento Humano, se mapea su rol efectivo a 'nomina'
     if user_role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
         user_role = "nomina"
+        
+    # Verificar si el rol efectivo tiene acceso a la vista de Expediente 360
     if user_role not in ["admin", "nomina"]:
         st.error("No tienes permiso para ver esta página.")
         st.stop()

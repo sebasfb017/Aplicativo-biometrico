@@ -555,9 +555,14 @@ def page_exceptions():
                             rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
 
     with tab4:
+        # Obtener el rol de la sesión actual
         user_role = st.session_state["user"]["role"]
+        
+        # Mapeo de rol efectivo a 'nomina' si el usuario es auxiliar de Nómina o Talento Humano
         if user_role == "empleado" and st.session_state["user"].get("emp_subarea") in ["Nomina", "Talento humano"]:
             user_role = "nomina"
+            
+        # Solo administradores o rol nomina efectivo pueden ver el monitoreo global
         if user_role in ["admin", "nomina"]:
             st.subheader("Monitoreo Global de Permisos (Todas las Áreas)")
             st.info("Vista exclusiva para directivos. Aquí observas el estado de **todas** las solicitudes en curso en toda la empresa.")

@@ -97,10 +97,16 @@ def require_role(*allowed_roles):
         st.error("No tienes permisos para ver esta sección.")
         st.stop()
         
+    # Obtener el rol del usuario actual en la sesión
     role = user.get("role")
+    
+    # Lógica de equivalencia de permisos: si el usuario es un auxiliar (rol 'empleado')
+    # pero pertenece al área de Nómina o Talento humano, se le otorga acceso administrativo
+    # tratándolo dinámicamente como si tuviera el rol 'nomina'.
     if role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
         role = "nomina"
         
+    # Validar si el rol final (real o efectivo) se encuentra en la lista de roles permitidos para la vista
     if role not in allowed_roles:
         st.error("No tienes permisos para ver esta sección.")
         st.stop()

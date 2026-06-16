@@ -35,15 +35,19 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
         all_subareas.extend(subs)
     depts = sorted(list(set(all_subareas)))
     
+    # Recuperar las áreas actualmente a cargo del coordinador desde la base de datos
+    # Como pueden ser múltiples, se separan por comas y se eliminan espacios extras
     current_managed_depts = []
     if u.get('managed_department'):
         current_managed_depts = [d.strip() for d in u['managed_department'].split(',') if d.strip()]
         
+    # Renderizar un componente de selección múltiple (multiselect) con todos los departamentos/sub-áreas
     new_managed_depts = st.multiselect(
         "Departamento a Cargo (Aplica para Coordinadores)", 
         options=depts, 
         default=[d for d in current_managed_depts if d in depts]
     )
+    # Volver a unir las áreas seleccionadas con comas para guardarlas como un solo string en la base de datos
     new_managed_dept = ", ".join(new_managed_depts)
     
     areas_list = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
