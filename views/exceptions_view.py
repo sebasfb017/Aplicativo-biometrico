@@ -38,8 +38,13 @@ def check_schedule_conflicts(request: pd.Series, approver_role: str, managed_ent
     
     # Ajustar el filtro de la consulta según el rol del aprobador
     if approver_role == 'coordinador':
-        query += " AND e.department = ?"
-        params.append(managed_entity)
+        depts = [d.strip() for d in managed_entity.split(',') if d.strip()]
+        if not depts:
+            depts = ['']
+        like_conds = " OR ".join(["e.department LIKE ?"] * len(depts))
+        query += f" AND ({like_conds})"
+        for d in depts:
+            params.append(f"% - {d}")
     elif approver_role == 'jefe_area':
         query += " AND e.department LIKE ?"
         params.append(f"{managed_entity} - %")
@@ -163,7 +168,15 @@ def page_exceptions():
         
         with tab1:
             if user["role"] == "coordinador":
-                query = """
+                managed_depts = [d.strip() for d in user.get('managed_department', '').split(',') if d.strip()]
+                if not managed_depts:
+                    managed_depts = ['']
+                    
+                placeholders = ','.join(['?'] * len(managed_depts))
+                cond_serv_gen = "OR (ua.emp_subarea = 'Servicios Generales')" if 'Calidad' in managed_depts else ""
+                cond_orientador = "OR (ua.emp_subarea = 'Orientador')" if 'Seguridad' in managed_depts else ""
+                
+                query = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path
                     FROM leave_requests lr
@@ -171,13 +184,13 @@ def page_exceptions():
                     JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_COORD' AND 
                           (
-                              ua.emp_subarea = ? OR 
-                              (ua.emp_subarea = 'Servicios Generales' AND ? = 'Calidad') OR
-                              (ua.emp_subarea = 'Orientador' AND ? = 'Seguridad')
+                              ua.emp_subarea IN ({placeholders})
+                              {cond_serv_gen}
+                              {cond_orientador}
                           )
                     ORDER BY lr.id ASC
                 """
-                params = (user.get('managed_department', ''), user.get('managed_department', ''), user.get('managed_department', ''))
+                params = tuple(managed_depts)
             else:
                 query = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -277,7 +290,15 @@ def page_exceptions():
                                 
         with tab2:
             if user["role"] == "coordinador":
-                query_hist = """
+                managed_depts = [d.strip() for d in user.get('managed_department', '').split(',') if d.strip()]
+                if not managed_depts:
+                    managed_depts = ['']
+                    
+                placeholders = ','.join(['?'] * len(managed_depts))
+                cond_serv_gen = "OR (ua.emp_subarea = 'Servicios Generales')" if 'Calidad' in managed_depts else ""
+                cond_orientador = "OR (ua.emp_subarea = 'Orientador')" if 'Seguridad' in managed_depts else ""
+                
+                query_hist = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.reason_type, lr.status
                     FROM leave_requests lr
@@ -285,13 +306,13 @@ def page_exceptions():
                     JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.approved_by_coord = ? 
                        OR (lr.status = 'REJECTED' AND (
-                              ua.emp_subarea = ? OR 
-                              (ua.emp_subarea = 'Servicios Generales' AND ? = 'Calidad') OR
-                              (ua.emp_subarea = 'Orientador' AND ? = 'Seguridad')
+                              ua.emp_subarea IN ({placeholders})
+                              {cond_serv_gen}
+                              {cond_orientador}
                           ))
                     ORDER BY lr.id DESC
                 """
-                params_hist = (user['username'], user.get('managed_department', ''), user.get('managed_department', ''), user.get('managed_department', ''))
+                params_hist = [user['username']] + managed_depts
             else:
                 query_hist = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -535,6 +556,8 @@ def page_exceptions():
 
     with tab4:
         user_role = st.session_state["user"]["role"]
+        if user_role == "empleado" and st.session_state["user"].get("emp_subarea") in ["Nomina", "Talento humano"]:
+            user_role = "nomina"
         if user_role in ["admin", "nomina"]:
             st.subheader("Monitoreo Global de Permisos (Todas las Áreas)")
             st.info("Vista exclusiva para directivos. Aquí observas el estado de **todas** las solicitudes en curso en toda la empresa.")
