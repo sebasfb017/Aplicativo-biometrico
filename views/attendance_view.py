@@ -118,7 +118,10 @@ def edit_attendance_dialog(record_id: int):
 
 def page_view_attendance():
     user = st.session_state.get("user", {})
-    if not (user.get("role") in ["admin", "nomina"] or (user.get("role") == "empleado" and user.get("emp_subarea") == "Nomina")):
+    user_role = user.get("role")
+    if user_role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
+        user_role = "nomina"
+    if user_role not in ["admin", "nomina"]:
         st.error("No tienes permiso para ver esta página.")
         st.stop()
     st.title("🗂️ Visor Multidimensional de Marcaciones")

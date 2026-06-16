@@ -34,7 +34,10 @@ def get_employee_raw_punches(year, month, user_id):
 
 def page_employee_360():
     user = st.session_state.get("user", {})
-    if not (user.get("role") in ["admin", "nomina"] or (user.get("role") == "empleado" and user.get("emp_subarea") == "Nomina")):
+    user_role = user.get("role")
+    if user_role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
+        user_role = "nomina"
+    if user_role not in ["admin", "nomina"]:
         st.error("No tienes permiso para ver esta página.")
         st.stop()
     st.markdown("<h2 style='text-align:center; font-weight:700;'>📇 Expediente 360</h2>", unsafe_allow_html=True)
