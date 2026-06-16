@@ -751,3 +751,69 @@ def test_lateness_on_break_return():
     assert not emp_summary.empty
     assert emp_summary.iloc[0]["minutos_tarde_total"] == 3
 
+
+def test_auxiliar_privilege_mapping(monkeypatch):
+    # Set up session state mock
+    session_state = {}
+    monkeypatch.setattr(app.st, "session_state", session_state)
+    
+    # 1. User with role 'empleado' and sub-area 'Talento humano'
+    session_state["user"] = {
+        "role": "empleado",
+        "emp_subarea": "Talento humano"
+    }
+    
+    error_called = False
+    stop_called = False
+    
+    def mock_error(msg):
+        nonlocal error_called
+        error_called = True
+        
+    def mock_stop():
+        nonlocal stop_called
+        stop_called = True
+        raise Exception("stop")
+        
+    monkeypatch.setattr(app.st, "error", mock_error)
+    monkeypatch.setattr(app.st, "stop", mock_stop)
+    
+    # This should succeed without raising stop or calling error
+    app.require_role("nomina")
+    assert not error_called
+    assert not stop_called
+    
+    # This should fail and trigger error/stop
+    try:
+        app.require_role("coordinador")
+    except Exception as e:
+        assert str(e) == "stop"
+    assert error_called
+    assert stop_called
+    
+    # 2. User with role 'empleado' and sub-area 'Nomina'
+    error_called = False
+    stop_called = False
+    session_state["user"] = {
+        "role": "empleado",
+        "emp_subarea": "Nomina"
+    }
+    app.require_role("nomina")
+    assert not error_called
+    assert not stop_called
+    
+    # 3. User with role 'empleado' and unrelated subarea (e.g., 'Calidad')
+    error_called = False
+    stop_called = False
+    session_state["user"] = {
+        "role": "empleado",
+        "emp_subarea": "Calidad"
+    }
+    try:
+        app.require_role("nomina")
+    except Exception as e:
+        assert str(e) == "stop"
+    assert error_called
+    assert stop_called
+
+
