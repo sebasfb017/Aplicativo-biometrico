@@ -386,8 +386,12 @@ def page_employee_portal():
                                 target_coord_dept = subarea
                                 if subarea == 'Servicios Generales': target_coord_dept = 'Calidad'
                                 elif subarea == 'Orientador': target_coord_dept = 'Seguridad'
-                                coord_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'coordinador' AND managed_department = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(target_coord_dept,))
-                                target_emails = coord_df['emp_email'].tolist()
+                                coord_all = pd.read_sql_query("SELECT emp_email, managed_department FROM users_app WHERE role = 'coordinador' AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
+                                target_emails = []
+                                for _, c_row in coord_all.iterrows():
+                                    c_depts = [d.strip() for d in c_row['managed_department'].split(',') if d.strip()]
+                                    if target_coord_dept in c_depts:
+                                        target_emails.append(c_row['emp_email'])
                             elif target_status == 'PENDING_JEFE':
                                 user_app_df = pd.read_sql_query("SELECT emp_area, emp_subarea FROM users_app WHERE username = ?", conn, params=(user["username"],))
                                 area = user_app_df.iloc[0]['emp_area'] if not user_app_df.empty else ""
