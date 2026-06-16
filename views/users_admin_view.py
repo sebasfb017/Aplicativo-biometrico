@@ -34,11 +34,17 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
     for subs in AREA_MAPPING.values():
         all_subareas.extend(subs)
     depts = sorted(list(set(all_subareas)))
-    dept_idx = 0
-    if u.get('managed_department') in depts:
-        dept_idx = depts.index(u['managed_department']) + 1
+    
+    current_managed_depts = []
+    if u.get('managed_department'):
+        current_managed_depts = [d.strip() for d in u['managed_department'].split(',') if d.strip()]
         
-    new_managed_dept = st.selectbox("Departamento a Cargo (Aplica para Coordinadores)", options=[""] + depts, index=dept_idx)
+    new_managed_depts = st.multiselect(
+        "Departamento a Cargo (Aplica para Coordinadores)", 
+        options=depts, 
+        default=[d for d in current_managed_depts if d in depts]
+    )
+    new_managed_dept = ", ".join(new_managed_depts)
     
     areas_list = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
     area_idx = 0
@@ -173,7 +179,8 @@ def page_users_admin():
             for subs in AREA_MAPPING.values():
                 all_subareas.extend(subs)
             depts = sorted(list(set(all_subareas)))
-            managed_dept = st.selectbox("Departamento a Cargo (Solo aplica para Coordinadores)", options=[""] + depts)
+            managed_depts = st.multiselect("Departamento a Cargo (Solo aplica para Coordinadores)", options=depts)
+            managed_dept = ", ".join(managed_depts)
             
             areas = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
             managed_area = st.selectbox("Área a Cargo (Solo aplica para Jefes de Área)", options=[""] + areas)
