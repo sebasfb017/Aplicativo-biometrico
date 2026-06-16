@@ -93,7 +93,15 @@ def verify_login(username: str, password: str):
 def require_role(*allowed_roles):
     """Bloquea el acceso a vistas si el usuario no tiene el rol necesario."""
     user = st.session_state.get("user")
-    if not user or user.get("role") not in allowed_roles:
+    if not user:
+        st.error("No tienes permisos para ver esta sección.")
+        st.stop()
+        
+    role = user.get("role")
+    if role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
+        role = "nomina"
+        
+    if role not in allowed_roles:
         st.error("No tienes permisos para ver esta sección.")
         st.stop()
 
