@@ -120,6 +120,10 @@ def main():
             page_login()
         return
 
+    user_role = user["role"]
+    if user_role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
+        user_role = "nomina"
+
     # --- INACTIVITY TIMEOUT (10 min) ---
     from datetime import datetime, timedelta
     last_activity = st.session_state.get("last_activity")
@@ -136,17 +140,17 @@ def main():
     if not st.session_state.get("notified"):
         st.session_state["notified"] = True
         
-        if user["role"] == "empleado":
+        if user_role == "empleado":
             st.toast(f"¡Hola {user['full_name'].split()[0]}! Bienvenido a tu Portal de Autogestión.", icon="👋")
         else:
             try:
                 conn = db_conn()
                 cur = conn.cursor()
-                if user["role"] == "coordinador":
+                if user_role == "coordinador":
                     cur.execute("SELECT count(*) FROM leave_requests WHERE status = 'PENDING_COORD'")
-                elif user["role"] == "jefe_area":
+                elif user_role == "jefe_area":
                     cur.execute("SELECT count(*) FROM leave_requests WHERE status = 'PENDING_JEFE'")
-                elif user["role"] in ["admin", "nomina"]:
+                elif user_role in ["admin", "nomina"]:
                     cur.execute("SELECT count(*) FROM leave_requests WHERE status IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')")
                 else:
                     cur.execute("SELECT 0")
@@ -175,11 +179,7 @@ def main():
         "nomina": (["Dashboard", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"], 
                    ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"])
     }
-    menu_options, menu_icons = ROLES_MENU.get(user["role"], ROLES_MENU["nomina"])
-    
-    if user["role"] == "empleado" and user.get("emp_subarea") == "Nomina":
-        menu_options = ["Mi Portal de Autogestión", "Expediente 360", "Visualizar Data"]
-        menu_icons = ["person-vcard", "person-badge-fill", "table"]
+    menu_options, menu_icons = ROLES_MENU.get(user_role, ROLES_MENU["nomina"])
 
     with st.sidebar:
         sel = option_menu(
