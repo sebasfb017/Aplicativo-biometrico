@@ -11,6 +11,19 @@ DEFAULT_TIMEOUT = APP_CONFIG.get("zkteco", {}).get("timeout", 10)
 # Apuntamos dinámicamente al archivo de configuración de los relojes
 DEVICES_YAML = os.path.join(BASE_DIR, "devices.yaml")
 
+def connect_with_retry(zk: ZK, max_retries=3, delay=1.5):
+    """Intenta conectar al dispositivo ZK realizando reintentos en caso de timeout."""
+    import time
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            return zk.connect()
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+    raise last_err
+
 def load_devices():
     """Lee y retorna la lista de dispositivos desde la configuración YAML."""
     if not os.path.exists(DEVICES_YAML):
@@ -59,12 +72,12 @@ def download_attendance_from_device(device: dict):
         timeout = device.get("timeout", DEFAULT_TIMEOUT)
     name = device.get("name", ip)
 
-    zk = ZK(ip, port=port, timeout=timeout, password=password)
+    zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
     conn = None
     downloaded_at = datetime.now().isoformat(timespec="seconds")
 
     try:
-        conn = zk.connect()
+        conn = connect_with_retry(zk)
         conn.disable_device()  # evita actividad mientras descargas
         records = conn.get_attendance()
         out = []
@@ -109,11 +122,11 @@ def sync_device_time(device: dict):
     except Exception: timeout = device.get("timeout", DEFAULT_TIMEOUT)
     name = device.get("name", ip)
 
-    zk = ZK(ip, port=port, timeout=timeout, password=password)
+    zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
     conn = None
 
     try:
-        conn = zk.connect()
+        conn = connect_with_retry(zk)
         conn.disable_device()
         now = datetime.now()
         conn.set_time(now)
@@ -162,10 +175,10 @@ def get_device_users_status(device: dict):
     try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception: timeout = DEFAULT_TIMEOUT
     
-    zk = ZK(ip, port=port, timeout=timeout, password=password)
+    zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
     conn = None
     try:
-        conn = zk.connect()
+        conn = connect_with_retry(zk)
         conn.disable_device()
         users = conn.get_users()
         try:
@@ -205,10 +218,10 @@ def upload_user_to_device(device: dict, user_id: str, name: str, privilege: int 
     try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception: timeout = DEFAULT_TIMEOUT
     
-    zk = ZK(ip, port=port, timeout=timeout, password=password)
+    zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
     conn = None
     try:
-        conn = zk.connect()
+        conn = connect_with_retry(zk)
         conn.disable_device()
         
         users = conn.get_users()
@@ -243,10 +256,10 @@ def delete_user_from_device(device: dict, uid: int):
     try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception: timeout = DEFAULT_TIMEOUT
     
-    zk = ZK(ip, port=port, timeout=timeout, password=password)
+    zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
     conn = None
     try:
-        conn = zk.connect()
+        conn = connect_with_retry(zk)
         conn.disable_device()
         conn.delete_user(uid=uid)
         return True, None
@@ -280,10 +293,10 @@ def sync_all_devices(devices_list: list):
         try: timeout = int(dev.get("timeout", DEFAULT_TIMEOUT))
         except Exception: timeout = DEFAULT_TIMEOUT
         
-        zk = ZK(ip, port=port, timeout=timeout, password=password)
+        zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
         conn = None
         try:
-            conn = zk.connect()
+            conn = connect_with_retry(zk)
             conn.disable_device()
             
             users = conn.get_users()
@@ -333,10 +346,10 @@ def sync_all_devices(devices_list: list):
         try: timeout = int(dev.get("timeout", DEFAULT_TIMEOUT))
         except Exception: timeout = DEFAULT_TIMEOUT
         
-        zk = ZK(ip, port=port, timeout=timeout, password=password)
+        zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
         conn = None
         try:
-            conn = zk.connect()
+            conn = connect_with_retry(zk)
             conn.disable_device()
             
             dev_users = conn.get_users()
