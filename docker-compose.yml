@@ -4,8 +4,7 @@ services:
   nomina_app:
     build: .
     container_name: aplicativo_biometrico
-    ports:
-      - "8501:8501"
+    network_mode: "host"
     volumes:
       - .:/app  
     environment:
