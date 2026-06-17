@@ -315,7 +315,7 @@ def test_holidays_initialized():
     """Test que los festivos colombianos se cargan."""
     conn = app.db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM holidays WHERE description = 'Navidad' AND date LIKE ?", 
+    cur.execute("SELECT COUNT(*) FROM holidays WHERE description IN ('Navidad', 'Christmas Day') AND date LIKE ?",
                 (f"{date.today().year}%",))
     count = cur.fetchone()[0]
     conn.close()
