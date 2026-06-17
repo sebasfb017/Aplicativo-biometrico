@@ -264,11 +264,25 @@ def page_users_admin():
             admin_df_view['active'] = admin_df_view['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
             
             def get_managed_entity(row):
-                if row['role'] == 'coordinador': return row['managed_department']
-                if row['role'] == 'jefe_area': return row['managed_area']
-                return ''
+                # Retornar una lista de departamentos si es coordinador
+                if row['role'] == 'coordinador': 
+                    return [d.strip() for d in str(row['managed_department']).split(',') if d.strip()]
+                # Retornar una lista con el área a cargo si es jefe de área
+                if row['role'] == 'jefe_area': 
+                    return [row['managed_area']] if row['managed_area'] else []
+                return []
                 
             admin_df_view['Depto. / Área a Cargo'] = admin_df_view.apply(get_managed_entity, axis=1)
+            
+            # Convertir el rol a su nombre amigable y envolverlo en una lista para mostrarlo como chip
+            rol_names = {
+                "admin": "Administrador",
+                "nomina": "Nómina/RRHH",
+                "jefe_area": "Jefe de Área",
+                "coordinador": "Coordinador",
+                "empleado": "Auxiliar"
+            }
+            admin_df_view['role'] = admin_df_view['role'].apply(lambda r: [rol_names.get(r, r)] if r else [])
             admin_df_view = admin_df_view[["username", "full_name", "role", "Depto. / Área a Cargo", "active", "created_at"]]
             admin_df_view.columns = ["Usuario (DNI)", "Nombre Completo", "Rol", "Depto. / Área a Cargo", "Activo", "Creado el"]
         
@@ -279,7 +293,17 @@ def page_users_admin():
                 
             event_admin = st.dataframe(
                 admin_df_view, use_container_width=True, hide_index=True, 
-                on_select="rerun", selection_mode="single-row", key="admin_users_table"
+                on_select="rerun", selection_mode="single-row", key="admin_users_table",
+                column_config={
+                    "Rol": st.column_config.ListColumn(
+                        "Rol",
+                        help="Rol del usuario en la plataforma"
+                    ),
+                    "Depto. / Área a Cargo": st.column_config.ListColumn(
+                        "Depto. / Área a Cargo",
+                        help="Departamentos o Áreas asignadas a cargo del usuario"
+                    )
+                }
             )
         
             if len(event_admin.selection.rows) > 0:
@@ -299,6 +323,11 @@ def page_users_admin():
         if not emp_users_df.empty:
             emp_users_df_view = emp_users_df.copy()
             emp_users_df_view['active'] = emp_users_df_view['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
+            
+            # Convertir las cadenas de Área y Sub-área a listas de un único elemento para que se rendericen como chips/etiquetas
+            emp_users_df_view['emp_area'] = emp_users_df_view['emp_area'].apply(lambda x: [x] if x else [])
+            emp_users_df_view['emp_subarea'] = emp_users_df_view['emp_subarea'].apply(lambda x: [x] if x else [])
+            
             emp_users_df_view.columns = ["Usuario (DNI)", "Nombre Completo", "Área", "Sub-área", "Activo", "Creado el"]
         
             if 'last_processed_emp_user' not in st.session_state:
@@ -306,7 +335,17 @@ def page_users_admin():
                 
             event_emp = st.dataframe(
                 emp_users_df_view, use_container_width=True, hide_index=True, 
-                on_select="rerun", selection_mode="single-row", key="emp_users_table"
+                on_select="rerun", selection_mode="single-row", key="emp_users_table",
+                column_config={
+                    "Área": st.column_config.ListColumn(
+                        "Área",
+                        help="Área principal del empleado"
+                    ),
+                    "Sub-área": st.column_config.ListColumn(
+                        "Sub-área",
+                        help="Sub-área o cargo específico del empleado"
+                    )
+                }
             )
         
             if len(event_emp.selection.rows) > 0:
