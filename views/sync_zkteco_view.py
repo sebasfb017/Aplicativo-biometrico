@@ -28,6 +28,41 @@ def edit_device_dialog(device_idx, devices_list):
     
     st.markdown("---")
     
+    # Botón para Probar Conexión antes de guardar
+    if st.button("🔌 Probar Conexión", use_container_width=True):
+        if not new_ip.strip():
+            st.error("La Dirección IP es obligatoria para la prueba.")
+        else:
+            try:
+                port_val = int(new_port_str)
+            except ValueError:
+                st.error("El puerto debe ser numérico.")
+                port_val = None
+            try:
+                pwd_val = int(new_pwd_str)
+            except ValueError:
+                st.error("La contraseña debe ser numérica.")
+                pwd_val = None
+                
+            if port_val is not None and pwd_val is not None:
+                with st.spinner("Probando conexión..."):
+                    from zk import ZK
+                    zk = ZK(new_ip.strip(), port=port_val, timeout=int(new_timeout), password=pwd_val, ommit_ping=True)
+                    conn = None
+                    try:
+                        conn = zk.connect()
+                        st.success("✅ ¡Conexión exitosa! El biométrico responde correctamente.")
+                    except Exception as ex:
+                        st.error(f"❌ Error de conexión: {ex}")
+                    finally:
+                        try:
+                            if conn:
+                                conn.disconnect()
+                        except Exception:
+                            pass
+                            
+    st.markdown("---")
+    
     c1, c2 = st.columns(2)
     with c1:
         if st.button("💾 Guardar Cambios", type="primary", use_container_width=True):
