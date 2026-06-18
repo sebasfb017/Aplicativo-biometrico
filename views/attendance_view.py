@@ -8,6 +8,7 @@ from database_conn.connection import db_conn
 from services.notifications import log_audit
 from utils.auth import require_role
 from services.analytics import get_late_punch_ids
+from utils.constants import AREA_MAPPING
 
 @st.dialog("✏️ Editar Marcación", width="large")
 def edit_attendance_dialog(record_id: int):
@@ -147,6 +148,22 @@ def page_view_attendance():
             selected_device = st.selectbox("Reloj de Origen", options=["Todos los Dispositivos"] + devices)
         with col4:
             user_filter = st.text_input("Filtrar Empleado (DNI o Nombre)")
+            
+        col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
+        with col_f1:
+            areas_opts = ["Todas las Áreas"] + list(AREA_MAPPING.keys())
+            selected_area = st.selectbox("Filtrar por Área", options=areas_opts)
+        with col_f2:
+            if selected_area != "Todas las Áreas":
+                subareas_opts = ["Todas las Sub-áreas"] + AREA_MAPPING[selected_area]
+            else:
+                all_subs = []
+                for s in AREA_MAPPING.values():
+                    all_subs.extend(s)
+                subareas_opts = ["Todas las Sub-áreas"] + sorted(list(set(all_subs)))
+            selected_subarea = st.selectbox("Filtrar por Sub-área", options=subareas_opts)
+        with col_f3:
+            st.markdown("<div style='height: 25px;'></div>", unsafe_allow_html=True)
             show_only_late = st.checkbox("⏰ Mostrar solo llegadas tarde", value=False)
 
     conn = db_conn()
@@ -163,9 +180,12 @@ def page_view_attendance():
             a.ts, 
             a.status, 
             a.punch, 
-            a.downloaded_at
+            a.downloaded_at,
+            ua.emp_area,
+            ua.emp_subarea
         FROM attendance_raw a
         LEFT JOIN employees e ON a.user_id = e.user_id
+        LEFT JOIN users_app ua ON a.user_id = ua.username
         WHERE a.ts >= ? AND a.ts < ? AND a.is_ignored = 0
     """
     params = [start_dt.isoformat(sep=" ", timespec="seconds"), 
@@ -179,6 +199,14 @@ def page_view_attendance():
         query += " AND (a.user_id LIKE ? OR e.full_name LIKE ?)"
         search_term = f"%{user_filter.strip()}%"
         params.extend([search_term, search_term])
+
+    if selected_area != "Todas las Áreas":
+        query += " AND ua.emp_area = ?"
+        params.append(selected_area)
+
+    if selected_subarea != "Todas las Sub-áreas":
+        query += " AND ua.emp_subarea = ?"
+        params.append(selected_subarea)
 
     query += " ORDER BY a.ts DESC"
 
@@ -197,11 +225,17 @@ def page_view_attendance():
             "ts": "Hora Marcación",
             "status": "Status",
             "punch": "Tipo",
-            "downloaded_at": "Descargado en"
+            "downloaded_at": "Descargado en",
+            "emp_area": "Área",
+            "emp_subarea": "Sub-área"
         })
         
         punch_map = {0: "Entrada", 1: "Salida", 2: "Break In", 3: "Break Out", 4: "OT In", 5: "OT Out"}
         df["Tipo"] = df["Tipo"].map(punch_map).fillna(df["Tipo"])
+
+        # Convertir Área y Sub-área a listas para que se muestren como pills/etiquetas
+        df["Área"] = df["Área"].apply(lambda x: [x] if x else [])
+        df["Sub-área"] = df["Sub-área"].apply(lambda x: [x] if x else [])
 
         # Calcular tardanzas
         late_punch_map = get_late_punch_ids(start_date, end_date)
@@ -225,7 +259,7 @@ def page_view_attendance():
         else:
             # Reordenar las columnas para colocar Tardanza después de Hora Marcación
             cols_order = [
-                "ID", "Dispositivo", "IP", "ID Usuario", "Nombre", "Hora Marcación", "Tardanza", "Status", "Tipo", "Descargado en"
+                "ID", "Dispositivo", "IP", "ID Usuario", "Nombre", "Área", "Sub-área", "Hora Marcación", "Tardanza", "Status", "Tipo", "Descargado en"
             ]
             df = df[[c for c in cols_order if c in df.columns]]
 
@@ -238,7 +272,20 @@ def page_view_attendance():
             if 'last_processed_attendance' not in st.session_state:
                 st.session_state.last_processed_attendance = None
                 
-            event = st.dataframe(df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="view_attendance_table")
+            event = st.dataframe(
+                df, use_container_width=True, hide_index=True, 
+                on_select="rerun", selection_mode="single-row", key="view_attendance_table",
+                column_config={
+                    "Área": st.column_config.ListColumn(
+                        "Área",
+                        help="Área principal del empleado"
+                    ),
+                    "Sub-área": st.column_config.ListColumn(
+                        "Sub-área",
+                        help="Sub-área o cargo específico del empleado"
+                    )
+                }
+            )
             
             if len(event.selection.rows) > 0:
                 if is_admin:
