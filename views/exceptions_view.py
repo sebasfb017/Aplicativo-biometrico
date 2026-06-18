@@ -239,8 +239,24 @@ def page_exceptions():
                                 from database_conn.connection import DATA_DIR
                                 file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
                                 if os.path.exists(file_path):
+                                    with st.expander("👁️ Previsualizar Soporte Adjunto", expanded=False):
+                                        ext = os.path.splitext(r['attachment_path'])[1].lower()
+                                        if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                                            st.image(file_path, use_container_width=True)
+                                        elif ext == ".pdf":
+                                            try:
+                                                import base64
+                                                with open(file_path, "rb") as f:
+                                                    base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+                                                pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
+                                                st.markdown(pdf_display, unsafe_allow_html=True)
+                                            except Exception as e:
+                                                st.error(f"No se pudo cargar el PDF: {e}")
+                                        else:
+                                            st.info("Vista previa no disponible para este tipo de archivo.")
+                                            
                                     with open(file_path, "rb") as f:
-                                        st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_coord_{r['id']}")
+                                        st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_coord_{r['id']}", use_container_width=True)
                         with cols[1]:
                             if st.button("👍 Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True):
                                 if user["role"] == "coordinador":
@@ -481,8 +497,24 @@ def page_exceptions():
                             from database_conn.connection import DATA_DIR
                             file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
                             if os.path.exists(file_path):
+                                with st.expander("👁️ Previsualizar Soporte Adjunto", expanded=False):
+                                    ext = os.path.splitext(r['attachment_path'])[1].lower()
+                                    if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                                        st.image(file_path, use_container_width=True)
+                                    elif ext == ".pdf":
+                                        try:
+                                            import base64
+                                            with open(file_path, "rb") as f:
+                                                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+                                            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
+                                            st.markdown(pdf_display, unsafe_allow_html=True)
+                                        except Exception as e:
+                                            st.error(f"No se pudo cargar el PDF: {e}")
+                                    else:
+                                        st.info("Vista previa no disponible para este tipo de archivo.")
+                                        
                                 with open(file_path, "rb") as f:
-                                    st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_rrhh_{r['id']}")
+                                    st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_rrhh_{r['id']}", use_container_width=True)
                     with cols[1]:
                         requiere_jefe = r['reason_type'] in [
                             "Vacaciones", 

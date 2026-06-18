@@ -183,6 +183,22 @@ def show_leave_request_details(req_id: int):
         st.markdown("**Soporte Adjunto (Incapacidad/Certificado):**")
         
         if os.path.exists(file_path):
+            with st.expander("👁️ Previsualizar Soporte Adjunto", expanded=False):
+                ext = os.path.splitext(req['attachment_path'])[1].lower()
+                if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                    st.image(file_path, use_container_width=True)
+                elif ext == ".pdf":
+                    try:
+                        import base64
+                        with open(file_path, "rb") as f:
+                            base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+                        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
+                        st.markdown(pdf_display, unsafe_allow_html=True)
+                    except Exception as e:
+                        st.error(f"No se pudo cargar el PDF: {e}")
+                else:
+                    st.info("Vista previa no disponible para este tipo de archivo.")
+                    
             with open(file_path, "rb") as f:
                 file_bytes = f.read()
             st.download_button(
