@@ -3,7 +3,8 @@ import pandas as pd
 from utils.auth import require_role
 from services.zk_service import (
     load_devices, save_devices, sync_device_time, download_attendance_from_device, upsert_attendance,
-    get_device_users_status, upload_user_to_device, delete_user_from_device, sync_all_devices
+    get_device_users_status, upload_user_to_device, delete_user_from_device, sync_all_devices,
+    check_all_devices_online
 )
 
 @st.dialog("⚙️ Editar Reloj Biométrico")
@@ -101,6 +102,8 @@ def edit_device_dialog(device_idx, devices_list):
                 time.sleep(0.75)
                 if "devices_table" in st.session_state:
                     del st.session_state["devices_table"]
+                if "device_statuses" in st.session_state:
+                    del st.session_state["device_statuses"]
                 st.rerun()
             else:
                 st.error("Error al guardar en devices.yaml.")
@@ -116,6 +119,8 @@ def edit_device_dialog(device_idx, devices_list):
                     time.sleep(0.75)
                     if "devices_table" in st.session_state:
                         del st.session_state["devices_table"]
+                    if "device_statuses" in st.session_state:
+                        del st.session_state["device_statuses"]
                     st.rerun()
                 else:
                     st.error("Error al guardar en devices.yaml.")
@@ -210,13 +215,31 @@ def page_sync():
         if not devices:
             st.error("No hay dispositivos configurados. Ve a la pestaña '⚙️ Configurar Dispositivos' para crearlos.")
         else:
+            # Inicializar caché de estado de conexión en la sesión si no existe
+            if "device_statuses" not in st.session_state:
+                with st.spinner("Comprobando estado de los relojes en la red..."):
+                    st.session_state["device_statuses"] = check_all_devices_online(devices)
+
+            statuses = st.session_state["device_statuses"]
+
             with st.expander("🛠️ Lista de Relojes Biométricos Disponibles", expanded=True):
-                st.write("Marca o desmarca los dispositivos que quieras sincronizar:")
+                col_exp_title, col_exp_refresh = st.columns([3, 1])
+                with col_exp_title:
+                    st.write("Marca o desmarca los dispositivos que quieras sincronizar:")
+                with col_exp_refresh:
+                    if st.button("🔄 Refrescar Red", key="btn_refresh_sync_tab", use_container_width=True):
+                        with st.spinner("Actualizando conexión de la red..."):
+                            st.session_state["device_statuses"] = check_all_devices_online(devices)
+                            st.rerun()
                 
                 selected_devices = []
                 for d in devices:
-                    label = f"📱 {d.get('name', d['ip'])} (IP: {d['ip']})"
-                    if st.checkbox(label, value=True, key=f"chk_{d['ip']}"):
+                    is_online = statuses.get(d["ip"], False)
+                    status_emoji = "🟢" if is_online else "🔴"
+                    status_text = "En Línea" if is_online else "Fuera de Línea"
+                    label = f"{status_emoji} {d.get('name', d['ip'])} (IP: {d['ip']} - {status_text})"
+                    # Si el dispositivo está desconectado, desmarcarlo por defecto
+                    if st.checkbox(label, value=is_online, key=f"chk_{d['ip']}"):
                         selected_devices.append(d)
                         
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -320,7 +343,20 @@ def page_sync():
         if not devices_config:
             st.error("No hay dispositivos configurados.")
         else:
-            dev_opts = {f"{d.get('name', d['ip'])} (IP: {d['ip']})": d for d in devices_config}
+            # Asegurar que la caché de red esté cargada
+            if "device_statuses" not in st.session_state:
+                st.session_state["device_statuses"] = check_all_devices_online(devices_config)
+                
+            statuses = st.session_state["device_statuses"]
+            
+            dev_opts = {}
+            for d in devices_config:
+                is_online = statuses.get(d["ip"], False)
+                status_emoji = "🟢" if is_online else "🔴"
+                status_text = "En Línea" if is_online else "Fuera de Línea"
+                opt_label = f"{status_emoji} {d.get('name', d['ip'])} (IP: {d['ip']} - {status_text})"
+                dev_opts[opt_label] = d
+                
             sel_dev_label = st.selectbox("1. Selecciona el Reloj Biométrico a Consultar", list(dev_opts.keys()))
             selected_dev = dev_opts[sel_dev_label]
             

@@ -474,3 +474,30 @@ def automated_daily_sync():
                         ('system', 'AUTO_SYNC', 'Sincronización automática de marcaciones completada.', datetime.now().isoformat(timespec="seconds")))
     except Exception as e:
         print(f"Fallo crítico en sincronización automática: {e}")
+
+def check_all_devices_online(devices: list, timeout: float = 1.0) -> dict:
+    """
+    Verifica en paralelo el estado de conexión (puerto TCP 4370) de una lista de dispositivos.
+    Retorna un diccionario ip -> bool.
+    """
+    import socket
+    from concurrent.futures import ThreadPoolExecutor
+    
+    def test_one(dev):
+        ip = dev["ip"]
+        try:
+            port = int(dev.get("port", 4370))
+        except Exception:
+            port = 4370
+        try:
+            with socket.create_connection((ip, port), timeout=timeout):
+                return ip, True
+        except Exception:
+            return ip, False
+
+    if not devices:
+        return {}
+
+    with ThreadPoolExecutor(max_workers=len(devices)) as executor:
+        results = executor.map(test_one, devices)
+    return dict(results)
