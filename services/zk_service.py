@@ -1,5 +1,6 @@
 import os
 import yaml
+import time
 from datetime import datetime
 from zk import ZK
 from database_conn.connection import db_conn, BASE_DIR
@@ -70,6 +71,7 @@ def download_attendance_from_device(device: dict):
         timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception:
         timeout = device.get("timeout", DEFAULT_TIMEOUT)
+    timeout = max(timeout, 30)  # Forzar mínimo de 30s para descargas pesadas
     name = device.get("name", ip)
 
     zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
@@ -174,6 +176,7 @@ def get_device_users_status(device: dict):
     except Exception: password = 0
     try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception: timeout = DEFAULT_TIMEOUT
+    timeout = max(timeout, 30)  # Forzar mínimo de 30s para lectura de usuarios/huellas
     
     zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
     conn = None
@@ -276,11 +279,12 @@ def delete_user_from_device(device: dict, uid: int):
 def sync_all_devices(devices_list: list):
     """
     Sincroniza usuarios y huellas dactilares entre TODOS los relojes.
-    Paso 1: Descargar el 'maestro' sumando los usuarios y huellas de todos.
-    Paso 2: Subir lo que le falte a cada reloj.
+    Paso 1: Descargar el 'maestro' sumando los usuarios y huellas de todos, cacheando el estado.
+    Paso 2: Subir lo que le falte a cada reloj, evitando reconexiones y lecturas redundantes.
     """
     master_users = {} # user_id_str -> {nombre, privilegio, contraseña, group_id}
     master_templates = {} # user_id_str -> diccionario de {fid: ObjetoPlantilla}
+    device_cache = {} # ip -> {"users": list, "templates": list, "success": bool}
     logs = []
     
     # --- PASO 1: RECOLECTAR MAESTRO ---
@@ -292,6 +296,7 @@ def sync_all_devices(devices_list: list):
         except Exception: password = 0
         try: timeout = int(dev.get("timeout", DEFAULT_TIMEOUT))
         except Exception: timeout = DEFAULT_TIMEOUT
+        timeout = max(timeout, 30)  # Forzar mínimo de 30s para sincronización masiva
         
         zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
         conn = None
@@ -304,6 +309,13 @@ def sync_all_devices(devices_list: list):
                 templates = conn.get_templates()
             except Exception:
                 templates = []
+                
+            # Guardamos los datos leídos en caché local para no tener que conectar/leer otra vez
+            device_cache[ip] = {
+                "users": users,
+                "templates": templates,
+                "success": True
+            }
                 
             uid_to_userid = {}
             for u in users:
@@ -327,6 +339,9 @@ def sync_all_devices(devices_list: list):
                     
             logs.append(f"✅ {ip}: Extraídos {len(users)} usuarios y {len(templates)} huellas.")
         except Exception as e:
+            device_cache[ip] = {
+                "success": False
+            }
             logs.append(f"❌ {ip}: Error leyendo - {e}")
         finally:
             try:
@@ -339,65 +354,92 @@ def sync_all_devices(devices_list: list):
     # --- PASO 2: DISTRIBUIR MAESTRO ---
     for dev in devices_list:
         ip = dev["ip"]
+        
+        cache = device_cache.get(ip)
+        if not cache or not cache.get("success"):
+            logs.append(f"❌ {ip}: Saltando escritura porque falló la lectura inicial.")
+            continue
+            
+        dev_users = cache["users"]
+        dev_templates = cache["templates"]
+        
+        dev_userid_to_uid = {str(u.user_id): u.uid for u in dev_users}
+        uid_to_userid = {u.uid: str(u.user_id) for u in dev_users}
+        dev_template_keys = set()
+        for t in dev_templates:
+            user_id_str = uid_to_userid.get(t.uid)
+            if user_id_str:
+                dev_template_keys.add((user_id_str, t.fid))
+                
+        # 1. Determinar usuarios faltantes
+        users_to_add = []
+        for uid_str, u_data in master_users.items():
+            if uid_str not in dev_userid_to_uid:
+                users_to_add.append((uid_str, u_data))
+                
+        # 2. Determinar huellas faltantes
+        templates_to_add = {}
+        dev_userid_to_user_obj = {str(u.user_id): u for u in dev_users}
+        
+        for uid_str, templates_dict in master_templates.items():
+            target_user = dev_userid_to_user_obj.get(uid_str)
+            missing_fingers = []
+            for fid, master_t in templates_dict.items():
+                if (uid_str, fid) not in dev_template_keys:
+                    missing_fingers.append(master_t)
+            if missing_fingers:
+                templates_to_add[uid_str] = missing_fingers
+                
+        # Si este reloj ya tiene todo lo del maestro, NO nos volvemos a conectar (evita saturar el socket)
+        if not users_to_add and not templates_to_add:
+            logs.append(f"🚀 {ip}: 0 usuarios inyectados, 0 huellas inyectadas. (Ya está al día)")
+            continue
+            
+        # Sí necesita actualización, establecemos la conexión
         try: port = int(dev.get("port", DEFAULT_PORT))
         except Exception: port = DEFAULT_PORT
         try: password = int(dev.get("password", 0))
         except Exception: password = 0
         try: timeout = int(dev.get("timeout", DEFAULT_TIMEOUT))
         except Exception: timeout = DEFAULT_TIMEOUT
+        timeout = max(timeout, 30)
         
         zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
         conn = None
         try:
+            # Esperar 1.2 segundos para asegurar que el socket previo en el dispositivo esté cerrado (TIME_WAIT)
+            time.sleep(1.2)
             conn = connect_with_retry(zk)
             conn.disable_device()
-            
-            dev_users = conn.get_users()
-            try:
-                dev_templates = conn.get_templates()
-            except Exception:
-                dev_templates = []
-                
-            dev_userid_to_uid = {str(u.user_id): u.uid for u in dev_users}
-            uid_to_userid = {u.uid: str(u.user_id) for u in dev_users}
-            dev_template_keys = set()
-            for t in dev_templates:
-                user_id_str = uid_to_userid.get(t.uid)
-                if user_id_str:
-                    dev_template_keys.add((user_id_str, t.fid))
             
             # Subir Usuarios Faltantes
             users_created = 0
             max_uid = max([u.uid for u in dev_users]) if dev_users else 0
-            for uid_str, u_data in master_users.items():
-                if uid_str not in dev_userid_to_uid:
-                    max_uid += 1
-                    conn.set_user(uid=max_uid, name=u_data["name"], privilege=u_data["privilege"], password=u_data["password"], group_id=u_data["group_id"], user_id=uid_str)
-                    dev_userid_to_uid[uid_str] = max_uid
-                    users_created += 1
-                    
-            if users_created > 0:
-                dev_users = conn.get_users()
+            for uid_str, u_data in users_to_add:
+                max_uid += 1
+                conn.set_user(uid=max_uid, name=u_data["name"], privilege=u_data["privilege"], password=u_data["password"], group_id=u_data["group_id"], user_id=uid_str)
+                time.sleep(0.05)  # Pausa para evitar desbordamiento del buffer
+                dev_userid_to_uid[uid_str] = max_uid
+                users_created += 1
                 
-            dev_userid_to_user_obj = {str(u.user_id): u for u in dev_users}
-            
+            # Si se crearon usuarios, necesitamos refrescar temporalmente dev_users local para asociar huellas a los nuevos UIDs
+            if users_created > 0:
+                time.sleep(0.5)
+                dev_users = conn.get_users()
+                dev_userid_to_user_obj = {str(u.user_id): u for u in dev_users}
+                
             # Subir Huellas Faltantes
             templates_created = 0
-            for uid_str, templates_dict in master_templates.items():
+            for uid_str, missing_fingers in templates_to_add.items():
                 target_user = dev_userid_to_user_obj.get(uid_str)
                 if not target_user:
                     continue
-                    
-                missing_fingers = []
-                for fid, master_t in templates_dict.items():
-                    if (uid_str, fid) not in dev_template_keys:
-                        master_t.uid = target_user.uid
-                        missing_fingers.append(master_t)
-                        
-                if missing_fingers:
-                    conn.save_user_template(target_user, missing_fingers)
-                    templates_created += len(missing_fingers)
-                    
+                for master_t in missing_fingers:
+                    master_t.uid = target_user.uid
+                conn.save_user_template(target_user, missing_fingers)
+                time.sleep(0.1)  # Pausa para que la flash del biométrico procese la huella
+                templates_created += len(missing_fingers)
+                
             logs.append(f"🚀 {ip}: {users_created} usuarios inyectados, {templates_created} huellas inyectadas.")
         except Exception as e:
             logs.append(f"❌ {ip}: Error escribiendo - {e}")
