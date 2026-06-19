@@ -818,3 +818,47 @@ def test_auxiliar_privilege_mapping(monkeypatch):
     assert stop_called
 
 
+def test_exceptions_filtering_and_kpis():
+    # Insert some dummy employees
+    emp_df = pd.DataFrame([
+        {"user_id": "1001", "full_name": "Juan Perez"},
+        {"user_id": "1002", "full_name": "Maria Lopez"}
+    ])
+    app.upsert_employees_df(emp_df)
+    
+    # Import exceptions queries
+    from database_conn.queries import upsert_exception, get_exceptions_df
+    
+    # Insert exceptions
+    upsert_exception("1001", "2026-06-10", "Vacaciones", "Vacaciones anuales")
+    upsert_exception("1001", "2026-06-11", "Vacaciones", "Vacaciones anuales")
+    upsert_exception("1002", "2026-06-12", "Incapacidad Médica", "Gripe común")
+    
+    # Get exceptions DataFrame
+    df = get_exceptions_df()
+    assert len(df) == 3
+    df.columns = ["ID", "Usuario", "Nombre", "Fecha", "Tipo", "Observaciones", "Registrado El"]
+    
+    # Test Name Filter (Cédula or Name)
+    filtered_name = df[
+        (df["Usuario"].astype(str).str.lower().str.contains("juan")) |
+        (df["Nombre"].astype(str).str.lower().str.contains("juan"))
+    ]
+    assert len(filtered_name) == 2
+    assert (filtered_name["Usuario"] == "1001").all()
+    
+    # Test Type Filter
+    filtered_type = df[df["Tipo"].isin(["Incapacidad Médica"])]
+    assert len(filtered_type) == 1
+    assert filtered_type.iloc[0]["Usuario"] == "1002"
+    
+    # Test Date Filter
+    start_f = date(2026, 6, 11)
+    end_f = date(2026, 6, 13)
+    df["temp_date"] = pd.to_datetime(df["Fecha"]).dt.date
+    filtered_date = df[(df["temp_date"] >= start_f) & (df["temp_date"] <= end_f)]
+    assert len(filtered_date) == 2
+    assert set(filtered_date["Usuario"]) == {"1001", "1002"}
+
+
+
