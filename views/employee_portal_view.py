@@ -105,7 +105,7 @@ def create_status_tracker(current_status, reason_type):
 
 from database_conn.connection import db_conn
 from database_conn.queries import db_create_leave_request, db_cancel_leave_request
-from services.notifications import generate_fth012_html
+from services.notifications import generate_fth012_html, generate_fth012_pdf
 from services.email_service import send_novedad_alert
 
 @st.dialog("Detalles de Mi Solicitud (F-TH-012)")
@@ -136,12 +136,12 @@ def show_leave_request_details(req_id: int):
     st.markdown("<br>", unsafe_allow_html=True)
 
     if req['status'] == 'APPROVED':
-        html_fth012 = generate_fth012_html(req, df_audit)
+        pdf_fth012 = generate_fth012_pdf(req, df_audit)
         st.download_button(
-            label="📄 Descargar F-TH-012 (HTML/PDF)",
-            data=html_fth012,
-            file_name=f"F-TH-012_{req['id']}.html",
-            mime="text/html",
+            label="📄 Descargar Comprobante F-TH-012 (PDF)",
+            data=pdf_fth012,
+            file_name=f"F-TH-012_{req['id']}.pdf",
+            mime="application/pdf",
             type="primary",
             use_container_width=True
         )
