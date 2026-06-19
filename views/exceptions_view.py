@@ -436,26 +436,112 @@ def page_exceptions():
         else:
             df_exc.columns = ["ID", "Usuario", "Nombre", "Fecha", "Tipo", "Observaciones", "Registrado El"]
             
-            # =========================================================================
-            # PREVENCIÓN ANTIGUOS POPUPS FANTASMAS (BUG "DOBLE CLIC")
-            # =========================================================================
-            # Este tracker (memoria de estado de la sesión) guarda en disco
-            # el ID del último popup que abrió exitosamente. Así cuando ocurre
-            # un re-render inadvertido de otra pestaña, bloquea eventos dobles fantasmas.
-            if 'last_processed_exc' not in st.session_state:
-                st.session_state.last_processed_exc = None
+            # Inicializar variables de estado para los filtros si no existen
+            if "filter_exc_name" not in st.session_state:
+                st.session_state.filter_exc_name = ""
+            if "filter_exc_type" not in st.session_state:
+                st.session_state.filter_exc_type = []
+            if "filter_exc_dates" not in st.session_state:
+                st.session_state.filter_exc_dates = []
+
+            # --- Buscador y Filtros Avanzados ---
+            with st.expander("🔍 Buscador y Filtros Avanzados", expanded=True):
+                col_f1, col_f2, col_f3 = st.columns(3)
+                with col_f1:
+                    filter_name = st.text_input(
+                        "Buscar Empleado (Cédula o Nombre)", 
+                        key="filter_exc_name"
+                    )
+                with col_f2:
+                    # Extraer tipos únicos existentes en la base de datos
+                    existing_types = sorted(list(df_exc["Tipo"].dropna().unique()))
+                    selected_types = st.multiselect(
+                        "Filtrar por Tipo de Novedad", 
+                        options=existing_types, 
+                        key="filter_exc_type"
+                    )
+                with col_f3:
+                    # Rango de fechas
+                    filter_dates = st.date_input(
+                        "Rango de Fechas (Novedad)",
+                        value=st.session_state.filter_exc_dates,
+                        key="filter_exc_dates",
+                        help="Filtrar novedades que ocurran dentro de este periodo."
+                    )
                 
-            event = st.dataframe(df_exc, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="admin_exc_table")
+                # Botón para limpiar filtros
+                col_clear, _ = st.columns([1, 2])
+                with col_clear:
+                    if st.button("🧹 Limpiar Filtros", use_container_width=True):
+                        st.session_state.filter_exc_name = ""
+                        st.session_state.filter_exc_type = []
+                        st.session_state.filter_exc_dates = []
+                        st.rerun()
             
-            if len(event.selection.rows) > 0:
-                row_idx = event.selection.rows[0]
-                selected_id = int(df_exc.iloc[row_idx]["ID"])
+            # Aplicar filtros dinámicos en el DataFrame
+            filtered_df = df_exc.copy()
+            
+            # 1. Filtro por nombre o cédula
+            if filter_name.strip():
+                term = filter_name.strip().lower()
+                filtered_df = filtered_df[
+                    (filtered_df["Usuario"].astype(str).str.lower().str.contains(term)) |
+                    (filtered_df["Nombre"].astype(str).str.lower().str.contains(term))
+                ]
                 
-                if selected_id != st.session_state.last_processed_exc:
-                    st.session_state.last_processed_exc = selected_id
-                    show_exception_details(selected_id)
+            # 2. Filtro por tipo de novedad
+            if selected_types:
+                filtered_df = filtered_df[filtered_df["Tipo"].isin(selected_types)]
+                
+            # 3. Filtro por rango de fechas
+            if isinstance(filter_dates, (list, tuple)) and len(filter_dates) > 0:
+                start_f = filter_dates[0]
+                end_f = filter_dates[1] if len(filter_dates) > 1 else start_f
+                
+                # Convertir la columna Fecha a datetime.date para comparar correctamente
+                filtered_df["temp_date"] = pd.to_datetime(filtered_df["Fecha"]).dt.date
+                filtered_df = filtered_df[(filtered_df["temp_date"] >= start_f) & (filtered_df["temp_date"] <= end_f)]
+                filtered_df = filtered_df.drop(columns=["temp_date"])
+                
+            # Mostrar la tabla filtrada
+            if filtered_df.empty:
+                st.warning("⚠️ No se encontraron novedades con los filtros seleccionados.")
             else:
-                st.session_state.last_processed_exc = None
+                # Mostrar KPIs y Resumen
+                st.markdown("#### 📊 Resumen del Listado Filtrado")
+                kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
+                with kpi_col1:
+                    st.metric("Total Novedades", len(filtered_df))
+                with kpi_col2:
+                    # Tipo más frecuente
+                    most_common = filtered_df["Tipo"].mode()
+                    most_common_str = most_common.iloc[0] if not most_common.empty else "N/A"
+                    st.metric("Tipo más Frecuente", most_common_str)
+                with kpi_col3:
+                    # Empleados afectados
+                    unique_emps = filtered_df["Usuario"].nunique()
+                    st.metric("Empleados Afectados", unique_emps)
+                
+                st.divider()
+                st.write(f"Mostrando **{len(filtered_df)}** novedades.")
+                
+                # =========================================================================
+                # PREVENCIÓN ANTIGUOS POPUPS FANTASMAS (BUG "DOBLE CLIC")
+                # =========================================================================
+                if 'last_processed_exc' not in st.session_state:
+                    st.session_state.last_processed_exc = None
+                    
+                event = st.dataframe(filtered_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="admin_exc_table")
+                
+                if len(event.selection.rows) > 0:
+                    row_idx = event.selection.rows[0]
+                    selected_id = int(filtered_df.iloc[row_idx]["ID"])
+                    
+                    if selected_id != st.session_state.last_processed_exc:
+                        st.session_state.last_processed_exc = selected_id
+                        show_exception_details(selected_id)
+                else:
+                    st.session_state.last_processed_exc = None
 
     with tab3:
         st.subheader("Bandeja de Aprobación Final de Permisos (Gestión Humana)")
