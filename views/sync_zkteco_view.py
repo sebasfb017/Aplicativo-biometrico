@@ -269,14 +269,34 @@ def page_sync():
                     total_inserted = 0
                     total_skipped = 0
 
-                    progress_bar = st.progress(0, "Iniciando descarga...")
+                    progress_bar = st.progress(0, "Iniciando descarga en paralelo de los relojes...")
 
-                    for i, d in enumerate(selected_devices):
+                    from concurrent.futures import ThreadPoolExecutor
+                    
+                    # 1. Ejecutar las descargas de los relojes en paralelo (hilos separados)
+                    results = {}
+                    with ThreadPoolExecutor(max_workers=len(selected_devices)) as executor:
+                        # Lanzamos la descarga de cada reloj
+                        future_to_device = {
+                            executor.submit(download_attendance_from_device, d): d 
+                            for d in selected_devices
+                        }
+                        
+                        for future in future_to_device:
+                            d = future_to_device[future]
+                            try:
+                                rows, err = future.result()
+                                results[d["ip"]] = (rows, err)
+                            except Exception as e:
+                                results[d["ip"]] = ([], f"Fallo en la tarea paralela: {e}")
+
+                    progress_bar.progress(1.0, text="Procesando y guardando marcaciones...")
+
+                    # 2. Guardar los resultados en la BD de forma secuencial en el hilo principal
+                    for d in selected_devices:
                         label = f"{d.get('name', d['ip'])} ({d['ip']})"
-                        progress_text = f"({i+1}/{len(selected_devices)}) Conectando y descargando datos de: {label}"
-                        progress_bar.progress((i + 1) / len(selected_devices), text=progress_text)
-
-                        rows, err = download_attendance_from_device(d)
+                        rows, err = results.get(d["ip"], ([], "Error desconocido"))
+                        
                         if err:
                             st.error(f"{label} ❌ Error de conexión: {err}")
                             continue
