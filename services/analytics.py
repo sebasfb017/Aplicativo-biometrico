@@ -73,9 +73,47 @@ def schedule_for_user_date(user_id: str, d: date, conn=None):
     if s:
         return s
     return schedule_for_date(d, conn)
+def deduplicate_attendance(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Elimina registros duplicados (mismo user_id y ts) y marcaciones dobles (double tap)
+    que ocurren dentro de un intervalo de 2 minutos para el mismo usuario.
+    """
+    if df.empty:
+        return df
+
+    # Asegurar orden temporal ascendente por usuario para la deduplicación
+    df = df.sort_values(by=["user_id", "ts"])
+    
+    # Copia de timestamps para cálculos seguros
+    orig_ts = df["ts"]
+    df["datetime_ts"] = pd.to_datetime(orig_ts)
+
+    kept_indices = []
+    last_ts_by_user = {}
+
+    for idx, row in df.iterrows():
+        uid = str(row["user_id"])
+        current_ts = row["datetime_ts"]
+
+        if uid in last_ts_by_user:
+            time_diff = (current_ts - last_ts_by_user[uid]).total_seconds()
+            if time_diff <= 120:  # 2 minutos (120 segundos)
+                # Es un double tap o un registro duplicado exacto, ignorar
+                continue
+
+        last_ts_by_user[uid] = current_ts
+        kept_indices.append(idx)
+
+    df_clean = df.loc[kept_indices].copy()
+    df_clean = df_clean.drop(columns=["datetime_ts"])
+    
+    # Volver a ordenar descendentemente por ts
+    df_clean = df_clean.sort_values(by="ts", ascending=False)
+    
+    return df_clean
 
 def fetch_attendance_between(start_dt: datetime, end_dt: datetime):
-    """Extrae las marcaciones crudas ignorando las que fueron eliminadas/editadas."""
+    """Extrae las marcaciones crudas ignorando las que fueron eliminadas/editadas y duplicadas."""
     conn = db_conn()
     df = pd.read_sql_query("""
         SELECT device_name, device_ip, user_id, ts, status, punch, uid, downloaded_at
@@ -87,6 +125,7 @@ def fetch_attendance_between(start_dt: datetime, end_dt: datetime):
     conn.close()
     if not df.empty:
         df["ts"] = pd.to_datetime(df["ts"])
+        df = deduplicate_attendance(df)
     return df
 
 def compute_month_lateness(year: int, month: int):
@@ -266,6 +305,7 @@ def get_late_punch_ids(start_date: date, end_date: date) -> dict:
         return {}
         
     df["ts"] = pd.to_datetime(df["ts"])
+    df = deduplicate_attendance(df)
     df["day"] = df["ts"].dt.date
     
     # 3. Cargar excepciones para ese periodo
