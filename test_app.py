@@ -861,4 +861,38 @@ def test_exceptions_filtering_and_kpis():
     assert set(filtered_date["Usuario"]) == {"1001", "1002"}
 
 
+def test_attendance_deduplication():
+    from services.analytics import deduplicate_attendance
+    
+    # 1. Test empty DataFrame
+    df_empty = pd.DataFrame()
+    assert deduplicate_attendance(df_empty).empty
+    
+    # 2. Test exact duplicates and double-taps
+    data = [
+        {"user_id": "1001", "ts": "2026-06-22 08:00:00", "punch": 0},
+        {"user_id": "1001", "ts": "2026-06-22 08:00:00", "punch": 0}, # Exact duplicate
+        {"user_id": "1001", "ts": "2026-06-22 08:01:30", "punch": 0}, # Double tap (90s later)
+        {"user_id": "1001", "ts": "2026-06-22 08:05:00", "punch": 0}, # Valid (3min 30s later)
+        {"user_id": "1002", "ts": "2026-06-22 08:00:10", "punch": 0}, # Other user (valid)
+    ]
+    df = pd.DataFrame(data)
+    df_clean = deduplicate_attendance(df)
+    
+    # Result should have 3 rows:
+    # - 1001 at 08:00:00
+    # - 1001 at 08:05:00
+    # - 1002 at 08:00:10
+    assert len(df_clean) == 3
+    
+    u1001 = df_clean[df_clean["user_id"] == "1001"]
+    assert len(u1001) == 2
+    assert set(u1001["ts"]) == {"2026-06-22 08:00:00", "2026-06-22 08:05:00"}
+    
+    u1002 = df_clean[df_clean["user_id"] == "1002"]
+    assert len(u1002) == 1
+    assert u1002.iloc[0]["ts"] == "2026-06-22 08:00:10"
+
+
+
 
