@@ -182,6 +182,11 @@ def init_db():
     );
     """)
 
+    # Crear índices para optimizar consultas de marcaciones y permisos
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_attendance_user_ts ON attendance_raw (user_id, ts);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_dates ON leave_requests (user_id, leave_date_start, leave_date_end);")
+
+
     # create default admin if no users
     cur.execute("SELECT COUNT(*) FROM users_app;")
     n = cur.fetchone()[0]
