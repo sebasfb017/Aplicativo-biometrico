@@ -213,8 +213,12 @@ def page_view_attendance():
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
 
+    if not df.empty:
+        from services.analytics import deduplicate_attendance
+        df = deduplicate_attendance(df)
+
     if df.empty:
-        st.warning("No hay marcaciones en el rango seleccionado.")
+        st.warning("No hay marcaciones en el rango seleccionado o filtrado.")
     else:
         df = df.rename(columns={
             "id": "ID",
