@@ -71,7 +71,7 @@ def download_attendance_from_device(device: dict):
         timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception:
         timeout = device.get("timeout", DEFAULT_TIMEOUT)
-    timeout = max(timeout, 30)  # Forzar mínimo de 30s para descargas pesadas
+    timeout = max(timeout, 90)  # Forzar mínimo de 90s para descargas pesadas
     name = device.get("name", ip)
 
     zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
@@ -477,14 +477,27 @@ def automated_daily_sync():
 
 def check_all_devices_online(devices: list, timeout: float = 1.0) -> dict:
     """
-    Verifica en paralelo el estado de conexión (puerto TCP 4370) de una lista de dispositivos.
+    Verifica en paralelo el estado de conexión (vía ICMP ping con fallback TCP) de una lista de dispositivos.
     Retorna un diccionario ip -> bool.
     """
+    import subprocess
     import socket
     from concurrent.futures import ThreadPoolExecutor
     
     def test_one(dev):
         ip = dev["ip"]
+        
+        # 1. Intentar ping de sistema (no bloquea ni consume la única sesión permitida del biométrico)
+        try:
+            # -c 1 envía un paquete, -W 1 espera máximo 1 segundo
+            subprocess.check_call(["ping", "-c", "1", "-W", "1", ip], 
+                                  stdout=subprocess.DEVNULL, 
+                                  stderr=subprocess.DEVNULL)
+            return ip, True
+        except Exception:
+            pass
+            
+        # 2. Fallback: Intentar conexión TCP rápida por si ICMP está bloqueado en la red
         try:
             port = int(dev.get("port", 4370))
         except Exception:
