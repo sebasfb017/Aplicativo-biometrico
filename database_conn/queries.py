@@ -223,7 +223,7 @@ def db_reject_leave_request(req_id, rejected_by, rejection_reason):
             WHERE id = ?
         """, (rejection_reason, req_id,))
         
-        # Log the rejection in audit logs
+        # Registrar el rechazo en la bitácora de auditoría
         cur.execute("""
             INSERT INTO audit_logs (user_id, action, details, timestamp)
             VALUES (?, ?, ?, ?)

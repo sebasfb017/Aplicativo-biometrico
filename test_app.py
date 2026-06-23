@@ -5,7 +5,7 @@ import pytest
 import sqlite3
 
 
-# helper for writing a default schedules CSV
+# Asistente para escribir un archivo CSV de horarios predeterminados
 
 def write_default(tmp_path, df):
     path = tmp_path / "default_schedules.csv"
@@ -19,10 +19,10 @@ import app
 
 @pytest.fixture(autouse=True)
 def clean_db(tmp_path, monkeypatch):
-    # point the data directory to a temporary path so tests don't interfere
+    # Apuntar el directorio de datos a una ruta temporal para que las pruebas no interfieran
     monkeypatch.setattr(app, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(app, "DB_PATH", os.path.join(str(tmp_path), "app.db"))
-    # ensure fresh database for each test
+    # Asegurar una base de datos limpia para cada prueba
     if os.path.exists(app.DB_PATH):
         os.remove(app.DB_PATH)
     app.init_db()
@@ -40,7 +40,7 @@ def test_default_user_created():
 
 
 def test_user_lifecycle():
-    # create a user
+    # Crear un usuario
     conn = app.db_conn()
     cur = conn.cursor()
     pw = "foo123"
@@ -53,10 +53,10 @@ def test_user_lifecycle():
 
 
 def test_schedule_and_lateness():
-    # insert schedule and a late punch
+    # Insertar horario y una marcación tardía
     sched = pd.DataFrame([{"week_start": "2025-01-06", "dow": 0, "start_time": "08:00", "grace_minutes": 5}])
     app.upsert_schedule_df(sched)
-    # schedule_for_date
+    # Horario por fecha
     sched_info = app.schedule_for_date(date(2025, 1, 6))
     assert sched_info["start_time"].hour == 8
     assert sched_info["grace_minutes"] == 5
@@ -65,7 +65,7 @@ def test_schedule_and_lateness():
         "device_name": "x",
         "device_ip": "1.1",
         "user_id": "u1",
-        "ts": "2025-01-06 08:10:00",  # 5 minutes late
+        "ts": "2025-01-06 08:10:00",  # 10 minutos de retraso total (5 minutos después de la gracia)
         "status": 0,
         "punch": 0,
         "uid": 0,
@@ -86,10 +86,10 @@ def test_upsert_schedule_df_invalid():
 
 
 def test_ensure_schedules_columns_creates_missing(tmp_path, monkeypatch):
-    # simulate a database created before extra schedule columns
+    # Simular una base de datos creada antes de las columnas adicionales de horarios
     monkeypatch.setattr(app, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(app, "DB_PATH", os.path.join(str(tmp_path), "app.db"))
-    # the autouse fixture already created a full schema; remove it so we can recreate
+    # El fixture autouse ya creó un esquema completo; eliminarlo para poder recrearlo
     if os.path.exists(app.DB_PATH):
         os.remove(app.DB_PATH)
 
@@ -110,7 +110,7 @@ def test_ensure_schedules_columns_creates_missing(tmp_path, monkeypatch):
     finally:
         conn.close()
 
-    # call the migration helper
+    # Llamar al asistente de migración
     app.ensure_schedules_columns()
 
     conn = sqlite3.connect(app.DB_PATH)
@@ -126,7 +126,7 @@ def test_load_devices(tmp_path):
     cfg = {"devices": [{"ip": "1.2.3.4"}, {"foo": "bar"}]}
     path = tmp_path / "devices.yaml"
     path.write_text(yaml.dump(cfg))
-    # patch the constant
+    # Parchear la constante
     app.DEVICES_YAML = str(path)
 
     devices = app.load_devices()
@@ -265,14 +265,14 @@ def test_generate_rotating_schedule():
 
 
 def test_default_schedule_file_applies(tmp_path, monkeypatch):
-    # if a CSV named default_schedules.csv exists it should be loaded on init
+    # Si existe un archivo CSV llamado default_schedules.csv, debe cargarse al iniciar
     monkeypatch.setattr(app, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(app, "DB_PATH", os.path.join(str(tmp_path), "app.db"))
 
-    # create the default file
+    # Crear el archivo predeterminado
     df = pd.DataFrame([{"week_start": "2025-01-06", "dow": 0, "start_time": "08:00", "grace_minutes": 0}])
     default_path = write_default(tmp_path, df)
-    # ensure init_db will call maybe_load_default_schedules
+    # Asegurar que init_db llame a maybe_load_default_schedules
     app.init_db()
     conn = app.db_conn()
     cur = conn.cursor()
@@ -288,10 +288,10 @@ def test_auto_assign_shifts():
     app.upsert_schedule_df(sched)
     count = app.auto_assign_shifts_from_schedules()
     assert count == 1  # un empleado x un horario
-    # verify shift created
+    # Verificar que el turno fue creado
     shifts = app.get_shifts_df()
     assert "08:00" in shifts['name'].values
-    # verify assignment exists via internal query
+    # Verificar que la asignación existe mediante consulta interna
     conn = app.db_conn()
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM shift_assignments WHERE user_id = ?", ("e1",))
@@ -511,7 +511,7 @@ def test_shift_codes_in_spreadsheet():
 
 
 def test_get_late_punch_ids():
-    # 1. Insert schedule and late punch
+    # 1. Insertar horario y marcación tardía
     sched = pd.DataFrame([{"week_start": "2025-01-06", "dow": 0, "start_time": "08:00", "grace_minutes": 5}])
     app.upsert_schedule_df(sched)
     
@@ -520,7 +520,7 @@ def test_get_late_punch_ids():
             "device_name": "x",
             "device_ip": "1.1",
             "user_id": "emp_test_1",
-            "ts": "2025-01-06 08:10:00",  # 5 minutes late (late_after is 08:05)
+            "ts": "2025-01-06 08:10:00",  # 10 minutos tarde (el tiempo límite de gracia es 08:05)
             "status": 0,
             "punch": 0,
             "uid": 100,
@@ -530,7 +530,7 @@ def test_get_late_punch_ids():
             "device_name": "x",
             "device_ip": "1.1",
             "user_id": "emp_test_1",
-            "ts": "2025-01-06 17:00:00",  # Exit punch, shouldn't count
+            "ts": "2025-01-06 17:00:00",  # Marcación de salida, no debe contar
             "status": 0,
             "punch": 1,
             "uid": 101,
@@ -540,7 +540,7 @@ def test_get_late_punch_ids():
             "device_name": "x",
             "device_ip": "1.1",
             "user_id": "emp_test_2",
-            "ts": "2025-01-06 08:00:00",  # On time (exactly at start time)
+            "ts": "2025-01-06 08:00:00",  # A tiempo (exactamente a la hora de inicio)
             "status": 0,
             "punch": 0,
             "uid": 102,
@@ -549,10 +549,10 @@ def test_get_late_punch_ids():
     ]
     app.upsert_attendance(rows)
     
-    # Check that get_late_punch_ids returns the first record as late (5 mins) and not the others
+    # Verificar que get_late_punch_ids devuelva el primer registro como tarde (10 min) y no los demás
     late_map = app.get_late_punch_ids(date(2025, 1, 6), date(2025, 1, 6))
     
-    # We need to query the database to get the real IDs of the inserted punches
+    # Necesitamos consultar la base de datos para obtener los IDs reales de las marcaciones insertadas
     conn = app.db_conn()
     cur = conn.cursor()
     cur.execute("SELECT id, ts, punch FROM attendance_raw WHERE user_id = 'emp_test_1'")
@@ -611,7 +611,7 @@ def test_process_bulk_shifts_new_codes():
     try:
         cur = conn.cursor()
         
-        # Check shift_assignments
+        # Verificar asignación de turnos (shift_assignments)
         cur.execute("""
             SELECT sa.week_start, sa.dow, s.name, s.start_time, s.end_time
             FROM shift_assignments sa
@@ -621,7 +621,7 @@ def test_process_bulk_shifts_new_codes():
         """)
         sa_rows = cur.fetchall()
         
-        # Check exceptions
+        # Verificar novedades/excepciones (exceptions)
         cur.execute("""
             SELECT date, type FROM exceptions
             WHERE user_id = '999'
@@ -631,7 +631,7 @@ def test_process_bulk_shifts_new_codes():
     finally:
         conn.close()
     
-    # Expected shift assignments:
+    # Asignaciones de turnos esperadas:
     # 2026-06-01, dow 0 -> Turno_M (06:00 - 14:00)
     # 2026-06-01, dow 1 -> Turno_Ta (14:00 - 18:00)
     # 2026-06-01, dow 2 -> Turno_C1 (08:00 - 12:00)
@@ -639,7 +639,7 @@ def test_process_bulk_shifts_new_codes():
     
     assert len(sa_rows) == 4
     
-    # Verify exceptions in the database
+    # Verificar excepciones en la base de datos
     # June 4, 2026: PR -> Permiso Remunerado
     # June 5, 2026: LM -> Licencia Remunerada
     # June 6, 2026: J -> Licencia por Jurado de Votación
@@ -779,12 +779,12 @@ def test_auxiliar_privilege_mapping(monkeypatch):
     monkeypatch.setattr(app.st, "error", mock_error)
     monkeypatch.setattr(app.st, "stop", mock_stop)
     
-    # This should succeed without raising stop or calling error
+    # Esto debería tener éxito sin llamar a stop o a error
     app.require_role("nomina")
     assert not error_called
     assert not stop_called
     
-    # This should fail and trigger error/stop
+    # Esto debería fallar y disparar error/stop
     try:
         app.require_role("coordinador")
     except Exception as e:
@@ -792,7 +792,7 @@ def test_auxiliar_privilege_mapping(monkeypatch):
     assert error_called
     assert stop_called
     
-    # 2. User with role 'empleado' and sub-area 'Nomina'
+    # 2. Usuario con rol 'empleado' y sub-área 'Nomina'
     error_called = False
     stop_called = False
     session_state["user"] = {
@@ -803,7 +803,7 @@ def test_auxiliar_privilege_mapping(monkeypatch):
     assert not error_called
     assert not stop_called
     
-    # 3. User with role 'empleado' and unrelated subarea (e.g., 'Calidad')
+    # 3. Usuario con rol 'empleado' y sub-área no relacionada (ej., 'Calidad')
     error_called = False
     stop_called = False
     session_state["user"] = {
@@ -819,27 +819,27 @@ def test_auxiliar_privilege_mapping(monkeypatch):
 
 
 def test_exceptions_filtering_and_kpis():
-    # Insert some dummy employees
+    # Insertar algunos empleados de prueba
     emp_df = pd.DataFrame([
         {"user_id": "1001", "full_name": "Juan Perez"},
         {"user_id": "1002", "full_name": "Maria Lopez"}
     ])
     app.upsert_employees_df(emp_df)
     
-    # Import exceptions queries
+    # Importar consultas de novedades
     from database_conn.queries import upsert_exception, get_exceptions_df
     
-    # Insert exceptions
+    # Insertar novedades (excepciones)
     upsert_exception("1001", "2026-06-10", "Vacaciones", "Vacaciones anuales")
     upsert_exception("1001", "2026-06-11", "Vacaciones", "Vacaciones anuales")
     upsert_exception("1002", "2026-06-12", "Incapacidad Médica", "Gripe común")
     
-    # Get exceptions DataFrame
+    # Obtener el DataFrame de excepciones
     df = get_exceptions_df()
     assert len(df) == 3
     df.columns = ["ID", "Usuario", "Nombre", "Fecha", "Tipo", "Observaciones", "Registrado El"]
     
-    # Test Name Filter (Cédula or Name)
+    # Probar filtro de nombre (Cédula o Nombre)
     filtered_name = df[
         (df["Usuario"].astype(str).str.lower().str.contains("juan")) |
         (df["Nombre"].astype(str).str.lower().str.contains("juan"))
@@ -847,12 +847,12 @@ def test_exceptions_filtering_and_kpis():
     assert len(filtered_name) == 2
     assert (filtered_name["Usuario"] == "1001").all()
     
-    # Test Type Filter
+    # Probar filtro de tipo
     filtered_type = df[df["Tipo"].isin(["Incapacidad Médica"])]
     assert len(filtered_type) == 1
     assert filtered_type.iloc[0]["Usuario"] == "1002"
     
-    # Test Date Filter
+    # Probar filtro de fecha
     start_f = date(2026, 6, 11)
     end_f = date(2026, 6, 13)
     df["temp_date"] = pd.to_datetime(df["Fecha"]).dt.date
@@ -864,25 +864,25 @@ def test_exceptions_filtering_and_kpis():
 def test_attendance_deduplication():
     from services.analytics import deduplicate_attendance
     
-    # 1. Test empty DataFrame
+    # 1. Probar DataFrame vacío
     df_empty = pd.DataFrame()
     assert deduplicate_attendance(df_empty).empty
     
-    # 2. Test exact duplicates and double-taps
+    # 2. Probar duplicados exactos y marcaciones dobles (double-taps)
     data = [
         {"user_id": "1001", "ts": "2026-06-22 08:00:00", "punch": 0},
-        {"user_id": "1001", "ts": "2026-06-22 08:00:00", "punch": 0}, # Exact duplicate
-        {"user_id": "1001", "ts": "2026-06-22 08:01:30", "punch": 0}, # Double tap (90s later)
-        {"user_id": "1001", "ts": "2026-06-22 08:05:00", "punch": 0}, # Valid (3min 30s later)
-        {"user_id": "1002", "ts": "2026-06-22 08:00:10", "punch": 0}, # Other user (valid)
+        {"user_id": "1001", "ts": "2026-06-22 08:00:00", "punch": 0}, # Duplicado exacto
+        {"user_id": "1001", "ts": "2026-06-22 08:01:30", "punch": 0}, # Doble marcación (90s después)
+        {"user_id": "1001", "ts": "2026-06-22 08:05:00", "punch": 0}, # Válido (3min 30s después)
+        {"user_id": "1002", "ts": "2026-06-22 08:00:10", "punch": 0}, # Otro usuario (válido)
     ]
     df = pd.DataFrame(data)
     df_clean = deduplicate_attendance(df)
     
-    # Result should have 3 rows:
-    # - 1001 at 08:00:00
-    # - 1001 at 08:05:00
-    # - 1002 at 08:00:10
+    # El resultado debe tener 3 filas:
+    # - 1001 a las 08:00:00
+    # - 1001 a las 08:05:00
+    # - 1002 a las 08:00:10
     assert len(df_clean) == 3
     
     u1001 = df_clean[df_clean["user_id"] == "1001"]

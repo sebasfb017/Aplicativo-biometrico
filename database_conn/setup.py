@@ -187,7 +187,7 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_dates ON leave_requests (user_id, leave_date_start, leave_date_end);")
 
 
-    # create default admin if no users
+    # Crear administrador por defecto si no existen usuarios
     cur.execute("SELECT COUNT(*) FROM users_app;")
     n = cur.fetchone()[0]
     if n == 0:
@@ -409,7 +409,7 @@ def initialize_colombian_holidays(cur):
 
 def initialize_predefined_shifts(cur):
     shifts = [
-        # name, start, end, grace, has_break, break_start, break_end, is_overnight, code
+        # nombre, inicio, fin, gracia, tiene_descanso, inicio_descanso, fin_descanso, es_nocturno, codigo
         ("M - Mañana (Enf)", "06:00", "14:00", 0, 0, "", "", 0, "M"),
         ("T - Tarde (Enf)", "14:00", "22:00", 0, 0, "", "", 0, "T"),
         ("N - Noche (Enf)", "22:00", "06:00", 0, 0, "", "", 1, "N"),

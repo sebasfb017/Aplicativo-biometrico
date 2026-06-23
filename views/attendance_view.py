@@ -33,7 +33,7 @@ def edit_attendance_dialog(record_id: int):
     try:
         current_dt = datetime.fromisoformat(rec['ts'].replace(" ", "T"))
     except ValueError:
-        # Fallback if format is unexpected
+        # Fallback si el formato es inesperado
         current_dt = datetime.strptime(rec['ts'], "%Y-%m-%d %H:%M:%S")
 
     col1, col2 = st.columns(2)

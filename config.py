@@ -6,7 +6,7 @@ CONFIG_PATH = os.path.join(BASE_DIR, "settings.yaml")
 
 def load_config():
     if not os.path.exists(CONFIG_PATH):
-        # Create default config if it doesn't exist
+        # Crear configuración por defecto si no existe
         default_config = {
             "database": {
                 "path": "data/app.db"

@@ -281,7 +281,7 @@ from database_conn.queries import ( # noqa: E402, F401
     calculate_overnight_surcharge
 )
 
-# Custom namespace wrapper to allow dynamic routing and patching during tests
+# Contenedor de espacio de nombres personalizado para permitir enrutamiento dinámico y parches durante las pruebas
 class AppNamespace(types.ModuleType):
     @property
     def DATA_DIR(self):

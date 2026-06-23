@@ -155,11 +155,11 @@ def compute_month_lateness(year: int, month: int):
     for _, row in exc_df.iterrows():
         exceptions_set.add((str(row["user_id"]), row["date"]))
 
-    # --- BULK LOAD SCHEDULES (N+1 FIX) ---
+    # --- CARGA MASIVA DE HORARIOS (CORRECCIÓN N+1) ---
     start_week_str = (first_day - timedelta(days=first_day.weekday())).isoformat()
     end_week_str = (last_day - timedelta(days=last_day.weekday())).isoformat()
     
-    # 1. Load user-specific shift assignments
+    # 1. Cargar las asignaciones de turnos específicas del usuario
     sa_df = pd.read_sql_query("""
         SELECT sa.user_id, sa.week_start, sa.dow, s.start_time, s.grace_minutes, s.has_break, s.break_end
         FROM shift_assignments sa
@@ -182,7 +182,7 @@ def compute_month_lateness(year: int, month: int):
             }
         except: pass
         
-    # 2. Load default schedules
+    # 2. Cargar horarios predeterminados
     def_sched_df = pd.read_sql_query("""
         SELECT week_start, dow, start_time, start_time_2, grace_minutes
         FROM schedules
