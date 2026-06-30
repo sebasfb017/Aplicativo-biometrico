@@ -1,11 +1,11 @@
 devices:
 - name: CASA_GALVEZ
-  ip: 192.168.52.247
+  ip: 192.168.52.6
   port: 4370
-  password: 1
+  password: 0
   timeout: 90
 - name: CIRUGIA
-  ip: 192.168.53.103
+  ip: 192.168.52.8
   port: 4370
-  password: 890724
-  timeout: 90
+  password: 1
+  timeout: 10
