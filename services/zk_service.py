@@ -12,8 +12,8 @@ DEFAULT_TIMEOUT = APP_CONFIG.get("zkteco", {}).get("timeout", 10)
 # Apuntamos dinámicamente al archivo de configuración de los relojes
 DEVICES_YAML = os.path.join(BASE_DIR, "devices.yaml")
 
-def connect_with_retry(zk: ZK, max_retries=3, delay=1.5):
-    """Intenta conectar al dispositivo ZK realizando reintentos en caso de timeout."""
+def connect_with_retry(zk: ZK, max_retries=1, delay=1.0):
+    """Intenta conectar al dispositivo ZK. Se quitó el bucle interno porque el bucle externo ya hace los 3 intentos."""
     import time
     last_err = None
     for attempt in range(max_retries):
@@ -71,46 +71,79 @@ def download_attendance_from_device(device: dict):
         timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception:
         timeout = device.get("timeout", DEFAULT_TIMEOUT)
-    timeout = max(timeout, 90)  # Forzar mínimo de 90s para descargas pesadas
+    # Ya NO forzamos 90s, respetamos la configuración del usuario en la UI
     name = device.get("name", ip)
 
-    zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
-    conn = None
     downloaded_at = datetime.now().isoformat(timespec="seconds")
+    last_error = None
 
-    try:
-        conn = connect_with_retry(zk)
-        conn.disable_device()  # evita actividad mientras descargas
-        records = conn.get_attendance()
-        out = []
-        for r in records:
-            # --- INTERCEPTOR DE SOFTWARE (OVERRIDE) ---
-            # El usuario solicita que CUALQUIER marcación que ocurra a las 2:00 PM (14:XX)
-            # sea catalogada FORZOSAMENTE como Entrada (Punch 0), ignorando el estado físico del reloj.
-            punch_val = int(r.punch)
-            if r.timestamp.hour == 14:
-                punch_val = 0
-                
-            out.append({
-                "device_name": name,
-                "device_ip": ip,
-                "user_id": str(r.user_id),
-                "ts": r.timestamp.isoformat(sep=" ", timespec="seconds"),
-                "status": int(r.status),
-                "punch": punch_val,
-                "uid": int(getattr(r, "uid", 0)),
-                "downloaded_at": downloaded_at
-            })
-        return out, None
-    except Exception as e:
-        return [], str(e)
-    finally:
+    # Implementar 3 intentos con estrategia adaptativa
+    for attempt in range(3):
+        # ommit_ping=True es fundamental en Docker con concurrencia para evitar Errno 110 (Connection timed out)
+        zk_kwargs = {"ip": ip, "port": port, "timeout": timeout, "password": password, "ommit_ping": True}
+        
+        # Estrategia de evasión
+        if attempt == 1:
+            # Intento 1: Forzar protocolo UDP para evadir Broken pipe TCP
+            zk_kwargs["force_udp"] = True
+        elif attempt == 2:
+            # Intento 2 (Último recurso): Forzar TCP pero con contraseña 0 por si el equipo se reseteó al cambiar la IP
+            zk_kwargs["password"] = 0
+            zk_kwargs.pop("force_udp", None)
+
         try:
-            if conn:
-                conn.enable_device()
-                conn.disconnect()
-        except Exception:
-            pass
+            zk = ZK(**zk_kwargs)
+        except TypeError:
+            # Si la versión de pyzk instalada no soporta force_udp, lo ignoramos
+            zk_kwargs.pop("force_udp", None)
+            zk = ZK(**zk_kwargs)
+
+        conn = None
+        try:
+            conn = connect_with_retry(zk)
+            
+            # Solo intentamos deshabilitar el reloj en el primer intento. 
+            # Si falló, en los siguientes intentos no lo deshabilitamos para evitar crashes del firmware.
+            if attempt == 0:
+                try:
+                    pass
+                except Exception:
+                    pass
+
+            records = conn.get_attendance()
+            out = []
+            for r in records:
+                # --- INTERCEPTOR DE SOFTWARE (OVERRIDE) ---
+                # El usuario solicita que CUALQUIER marcación que ocurra a las 2:00 PM (14:XX)
+                # sea catalogada FORZOSAMENTE como Entrada (Punch 0), ignorando el estado físico del reloj.
+                punch_val = int(r.punch)
+                if r.timestamp.hour == 14:
+                    punch_val = 0
+                    
+                out.append({
+                    "device_name": name,
+                    "device_ip": ip,
+                    "user_id": str(r.user_id),
+                    "ts": r.timestamp.isoformat(sep=" ", timespec="seconds"),
+                    "status": int(r.status),
+                    "punch": punch_val,
+                    "uid": int(getattr(r, "uid", 0)),
+                    "downloaded_at": downloaded_at
+                })
+            return out, None
+        except Exception as e:
+            last_error = str(e)
+            # Quitamos el sleep(2) redundante para que falle o avance inmediatamente
+        finally:
+            try:
+                if conn:
+                    if attempt == 0:
+                        pass
+                    conn.disconnect()
+            except Exception:
+                pass
+                
+    return [], f"Fallo tras 3 intentos. Último error: {last_error}"
 
 def sync_device_time(device: dict):
     """Sincroniza la hora del biométrico con la del servidor local."""
@@ -124,24 +157,34 @@ def sync_device_time(device: dict):
     except Exception: timeout = device.get("timeout", DEFAULT_TIMEOUT)
     name = device.get("name", ip)
 
-    zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
-    conn = None
-
-    try:
-        conn = connect_with_retry(zk)
-        conn.disable_device()
-        now = datetime.now()
-        conn.set_time(now)
-        return True, None
-    except Exception as e:
-        return False, str(e)
-    finally:
+    last_error = None
+    for attempt in range(3):
+        # Clonamos kwargs para este intento
+        zk_kwargs = {"ip": ip, "port": port, "timeout": timeout, "password": password, "ommit_ping": True}
+        
+        if attempt == 1:
+            zk_kwargs["force_udp"] = True
+        elif attempt == 2:
+            zk_kwargs["password"] = 0
+            zk_kwargs.pop("force_udp", None)
+            
         try:
+            zk_client = ZK(**zk_kwargs)
+            conn = connect_with_retry(zk_client)
+            
+            now = datetime.now()
+            conn.set_time(now)
+            
+            conn.disconnect()
+            return True, None
+            
+        except Exception as e:
+            last_error = e
             if conn:
-                conn.enable_device()
-                conn.disconnect()
-        except Exception:
-            pass
+                try: conn.disconnect()
+                except Exception: pass
+
+    return False, f"Fallo tras 3 intentos. Último error: {last_error}"
 
 def upsert_attendance(rows: list[dict]):
     """Inserta las marcaciones en la BD evitando duplicados."""
@@ -176,41 +219,45 @@ def get_device_users_status(device: dict):
     except Exception: password = 0
     try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception: timeout = DEFAULT_TIMEOUT
-    timeout = max(timeout, 30)  # Forzar mínimo de 30s para lectura de usuarios/huellas
+    # timeout = max(timeout, 30)  # Removido: respetar configuración del usuario
     
-    zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
-    conn = None
-    try:
-        conn = connect_with_retry(zk)
-        conn.disable_device()
-        users = conn.get_users()
-        try:
-            templates = conn.get_templates()
-            enrolled_uids = {t.uid for t in templates}
-        except Exception:
-            # Alternativa si get_templates no es compatible con el firmware
-            enrolled_uids = set()
-        
-        result = []
-        for u in users:
-            result.append({
-                "uid": u.uid,
-                "user_id": u.user_id,
-                "name": u.name,
-                "privilege": u.privilege,
-                "has_fingerprint": u.uid in enrolled_uids
-            })
+    last_error = None
+    for attempt in range(3):
+        zk_kwargs = {"ip": ip, "port": port, "timeout": timeout, "password": password, "ommit_ping": True}
+        if attempt == 1: zk_kwargs["force_udp"] = True
+        elif attempt == 2: zk_kwargs["password"] = 0; zk_kwargs.pop("force_udp", None)
             
-        return result, None
-    except Exception as e:
-        return [], str(e)
-    finally:
         try:
+            zk_client = ZK(**zk_kwargs)
+            conn = connect_with_retry(zk_client)
+            
+            users = conn.get_users()
+            try:
+                templates = conn.get_templates()
+                enrolled_uids = {t.uid for t in templates}
+            except Exception:
+                enrolled_uids = set()
+            
+            result = []
+            for u in users:
+                result.append({
+                    "uid": u.uid,
+                    "user_id": u.user_id,
+                    "name": u.name,
+                    "privilege": u.privilege,
+                    "has_fingerprint": u.uid in enrolled_uids
+                })
+                
+            conn.disconnect()
+            return result, None
+            
+        except Exception as e:
+            last_error = e
             if conn:
-                conn.enable_device()
-                conn.disconnect()
-        except Exception:
-            pass
+                try: conn.disconnect()
+                except Exception: pass
+
+    return [], f"Fallo tras 3 intentos. Último error: {last_error}"
 
 def upload_user_to_device(device: dict, user_id: str, name: str, privilege: int = 0):
     ip = device["ip"]
@@ -221,34 +268,39 @@ def upload_user_to_device(device: dict, user_id: str, name: str, privilege: int 
     try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception: timeout = DEFAULT_TIMEOUT
     
-    zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
-    conn = None
-    try:
-        conn = connect_with_retry(zk)
-        conn.disable_device()
-        
-        users = conn.get_users()
-        existing_uid = None
-        for u in users:
-            if u.user_id == str(user_id):
-                existing_uid = u.uid
-                break
-                
-        if existing_uid is None:
-            max_uid = max([u.uid for u in users]) if users else 0
-            existing_uid = max_uid + 1
+    last_error = None
+    for attempt in range(3):
+        zk_kwargs = {"ip": ip, "port": port, "timeout": timeout, "password": password, "ommit_ping": True}
+        if attempt == 1: zk_kwargs["force_udp"] = True
+        elif attempt == 2: zk_kwargs["password"] = 0; zk_kwargs.pop("force_udp", None)
             
-        conn.set_user(uid=existing_uid, name=str(name), privilege=privilege, password="", group_id="", user_id=str(user_id))
-        return True, None
-    except Exception as e:
-        return False, str(e)
-    finally:
         try:
+            zk_client = ZK(**zk_kwargs)
+            conn = connect_with_retry(zk_client)
+            
+            users = conn.get_users()
+            existing_uid = None
+            for u in users:
+                if u.user_id == str(user_id):
+                    existing_uid = u.uid
+                    break
+                    
+            if existing_uid is None:
+                max_uid = max([u.uid for u in users]) if users else 0
+                existing_uid = max_uid + 1
+                
+            conn.set_user(uid=existing_uid, name=str(name), privilege=privilege, password="", group_id="", user_id=str(user_id))
+            
+            conn.disconnect()
+            return True, None
+            
+        except Exception as e:
+            last_error = e
             if conn:
-                conn.enable_device()
-                conn.disconnect()
-        except Exception:
-            pass
+                try: conn.disconnect()
+                except Exception: pass
+
+    return False, f"Fallo tras 3 intentos. Último error: {last_error}"
 
 def delete_user_from_device(device: dict, uid: int):
     ip = device["ip"]
@@ -259,22 +311,28 @@ def delete_user_from_device(device: dict, uid: int):
     try: timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
     except Exception: timeout = DEFAULT_TIMEOUT
     
-    zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
-    conn = None
-    try:
-        conn = connect_with_retry(zk)
-        conn.disable_device()
-        conn.delete_user(uid=uid)
-        return True, None
-    except Exception as e:
-        return False, str(e)
-    finally:
+    last_error = None
+    for attempt in range(3):
+        zk_kwargs = {"ip": ip, "port": port, "timeout": timeout, "password": password, "ommit_ping": True}
+        if attempt == 1: zk_kwargs["force_udp"] = True
+        elif attempt == 2: zk_kwargs["password"] = 0; zk_kwargs.pop("force_udp", None)
+            
         try:
+            zk_client = ZK(**zk_kwargs)
+            conn = connect_with_retry(zk_client)
+            
+            conn.delete_user(uid=uid)
+            
+            conn.disconnect()
+            return True, None
+            
+        except Exception as e:
+            last_error = e
             if conn:
-                conn.enable_device()
-                conn.disconnect()
-        except Exception:
-            pass
+                try: conn.disconnect()
+                except Exception: pass
+
+    return False, f"Fallo tras 3 intentos. Último error: {last_error}"
 
 def sync_all_devices(devices_list: list):
     """
@@ -296,13 +354,13 @@ def sync_all_devices(devices_list: list):
         except Exception: password = 0
         try: timeout = int(dev.get("timeout", DEFAULT_TIMEOUT))
         except Exception: timeout = DEFAULT_TIMEOUT
-        timeout = max(timeout, 30)  # Forzar mínimo de 30s para sincronización masiva
+        # timeout = max(timeout, 30)  # Removido: respetar configuración del usuario
         
         zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
         conn = None
         try:
             conn = connect_with_retry(zk)
-            conn.disable_device()
+            # conn.disable_device()
             
             users = conn.get_users()
             try:
@@ -346,7 +404,7 @@ def sync_all_devices(devices_list: list):
         finally:
             try:
                 if conn:
-                    conn.enable_device()
+                    # conn.enable_device()
                     conn.disconnect()
             except Exception:
                 pass
@@ -402,7 +460,7 @@ def sync_all_devices(devices_list: list):
         except Exception: password = 0
         try: timeout = int(dev.get("timeout", DEFAULT_TIMEOUT))
         except Exception: timeout = DEFAULT_TIMEOUT
-        timeout = max(timeout, 30)
+        # timeout = max(timeout, 30)  # Removido
         
         zk = ZK(ip, port=port, timeout=timeout, password=password, ommit_ping=True)
         conn = None
@@ -410,7 +468,7 @@ def sync_all_devices(devices_list: list):
             # Esperar 1.2 segundos para asegurar que el socket previo en el dispositivo esté cerrado (TIME_WAIT)
             time.sleep(1.2)
             conn = connect_with_retry(zk)
-            conn.disable_device()
+            # conn.disable_device()
             
             # Subir Usuarios Faltantes
             users_created = 0
@@ -446,7 +504,7 @@ def sync_all_devices(devices_list: list):
         finally:
             try:
                 if conn:
-                    conn.enable_device()
+                    # conn.enable_device()
                     conn.disconnect()
             except Exception:
                 pass
@@ -475,9 +533,9 @@ def automated_daily_sync():
     except Exception as e:
         print(f"Fallo crítico en sincronización automática: {e}")
 
-def check_all_devices_online(devices: list, timeout: float = 1.0) -> dict:
+def check_all_devices_online(devices: list, timeout: float = 2.0) -> dict:
     """
-    Verifica en paralelo el estado de conexión (vía ICMP ping con fallback TCP) de una lista de dispositivos.
+    Verifica en paralelo el estado de conexión (vía ICMP ping, luego ZK connect, y fallback TCP) de una lista de dispositivos.
     Retorna un diccionario ip -> bool.
     """
     import subprocess
@@ -487,9 +545,8 @@ def check_all_devices_online(devices: list, timeout: float = 1.0) -> dict:
     def test_one(dev):
         ip = dev["ip"]
         
-        # 1. Intentar ping de sistema (no bloquea ni consume la única sesión permitida del biométrico)
+        # 1. Intentar ping de sistema (rápido, pero falla si el SO/Docker no tiene ping instalado)
         try:
-            # -c 1 envía un paquete, -W 1 espera máximo 1 segundo
             subprocess.check_call(["ping", "-c", "1", "-W", "1", ip], 
                                   stdout=subprocess.DEVNULL, 
                                   stderr=subprocess.DEVNULL)
@@ -497,16 +554,20 @@ def check_all_devices_online(devices: list, timeout: float = 1.0) -> dict:
         except Exception:
             pass
             
-        # 2. Fallback: Intentar conexión TCP rápida por si ICMP está bloqueado en la red
+        # 2. Fallback primario (Seguro): Conexión TCP directa
+        # En lugar de usar pyzk (que puede congelarse si el reloj está dañado), simplemente 
+        # probamos si el puerto está abierto usando un socket puro.
         try:
             port = int(dev.get("port", 4370))
         except Exception:
             port = 4370
+            
         try:
             with socket.create_connection((ip, port), timeout=timeout):
                 return ip, True
         except Exception:
             return ip, False
+
 
     if not devices:
         return {}
