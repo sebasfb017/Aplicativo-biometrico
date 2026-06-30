@@ -158,8 +158,8 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
     if r_type == "Incapacidad":
         target_status = "PENDING_RRHH"
     elif role == "coordinador":
-        # Salta al siguiente paso: RRHH
-        target_status = "PENDING_RRHH"
+        # Salta al siguiente paso: Jefe de Área
+        target_status = "PENDING_JEFE"
     elif role in ["admin", "nomina"]:
         # Si radica RRHH, salta al siguiente paso: Jefe de Área
         target_status = "PENDING_JEFE"
