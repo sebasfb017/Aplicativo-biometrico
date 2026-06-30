@@ -100,8 +100,7 @@ def edit_device_dialog(device_idx, devices_list):
                 st.success("✅ Dispositivo guardado correctamente. Cerrando...")
                 import time
                 time.sleep(0.75)
-                if "devices_table" in st.session_state:
-                    del st.session_state["devices_table"]
+                st.session_state["devices_table_version"] = st.session_state.get("devices_table_version", 0) + 1
                 if "device_statuses" in st.session_state:
                     del st.session_state["device_statuses"]
                 st.rerun()
@@ -117,8 +116,7 @@ def edit_device_dialog(device_idx, devices_list):
                     st.success("🗑️ Dispositivo eliminado. Cerrando...")
                     import time
                     time.sleep(0.75)
-                    if "devices_table" in st.session_state:
-                        del st.session_state["devices_table"]
+                    st.session_state["devices_table_version"] = st.session_state.get("devices_table_version", 0) + 1
                     if "device_statuses" in st.session_state:
                         del st.session_state["device_statuses"]
                     st.rerun()
@@ -206,21 +204,23 @@ def page_sync():
     require_role("admin", "nomina")
     st.title("🔄 Sincronización Biométrica")
     
+    devices_config = load_devices()
+    if devices_config:
+        # Lógica Síncrona para Comprobar el estado de los relojes (Evita cuelgues de estado de Streamlit)
+        if "device_statuses" not in st.session_state:
+            with st.spinner("⏳ Verificando conectividad de la red..."):
+                statuses = check_all_devices_online(devices_config)
+                st.session_state["device_statuses"] = statuses
+
     tab_sync, tab_conf, tab_ctrl = st.tabs(["⏬ Sincronizar Datos", "⚙️ Configurar Dispositivos", "🎛️ Centro de Control (Usuarios)"])
     
     with tab_sync:
         st.write("Selecciona los relojes de los que deseas descargar las marcaciones recientes.")
 
-        devices = load_devices()
-        if not devices:
+        if not devices_config:
             st.error("No hay dispositivos configurados. Ve a la pestaña '⚙️ Configurar Dispositivos' para crearlos.")
         else:
-            # Inicializar caché de estado de conexión en la sesión si no existe
-            if "device_statuses" not in st.session_state:
-                with st.spinner("Comprobando estado de los relojes en la red..."):
-                    st.session_state["device_statuses"] = check_all_devices_online(devices)
-
-            statuses = st.session_state["device_statuses"]
+            statuses = st.session_state.get("device_statuses", {})
 
             with st.expander("🛠️ Lista de Relojes Biométricos Disponibles", expanded=True):
                 col_exp_title, col_exp_refresh = st.columns([3, 1])
@@ -228,12 +228,13 @@ def page_sync():
                     st.write("Marca o desmarca los dispositivos que quieras sincronizar:")
                 with col_exp_refresh:
                     if st.button("🔄 Refrescar Red", key="btn_refresh_sync_tab", use_container_width=True):
-                        with st.spinner("Actualizando conexión de la red..."):
-                            st.session_state["device_statuses"] = check_all_devices_online(devices)
-                            st.rerun()
+                        if "device_statuses" in st.session_state:
+                            del st.session_state["device_statuses"]
+                        st.session_state["checking_devices"] = False
+                        st.rerun()
                 
                 selected_devices = []
-                for d in devices:
+                for d in devices_config:
                     is_online = statuses.get(d["ip"], False)
                     status_emoji = "🟢" if is_online else "🔴"
                     status_text = "En Línea" if is_online else "Fuera de Línea"
@@ -269,26 +270,17 @@ def page_sync():
                     total_inserted = 0
                     total_skipped = 0
 
-                    progress_bar = st.progress(0, "Iniciando descarga en paralelo de los relojes...")
-
-                    from concurrent.futures import ThreadPoolExecutor
+                    progress_bar = st.progress(0, "Iniciando descarga secuencial de los relojes (Evitando saturar la red Docker)...")
                     
-                    # 1. Ejecutar las descargas de los relojes en paralelo (hilos separados)
+                    # 1. Ejecutar las descargas de los relojes uno por uno (Secuencialmente para mayor estabilidad)
                     results = {}
-                    with ThreadPoolExecutor(max_workers=len(selected_devices)) as executor:
-                        # Lanzamos la descarga de cada reloj
-                        future_to_device = {
-                            executor.submit(download_attendance_from_device, d): d 
-                            for d in selected_devices
-                        }
-                        
-                        for future in future_to_device:
-                            d = future_to_device[future]
-                            try:
-                                rows, err = future.result()
-                                results[d["ip"]] = (rows, err)
-                            except Exception as e:
-                                results[d["ip"]] = ([], f"Fallo en la tarea paralela: {e}")
+                    for idx, d in enumerate(selected_devices):
+                        progress_bar.progress((idx) / len(selected_devices), f"Descargando desde {d.get('name', d['ip'])}...")
+                        try:
+                            rows, err = download_attendance_from_device(d)
+                            results[d["ip"]] = (rows, err)
+                        except Exception as e:
+                            results[d["ip"]] = ([], f"Fallo en la descarga: {e}")
 
                     progress_bar.progress(1.0, text="Procesando y guardando marcaciones...")
 
@@ -337,22 +329,29 @@ def page_sync():
             if 'last_processed_device' not in st.session_state:
                 st.session_state.last_processed_device = None
                 
+            if "devices_table_version" not in st.session_state:
+                st.session_state["devices_table_version"] = 0
+                
             event = st.dataframe(
                 df_show, 
                 use_container_width=True, 
                 hide_index=True, 
                 on_select="rerun", 
                 selection_mode="single-row", 
-                key="devices_table"
+                key=f"devices_table_{st.session_state['devices_table_version']}"
             )
             
             if len(event.selection.rows) > 0:
                 row_idx = event.selection.rows[0]
-                dev_ip = str(df_show.iloc[row_idx]["Dirección IP"])
-                
-                if dev_ip != st.session_state.last_processed_device:
-                    st.session_state.last_processed_device = dev_ip
-                    edit_device_dialog(row_idx, devices_config)
+                # Evitar IndexError si Streamlit mantiene en memoria una selección fantasma tras borrar una fila
+                if row_idx < len(df_show):
+                    dev_ip = str(df_show.iloc[row_idx]["Dirección IP"])
+                    
+                    if dev_ip != st.session_state.last_processed_device:
+                        st.session_state.last_processed_device = dev_ip
+                        edit_device_dialog(row_idx, devices_config)
+                else:
+                    st.session_state.last_processed_device = None
             else:
                 st.session_state.last_processed_device = None
 
@@ -363,11 +362,7 @@ def page_sync():
         if not devices_config:
             st.error("No hay dispositivos configurados.")
         else:
-            # Asegurar que la caché de red esté cargada
-            if "device_statuses" not in st.session_state:
-                st.session_state["device_statuses"] = check_all_devices_online(devices_config)
-                
-            statuses = st.session_state["device_statuses"]
+            statuses = st.session_state.get("device_statuses", {})
             
             dev_opts = {}
             for d in devices_config:
