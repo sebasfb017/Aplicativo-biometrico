@@ -1,8 +1,12 @@
 data/
 venv/
+test_env/
 __pycache__/
 *.pyc
 smtp_config.yaml
 .vscode/
 ruff_errors.txt
 .idea/
+.pytest_cache/
+test_zk.py
+
