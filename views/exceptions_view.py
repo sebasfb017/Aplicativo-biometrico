@@ -117,7 +117,7 @@ def show_exception_details(exc_id: int):
             
         with db_session() as conn:
             df_audit = pd.read_sql_query("""
-                SELECT a.user_id, a.action, a.timestamp, u.full_name
+                SELECT a.user_id, a.action, a.timestamp, u.full_name, a.details, u.role
                 FROM audit_logs a
                 LEFT JOIN users_app u ON a.user_id = u.username
                 WHERE a.details LIKE ? AND a.action LIKE 'APPROVE_%'
@@ -128,7 +128,20 @@ def show_exception_details(exc_id: int):
             st.divider()
             st.markdown("**Trazabilidad de Aprobaciones:**")
             for _, row_a in df_audit.iterrows():
-                level = "Jefatura" if row_a['action'] == "APPROVE_LEAVE_L1" else "Gestión Humana"
+                role_val = row_a.get('role')
+                if role_val == 'coordinador':
+                    level = "Coordinador"
+                elif role_val == 'jefe_area':
+                    level = "Jefe de Área"
+                elif role_val in ['admin', 'nomina']:
+                    level = "Gestión Humana"
+                else:
+                    if row_a['action'] == "APPROVE_LEAVE_L1":
+                        level = "Coordinador"
+                    elif "Jefe de Área" in str(row_a.get('details', '')):
+                        level = "Jefe de Área"
+                    else:
+                        level = "Gestión Humana"
                 approver_name = row_a['full_name'] if pd.notna(row_a['full_name']) else row_a['user_id']
                 st.caption(f"✓ **{level}**: {approver_name} ({row_a['timestamp']})")
     else:
