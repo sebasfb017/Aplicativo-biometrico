@@ -60,38 +60,99 @@ def main():
     st.set_page_config(page_title="Nómina Dolormed", layout="wide", page_icon="🏢")
     init_db()
 
-    # --- CSS GLOBAL (EMBELLECIMIENTO VISUAL) ---
+    # --- CSS GLOBAL (ESTÉTICA PREMIUM Y FLUIDEZ) ---
     st.markdown("""
     <style>
-    /* Efecto Glassmorphism en métricas y tarjetas */
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+    
+    /* Tipografía Global y Variables */
+    html, body, [class*="css"] {
+        font-family: 'Outfit', sans-serif !important;
+    }
+    
+    :root {
+        --primary-blue: #0D6EFD;
+        --glow-blue: rgba(13, 110, 253, 0.4);
+        --glass-bg: rgba(255, 255, 255, 0.03);
+        --glass-border: rgba(200, 200, 200, 0.15);
+    }
+    
+    /* Animación principal de renderizado (Fade-In) */
+    @keyframes fadeIn {
+        0% { opacity: 0; transform: translateY(15px); }
+        100% { opacity: 1; transform: translateY(0); }
+    }
+    
+    .main .block-container {
+        animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    
+    /* Efecto Glassmorphism y Elevación Premium en Métricas */
     div[data-testid="stMetric"] {
-        border-radius: 12px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
-        border: 1px solid rgba(200, 200, 200, 0.2);
+        border-radius: 16px;
+        padding: 20px;
+        background: var(--glass-bg);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05);
+        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+        border: 1px solid var(--glass-border);
     }
     div[data-testid="stMetric"]:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 8px 15px rgba(0, 0, 0, 0.15);
+        transform: translateY(-6px) scale(1.02);
+        box-shadow: 0 15px 30px var(--glow-blue);
+        border-color: var(--primary-blue);
     }
+    
     /* Estilizar botones para efecto premium */
     button[kind="primary"] {
-        border-radius: 8px !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px;
         transition: all 0.3s ease !important;
     }
     button[kind="primary"]:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(13, 110, 253, 0.4) !important;
+        transform: translateY(-3px);
+        box-shadow: 0 6px 18px var(--glow-blue) !important;
     }
-    /* Contenedores con hover */
+    
+    /* Contenedores Expander con hover Premium */
     div[data-testid="stExpander"] {
-        border-radius: 8px !important;
-        overflow: hidden;
+        border-radius: 12px !important;
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
         transition: all 0.3s ease;
+        overflow: hidden;
     }
     div[data-testid="stExpander"]:hover {
-        border-color: #0D6EFD;
+        border-color: var(--primary-blue);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    }
+
+    /* Skeleton Loader para carga asíncrona */
+    @keyframes skeleton-loading {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+    
+    .skeleton-box {
+        display: block;
+        height: 120px;
+        width: 100%;
+        background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+        background-size: 200% 100%;
+        border-radius: 12px;
+        animation: skeleton-loading 1.5s infinite linear;
+        margin-bottom: 1rem;
+        border: 1px solid var(--glass-border);
+    }
+    
+    /* Adaptación del skeleton a modo oscuro */
+    @media (prefers-color-scheme: dark) {
+        .skeleton-box {
+            background: linear-gradient(90deg, #2b2b2b 25%, #3b3b3b 50%, #2b2b2b 75%);
+            background-size: 200% 100%;
+        }
     }
     </style>
     """, unsafe_allow_html=True)
