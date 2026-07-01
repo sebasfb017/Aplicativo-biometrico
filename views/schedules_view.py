@@ -390,77 +390,209 @@ def page_shifts():
 def page_assign_shifts():
     require_role("admin", "nomina")
     st.title("📝 Asignación Manual de Turnos")
-    st.write("Forzar turno para empleados específicos en días concretos.")
+    st.write("Configura y fuerza horarios específicos para tus empleados de forma visual.")
 
     today = date.today()
     default_week_start = (today - timedelta(days=today.weekday()))
-    available_weeks = [(default_week_start + timedelta(weeks=i)) for i in range(-4, 13)]
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        selected_weeks = st.multiselect(
-            "Semanas a Asignar", 
-            options=available_weeks, 
-            default=[default_week_start],
-            format_func=lambda d: f"Semana del Lunes {d.strftime('%d/%m/%Y')}"
-        )
-    with col2:
-        shifts_df = get_shifts_df()
-        if shifts_df.empty:
-            st.warning("Requiere configurar el catálogo de turnos primero.")
-            return
 
-        shift_options = {row['name']: int(row['id']) for _, row in shifts_df.iterrows()}
-        sel_shift_name = st.selectbox("Turno a Aplicar", options=list(shift_options.keys()))
-
-    with db_session() as conn:
-        emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees ORDER BY user_id", conn)
-    if emp_df.empty:
-        st.warning("No hay empleados en el directorio.")
+    # Cargar catálogo de turnos
+    shifts_df = get_shifts_df()
+    if shifts_df.empty:
+        st.warning("Requiere configurar el catálogo de turnos primero.")
         return
 
-    depts = sorted([d for d in emp_df['department'].unique() if d])
-    dept_sel = st.selectbox("Filtrar destinatarios por área", options=["Todos los Departamentos"] + depts)
+    # Filtrar solo los turnos solicitados por el usuario
+    manual_names = {'semana 1', 'semana 2', 'sabado', 'semana 1_l', 'semana 2_v'}
+    shifts_df = shifts_df[shifts_df['name'].str.lower().str.strip().isin(manual_names)]
 
-    if dept_sel != "Todos los Departamentos":
-        emp_df_filtered = emp_df[emp_df['department'] == dept_sel]
-    else:
-        emp_df_filtered = emp_df
+    if shifts_df.empty:
+        st.warning("No se encontraron los turnos manuales requeridos (Semana 1, Semana 2, Sabado, Semana 1_L, Semana 2_V).")
+        return
 
-    st.markdown("---")
-    st.write("**Selección de Personal y Días**")
-    
-    colA, colB = st.columns([2, 1])
-    with colA:
+    # Inicializar selección de turno en session_state
+    if "selected_shift_id" not in st.session_state or st.session_state.selected_shift_id not in shifts_df['id'].values:
+        st.session_state.selected_shift_id = int(shifts_df.iloc[0]['id'])
+        st.session_state.selected_shift_name = shifts_df.iloc[0]['name']
+
+    # Estilos CSS para las tarjetas del catálogo
+    st.markdown("""
+    <style>
+    .shift-card {
+        border: 1px solid rgba(128,128,128,0.2);
+        border-radius: 12px;
+        padding: 15px;
+        margin-bottom: 5px;
+        background: rgba(128,128,128,0.02);
+        transition: all 0.2s ease-in-out;
+    }
+    .shift-card.selected {
+        border-color: #0D6EFD;
+        box-shadow: 0 4px 12px rgba(13, 110, 253, 0.15);
+        background: rgba(13, 110, 253, 0.03);
+    }
+    .shift-card-title {
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: #0D6EFD;
+        margin-bottom: 5px;
+    }
+    .shift-badge {
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 8px;
+        margin-right: 5px;
+        margin-top: 5px;
+    }
+    .badge-break { background: rgba(234,179,8,0.12); color: #d69e2e; border: 1px solid rgba(234,179,8,0.25); }
+    .badge-grace { background: rgba(13,110,253,0.12); color: #0d6efd; border: 1px solid rgba(13,110,253,0.25); }
+    .badge-night { background: rgba(220,53,69,0.12); color: #dc3545; border: 1px solid rgba(220,53,69,0.25); }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col_setup, col_catalog = st.columns([1.1, 0.9])
+
+    with col_setup:
+        st.subheader("1. Destinatarios y Fechas")
+        
+        # Cargar empleados
+        with db_session() as conn:
+            emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees ORDER BY user_id", conn)
+        
+        if emp_df.empty:
+            st.warning("No hay empleados en el directorio.")
+            return
+
+        depts = sorted([d for d in emp_df['department'].unique() if d])
+        dept_sel = st.selectbox("Filtrar por Área/Departamento", options=["Todos los Departamentos"] + depts)
+
+        if dept_sel != "Todos los Departamentos":
+            emp_df_filtered = emp_df[emp_df['department'] == dept_sel]
+        else:
+            emp_df_filtered = emp_df
+
         apply_all = st.checkbox("Asignar masivamente a todos los filtrados", value=False)
         if apply_all:
             selected_emps = emp_df_filtered['user_id'].tolist()
-            st.success(f"{len(selected_emps)} empleados seleccionados.")
+            st.success(f"✅ {len(selected_emps)} empleados seleccionados automáticamente.")
         else:
             selected_emps = st.multiselect(
-                "Seleccionar Manualmente:",
+                "Seleccionar Empleados:",
                 options=emp_df_filtered['user_id'].tolist(),
                 format_func=lambda uid: f"{uid} - {emp_df_filtered[emp_df_filtered['user_id']==uid]['full_name'].values[0]}"
             )
-    with colB:
-        dow_sel = st.multiselect("Días Aplica", options=[0,1,2,3,4,5,6], default=[0,1,2,3,4], format_func=lambda x: ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"][x])
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Aplicar Asignación Directa", type="primary", use_container_width=True):
-        if not selected_weeks:
-            st.error("Debes incluir al menos una semana.")
-        elif not selected_emps:
-            st.error("Debes incluir al menos a un empleado.")
-        elif not dow_sel:
-            st.error("Debes incluir al menos un día.")
+        st.markdown("---")
+        
+        # Modo de Selección de Fechas
+        date_mode = st.radio(
+            "Modo de Selección de Fechas:",
+            ["📅 Rango de Fechas (Calendario)", "📆 Semanas Específicas (Multiselección)"],
+            horizontal=True
+        )
+        
+        if date_mode == "📅 Rango de Fechas (Calendario)":
+            default_range = (today, today + timedelta(days=4))
+            date_range = st.date_input(
+                "Seleccionar Rango de Fechas en el Calendario",
+                value=default_range,
+                help="Selecciona el día de inicio y el día de fin del rango."
+            )
+            selected_weeks = None
         else:
-            sid = shift_options[sel_shift_name]
-            for w_start in selected_weeks:
-                ws_iso = (w_start - timedelta(days=w_start.weekday())).isoformat()
-                for uid in selected_emps:
-                    for dow in dow_sel:
-                        assign_shift(uid, ws_iso, int(dow), sid)
-            st.success(f"✅ Asignación procesada para {len(selected_weeks)} semana(s).")
+            available_weeks = [(default_week_start + timedelta(weeks=i)) for i in range(-4, 13)]
+            selected_weeks = st.multiselect(
+                "Seleccionar Semanas a Asignar",
+                options=available_weeks,
+                default=[default_week_start],
+                format_func=lambda d: f"Semana del Lunes {d.strftime('%d/%m/%Y')}"
+            )
+            date_range = None
+        
+        dow_sel = st.multiselect(
+            "Días de la Semana a aplicar",
+            options=[0,1,2,3,4,5,6],
+            default=[0,1,2,3,4],
+            format_func=lambda x: ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"][x]
+        )
+
+    with col_catalog:
+        st.subheader("2. Seleccionar Turno")
+        st.write(f"Turno actual seleccionado: **{st.session_state.selected_shift_name}**")
+        
+        # Renderizado en Grid de Tarjetas (Cards)
+        cols_cards = st.columns(2)
+        for idx, row in shifts_df.reset_index(drop=True).iterrows():
+            c_idx = idx % 2
+            with cols_cards[c_idx]:
+                s_id = int(row['id'])
+                is_selected = s_id == st.session_state.selected_shift_id
+                selected_class = "selected" if is_selected else ""
+                
+                # Crear badges HTML
+                badges_html = ""
+                if row['has_break']:
+                    badges_html += f'<span class="shift-badge badge-break">☕ Break: {row["break_start"]} - {row["break_end"]}</span>'
+                if row['grace_minutes'] > 0:
+                    badges_html += f'<span class="shift-badge badge-grace">⏱️ Gracia: {row["grace_minutes"]}m</span>'
+                if row['is_overnight']:
+                    badges_html += f'<span class="shift-badge badge-night">🌙 Nocturno</span>'
+                
+                card_html = f"""
+                <div class="shift-card {selected_class}">
+                    <div class="shift-card-title">{row['name']}</div>
+                    <div style="font-size:0.85rem; font-weight:500; opacity:0.8;">🕒 Horario: {row['start_time']} - {row['end_time'] if row['end_time'] else 'Indefinido'}</div>
+                    <div style="margin-top: 5px; height: 45px; overflow: hidden;">{badges_html}</div>
+                </div>
+                """
+                st.markdown(card_html, unsafe_allow_html=True)
+                
+                btn_label = "✅ Seleccionado" if is_selected else "Seleccionar"
+                btn_type = "primary" if is_selected else "secondary"
+                if st.button(btn_label, key=f"btn_sel_s_{s_id}", type=btn_type, use_container_width=True):
+                    st.session_state.selected_shift_id = s_id
+                    st.session_state.selected_shift_name = row['name']
+                    st.rerun()
+
+    st.markdown("---")
+    
+    # Botón de envío
+    if st.button("Aplicar Asignación Directa", type="primary", use_container_width=True):
+        if not selected_emps:
+            st.error("Debes incluir al menos un empleado.")
+        elif not dow_sel:
+            st.error("Debes incluir al menos un día de la semana para aplicar.")
+        elif date_mode == "📅 Rango de Fechas (Calendario)" and (not isinstance(date_range, (tuple, list)) or len(date_range) < 2):
+            st.error("Debes seleccionar un rango de fechas válido (haz clic en el día de inicio y luego en el día de fin del rango).")
+        elif date_mode == "📆 Semanas Específicas (Multiselección)" and not selected_weeks:
+            st.error("Debes seleccionar al menos una semana.")
+        else:
+            sid = st.session_state.selected_shift_id
+            assigned_count = 0
+            
+            if date_mode == "📅 Rango de Fechas (Calendario)":
+                start_date, end_date = date_range[0], date_range[1]
+                current_d = start_date
+                with st.spinner("Procesando asignación por rango de fechas..."):
+                    while current_d <= end_date:
+                        dow = current_d.weekday()
+                        if dow in dow_sel:
+                            week_start = (current_d - timedelta(days=dow)).isoformat()
+                            for uid in selected_emps:
+                                assign_shift(uid, week_start, int(dow), sid)
+                                assigned_count += 1
+                        current_d += timedelta(days=1)
+                st.success(f"✅ Se han asignado {assigned_count} turnos correspondientes al rango {start_date.strftime('%d/%m/%Y')} al {end_date.strftime('%d/%m/%Y')}.")
+            else:
+                with st.spinner("Procesando asignación por semanas..."):
+                    for w_start in selected_weeks:
+                        ws_iso = (w_start - timedelta(days=w_start.weekday())).isoformat()
+                        for uid in selected_emps:
+                            for dow in dow_sel:
+                                assign_shift(uid, ws_iso, int(dow), sid)
+                                assigned_count += 1
+                st.success(f"✅ Se han asignado {assigned_count} turnos correspondientes a {len(selected_weeks)} semana(s).")
 
     st.markdown("---")
     st.subheader("✨ Asignación Mágica (Clonar Semana)")
