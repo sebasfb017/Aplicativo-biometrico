@@ -2,7 +2,6 @@ import bcrypt
 from datetime import datetime
 import holidays
 from database_conn.connection import db_conn
-from views.schedules_view import ensure_schedules_columns, maybe_load_default_schedules
 
 def init_db():
     conn = db_conn()
@@ -182,6 +181,17 @@ def init_db():
     );
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+    """)
+
     # Crear índices para optimizar consultas de marcaciones y permisos
     cur.execute("CREATE INDEX IF NOT EXISTS idx_attendance_user_ts ON attendance_raw (user_id, ts);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_dates ON leave_requests (user_id, leave_date_start, leave_date_end);")
@@ -221,6 +231,7 @@ def init_db():
 
     conn.close()
 
+    from views.schedules_view import ensure_schedules_columns, maybe_load_default_schedules
     ensure_schedules_columns()
     migrate_schema_attendance_flags()
     migrate_schema_for_profiles()
@@ -231,6 +242,28 @@ def init_db():
     migrate_schema_rejection_reason() # Nueva migración
     migrate_schema_lockouts()
     migrate_schema_hidden_requests()
+    migrate_schema_notifications()
+
+def migrate_schema_notifications():
+    """Añade la tabla notifications si no existe en la base de datos."""
+    conn = db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        """)
+        conn.commit()
+    except Exception as e:
+        print(f"Error en migrate_schema_notifications: {e}")
+    finally:
+        conn.close()
 
 def migrate_schema_hidden_requests():
     """Añade la columna para ocultar permisos por parte del empleado."""
