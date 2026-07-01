@@ -61,7 +61,11 @@ def register_employee_dialog():
         email = st.session_state.get("reg_email", "").strip()
         
         role = st.session_state.get("reg_role", "empleado")
-        managed_dept = st.session_state.get("reg_managed_dept", "")
+        if role == "coordinador":
+            managed_depts = st.session_state.get("reg_managed_depts", [])
+            managed_dept = ", ".join(managed_depts)
+        else:
+            managed_dept = ""
         managed_area = st.session_state.get("reg_managed_area", "")
         
         if not pass1 or not pass2 or not phone or not email:
@@ -141,8 +145,11 @@ def register_employee_dialog():
         selected_role = st.selectbox("Rol en el Sistema", list(rol_options.keys()), format_func=lambda x: rol_options[x], key="reg_role")
         
         if selected_role == "coordinador":
-            depts = ["Sistemas", "Facturación", "Glosas", "Cartera", "Admisiones", "Enfermería", "SIAU", "Calidad", "SST", "Contabilidad", "Imagenología", "Talento Humano"]
-            st.selectbox("¿Qué Departamento coordinas?", [""] + sorted(depts), key="reg_managed_dept")
+            all_subareas = []
+            for subs in AREA_MAPPING.values():
+                all_subareas.extend(subs)
+            depts = sorted(list(set(all_subareas)))
+            st.multiselect("¿Qué Departamentos coordinas?", options=depts, key="reg_managed_depts")
             
         elif selected_role == "jefe_area":
             areas = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
