@@ -236,13 +236,13 @@ def main():
     st.sidebar.markdown(f"<div style='text-align: center; color: gray; margin-bottom: 20px;'>Hola, <b>{user['full_name']}</b><br><small>({user['role'].upper()})</small></div>", unsafe_allow_html=True)
 
     ROLES_MENU = {
-        "admin": (["Dashboard", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"],
-                  ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"]),
+        "admin": (["Dashboard", "Mi Portal de Autogestión", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"],
+                  ["house", "person-vcard", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"]),
         "empleado": (["Mi Portal de Autogestión"], ["person-vcard"]),
         "coordinador": (["Mi Portal de Autogestión", "Autorización de Permisos", "Carga Masiva de Turnos"], ["person-vcard", "check2-square", "file-earmark-excel"]),
         "jefe_area": (["Mi Portal de Autogestión", "Autorización de Permisos"], ["person-vcard", "check2-square"]),
-        "nomina": (["Dashboard", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"], 
-                   ["house", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"])
+        "nomina": (["Dashboard", "Mi Portal de Autogestión", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"], 
+                   ["house", "person-vcard", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"])
     }
     menu_options, menu_icons = ROLES_MENU.get(user_role, ROLES_MENU["nomina"])
 
@@ -288,6 +288,32 @@ def main():
         "Usuarios": page_users_admin,
         "Mi Portal de Autogestión": page_employee_portal
     }
+
+    # --- CAMPANA DE NOTIFICACIONES (ÁREA SUPERIOR PRINCIPAL) ---
+    col_main_title, col_main_bell = st.columns([0.88, 0.12])
+    with col_main_bell:
+        from database_conn.queries import (
+            db_get_unread_notifications_count,
+            db_get_recent_notifications,
+            db_mark_all_notifications_read
+        )
+        unread_count = db_get_unread_notifications_count(user['username'])
+        bell_label = f"🔔 ({unread_count})" if unread_count > 0 else "🔔"
+        
+        with st.popover(bell_label, use_container_width=True):
+            st.markdown("<h3 style='margin:0;'>🔔 Mis Notificaciones</h3>", unsafe_allow_html=True)
+            st.markdown("---")
+            notifs = db_get_recent_notifications(user['username'])
+            if not notifs:
+                st.write("No tienes notificaciones recientes.")
+            else:
+                for n in notifs:
+                    icon = "🟢" if not n['is_read'] else "⚪"
+                    st.markdown(f"**{icon} {n['title']}**\n<small>{n['message']}</small>\n<small style='color:gray; font-size: 0.75rem; display: block; margin-top: 2px;'>{n['created_at']}</small>", unsafe_allow_html=True)
+                    st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
+                if st.button("Marcar todas como leídas", key="mark_all_read_top_btn", use_container_width=True):
+                    db_mark_all_notifications_read(user['username'])
+                    st.rerun()
 
     if sel == "Turnos y Asignación":
         tab1, tab2, tab3 = st.tabs(["🏗️ Crear Turnos", "📝 Asignar a Empleados", "📥 Carga Masiva (Excel)"])
