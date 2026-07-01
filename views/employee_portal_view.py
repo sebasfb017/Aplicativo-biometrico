@@ -422,13 +422,26 @@ def page_employee_portal():
                                     if target_coord_dept in c_depts:
                                         target_emails.append(c_row['emp_email'])
                             elif target_status == 'PENDING_JEFE':
-                                user_app_df = pd.read_sql_query("SELECT emp_area, emp_subarea FROM users_app WHERE username = ?", conn, params=(user["username"],))
+                                user_app_df = pd.read_sql_query("SELECT role, emp_area, emp_subarea, managed_department FROM users_app WHERE username = ?", conn, params=(user["username"],))
+                                u_role = user_app_df.iloc[0]['role'] if not user_app_df.empty else ""
                                 area = user_app_df.iloc[0]['emp_area'] if not user_app_df.empty else ""
                                 subarea = user_app_df.iloc[0]['emp_subarea'] if not user_app_df.empty else ""
+                                managed_dept = user_app_df.iloc[0]['managed_department'] if not user_app_df.empty else ""
+                                
                                 target_jefe_area = area
                                 if subarea == 'Admisiones': target_jefe_area = 'Administrativo'
                                 elif subarea == 'Auditor Médico': target_jefe_area = 'Auditoria Médica'
                                 elif subarea == 'Control Interno': target_jefe_area = 'Control Interno'
+                                
+                                # Enrutamiento de Enfermería a Control Interno
+                                is_nursing = (subarea == 'Enfermería')
+                                if not is_nursing and u_role == 'coordinador' and managed_dept:
+                                    c_depts = [d.strip() for d in managed_dept.split(',') if d.strip()]
+                                    if 'Enfermería' in c_depts:
+                                        is_nursing = True
+                                        
+                                if is_nursing:
+                                    target_jefe_area = 'Control Interno'
                                 jefe_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(target_jefe_area,))
                                 target_emails = jefe_df['emp_email'].tolist()
                             elif target_status == 'PENDING_RRHH':
