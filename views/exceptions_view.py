@@ -215,14 +215,15 @@ def page_exceptions():
                     JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_JEFE' AND 
                           (
-                              ua.emp_area = ? OR 
+                              (ua.emp_area = ? AND ua.emp_subarea != 'Enfermería') OR 
+                              ((ua.emp_subarea = 'Enfermería' OR (ua.role = 'coordinador' AND ua.managed_department LIKE '%Enfermería%')) AND ? = 'Control Interno') OR
                               (ua.emp_subarea = 'Admisiones' AND ? = 'Administrativo') OR
                               (ua.emp_subarea = 'Auditor Médico' AND ? = 'Auditoria Médica') OR
                               (ua.emp_subarea = 'Control Interno' AND ? = 'Control Interno')
                           )
                     ORDER BY lr.id ASC
                 """
-                params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
+                params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
                 
             with db_session() as conn:
                 df_pend = pd.read_sql_query(query, conn, params=params)
@@ -643,6 +644,8 @@ def page_exceptions():
                                                 WHEN emp_subarea = 'Admisiones' THEN 'Administrativo' 
                                                 WHEN emp_subarea = 'Auditor Médico' THEN 'Auditoria Médica'
                                                 WHEN emp_subarea = 'Control Interno' THEN 'Control Interno'
+                                                WHEN emp_subarea = 'Enfermería' THEN 'Control Interno'
+                                                WHEN role = 'coordinador' AND managed_department LIKE '%Enfermería%' THEN 'Control Interno'
                                                 ELSE emp_area 
                                             END
                                             FROM users_app WHERE username = ?
@@ -702,12 +705,21 @@ def page_exceptions():
                 df_g = pd.read_sql_query("""
                     SELECT lr.id, lr.user_id, e.full_name, e.department, 
                            lr.leave_date_start, lr.leave_date_end,
-                           lr.reason_type, lr.status, lr.request_date
+                           lr.reason_type, lr.status, lr.request_date,
+                           ua.emp_area, ua.emp_subarea, ua.role as user_role, ua.managed_department as user_managed_dept
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
+                    LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status LIKE 'PENDING_%'
                     ORDER BY lr.request_date DESC
                 """, conn)
+                
+                # Fetch active coordinators and jefes for dynamic name mapping
+                cur = conn.cursor()
+                cur.execute("SELECT full_name, managed_department FROM users_app WHERE role = 'coordinador' AND active = 1")
+                coordinators = cur.fetchall()
+                cur.execute("SELECT full_name, managed_area FROM users_app WHERE role = 'jefe_area' AND active = 1")
+                jefes = cur.fetchall()
             
             if df_g.empty:
                 st.success("Toda la tubería está limpia. No hay solicitudes estancadas.")
@@ -727,8 +739,52 @@ def page_exceptions():
                     axis=1
                 )
                 
-                display_df = df_g[["id", "user_id", "full_name", "department", "Fechas", "reason_type", "status", "request_date"]]
-                display_df.columns = ["Radicado", "DNI", "Empleado", "Área/Departamento", "Fechas", "Tipo", "Estado de Aprobación", "Fecha Solicitud"]
+                # Calcular quién tiene pendiente la aprobación (Nombres reales)
+                def get_pending_approver(row):
+                    status = row['status']
+                    if status == 'PENDING_RRHH':
+                        return "Gestión Humana"
+                    elif status == 'PENDING_COORD':
+                        subarea = row['emp_subarea'] or row['department']
+                        if not subarea:
+                            return "Coordinador"
+                        matching_coords = []
+                        for name, m_depts in coordinators:
+                            depts = [d.strip() for d in (m_depts or "").split(",") if d.strip()]
+                            if subarea in depts:
+                                matching_coords.append(name)
+                        if matching_coords:
+                            return ", ".join(matching_coords)
+                        return "Coordinador"
+                    elif status == 'PENDING_JEFE':
+                        area = row['emp_area']
+                        subarea = row['emp_subarea'] or row['department']
+                        role = row['user_role']
+                        managed_dept = row['user_managed_dept']
+                        
+                        target_jefe_area = area
+                        if subarea == 'Admisiones': target_jefe_area = 'Administrativo'
+                        elif subarea == 'Auditor Médico': target_jefe_area = 'Auditoria Médica'
+                        elif subarea == 'Control Interno': target_jefe_area = 'Control Interno'
+                        elif subarea == 'Enfermería': target_jefe_area = 'Control Interno'
+                        elif role == 'coordinador' and managed_dept:
+                            c_depts = [d.strip() for d in managed_dept.split(',') if d.strip()]
+                            if 'Enfermería' in c_depts:
+                                target_jefe_area = 'Control Interno'
+                                
+                        matching_jefes = []
+                        for name, m_area in jefes:
+                            if m_area == target_jefe_area:
+                                matching_jefes.append(name)
+                        if matching_jefes:
+                            return ", ".join(matching_jefes)
+                        return f"Jefe ({target_jefe_area})" if target_jefe_area else "Jefe de Área"
+                    return status
+
+                df_g["Pendiente de"] = df_g.apply(get_pending_approver, axis=1)
+                
+                display_df = df_g[["id", "user_id", "full_name", "department", "Fechas", "reason_type", "status", "Pendiente de", "request_date"]]
+                display_df.columns = ["Radicado", "DNI", "Empleado", "Área/Departamento", "Fechas", "Tipo", "Estado", "Pendiente De", "Fecha Solicitud"]
                 
                 st.info("💡 Haz clic en cualquier fila para ver los detalles completos de la solicitud.")
                 
