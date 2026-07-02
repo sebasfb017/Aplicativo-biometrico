@@ -207,29 +207,8 @@ def main():
         
         if user_role == "empleado":
             st.toast(f"¡Hola {user['full_name'].split()[0]}! Bienvenido a tu Portal de Autogestión.", icon="👋")
-        else:
-            try:
-                conn = db_conn()
-                cur = conn.cursor()
-                if user_role == "coordinador":
-                    cur.execute("SELECT count(*) FROM leave_requests WHERE status = 'PENDING_COORD'")
-                elif user_role == "jefe_area":
-                    cur.execute("SELECT count(*) FROM leave_requests WHERE status = 'PENDING_JEFE'")
-                elif user_role in ["admin", "nomina"]:
-                    cur.execute("SELECT count(*) FROM leave_requests WHERE status IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')")
-                else:
-                    cur.execute("SELECT 0")
-                
-                pendientes = cur.fetchone()
-                pendientes = pendientes[0] if pendientes else 0
-                conn.close()
-                
-                if pendientes > 0:
-                    st.toast(f"Tienes {pendientes} solicitudes pendientes de aprobación en tu bandeja.", icon="🔔")
-                else:
-                    st.toast(f"¡Hola {user['full_name'].split()[0]}! Tu bandeja de aprobaciones está al día.", icon="✅")
-            except Exception:
-                pass
+        # Ocultar o eliminar el mensaje emergente de pendientes a petición del usuario.
+        pass
     # -------------------------------------------
 
     st.sidebar.markdown(f"<h2 style='text-align: center; color: #0066cc;'>Dolormed RRHH</h2>", unsafe_allow_html=True)
@@ -247,6 +226,32 @@ def main():
     menu_options, menu_icons = ROLES_MENU.get(user_role, ROLES_MENU["nomina"])
 
     with st.sidebar:
+        # --- CAMPANA DE NOTIFICACIONES ---
+        from database_conn.queries import (
+            db_get_unread_notifications_count,
+            db_get_recent_notifications,
+            db_mark_all_notifications_read
+        )
+        unread_count = db_get_unread_notifications_count(user['username'])
+        bell_label = f"🔔 Notificaciones ({unread_count})" if unread_count > 0 else "🔔 Notificaciones"
+        
+        with st.popover(bell_label, use_container_width=True):
+            st.markdown("<h4 style='margin:0;'>Mis Notificaciones</h4>", unsafe_allow_html=True)
+            st.markdown("---")
+            notifs = db_get_recent_notifications(user['username'])
+            if not notifs:
+                st.write("No tienes notificaciones recientes.")
+            else:
+                for n in notifs:
+                    icon = "🟢" if not n['is_read'] else "⚪"
+                    st.markdown(f"**{icon} {n['title']}**\n<small>{n['message']}</small>\n<small style='color:gray; font-size: 0.75rem; display: block; margin-top: 2px;'>{n['created_at']}</small>", unsafe_allow_html=True)
+                    st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
+                if st.button("Marcar todas como leídas", key="mark_all_read_top_btn", use_container_width=True):
+                    db_mark_all_notifications_read(user['username'])
+                    st.rerun()
+        st.markdown("<br>", unsafe_allow_html=True)
+        # ----------------------------------
+        
         sel = option_menu(
             menu_title=None,
             options=menu_options,
@@ -289,31 +294,7 @@ def main():
         "Mi Portal de Autogestión": page_employee_portal
     }
 
-    # --- CAMPANA DE NOTIFICACIONES (ÁREA SUPERIOR PRINCIPAL) ---
-    col_main_title, col_main_bell = st.columns([0.88, 0.12])
-    with col_main_bell:
-        from database_conn.queries import (
-            db_get_unread_notifications_count,
-            db_get_recent_notifications,
-            db_mark_all_notifications_read
-        )
-        unread_count = db_get_unread_notifications_count(user['username'])
-        bell_label = f"🔔 ({unread_count})" if unread_count > 0 else "🔔"
-        
-        with st.popover(bell_label, use_container_width=True):
-            st.markdown("<h3 style='margin:0;'>🔔 Mis Notificaciones</h3>", unsafe_allow_html=True)
-            st.markdown("---")
-            notifs = db_get_recent_notifications(user['username'])
-            if not notifs:
-                st.write("No tienes notificaciones recientes.")
-            else:
-                for n in notifs:
-                    icon = "🟢" if not n['is_read'] else "⚪"
-                    st.markdown(f"**{icon} {n['title']}**\n<small>{n['message']}</small>\n<small style='color:gray; font-size: 0.75rem; display: block; margin-top: 2px;'>{n['created_at']}</small>", unsafe_allow_html=True)
-                    st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
-                if st.button("Marcar todas como leídas", key="mark_all_read_top_btn", use_container_width=True):
-                    db_mark_all_notifications_read(user['username'])
-                    st.rerun()
+    # El enrutador maneja la navegación a las diferentes páginas
 
     if sel == "Turnos y Asignación":
         tab1, tab2, tab3 = st.tabs(["🏗️ Crear Turnos", "📝 Asignar a Empleados", "📥 Carga Masiva (Excel)"])
