@@ -454,7 +454,21 @@ def page_employee_portal():
                             else:
                                 st.info("Solicitud creada. (No se encontró correo para el aprobador).")
                 except Exception as e:
-                    st.warning(f"Error interno al enviar correo: {e}")
+                    st.warning(f"Error interno al enviar correo a aprobadores: {e}")
+                
+                # Novedad: Enviar confirmación al propio empleado
+                try:
+                    from services.notifications import notify_employee_status
+                    notify_employee_status(
+                        user["username"], 
+                        user["full_name"], 
+                        req_id, 
+                        reason_type, 
+                        "RADICADA", 
+                        "Tu solicitud ha sido radicada con éxito y está en la bandeja del aprobador correspondiente."
+                    )
+                except Exception as e:
+                    print(f"Error enviando correo de radicación al empleado: {e}")
                 
                 st.success("✅ Solicitud enviada exitosamente.")
                 
