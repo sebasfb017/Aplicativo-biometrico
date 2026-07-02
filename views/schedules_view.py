@@ -457,8 +457,8 @@ def page_assign_shifts():
         st.subheader("1. Destinatarios y Fechas")
         
         # Cargar empleados
-        with db_session() as conn:
-            emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees ORDER BY user_id", conn)
+        from database_conn.queries import get_cached_employees
+        emp_df = get_cached_employees()
         
         if emp_df.empty:
             st.warning("No hay empleados en el directorio.")

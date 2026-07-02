@@ -63,8 +63,10 @@ def upsert_employees_df(df: pd.DataFrame):
                 INSERT INTO employees(user_id, full_name, email, department, profile_id, created_at)
                 VALUES(?,?,?,?,?,?)
                 ON CONFLICT(user_id) DO UPDATE SET
-                    full_name=excluded.full_name, email=excluded.email,
-                    department=excluded.department, profile_id=excluded.profile_id
+                    full_name = COALESCE(NULLIF(excluded.full_name, ''), employees.full_name),
+                    email = COALESCE(NULLIF(excluded.email, ''), employees.email),
+                    department = COALESCE(NULLIF(excluded.department, ''), employees.department),
+                    profile_id = COALESCE(excluded.profile_id, employees.profile_id)
             """, (r["user_id"], r["full_name"], r.get("email", ""), r.get("department", ""), 
                   profile_id, datetime.now().isoformat(timespec="seconds")))
     get_all_employees.clear()
@@ -277,14 +279,12 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             # Resolve Jefe's area
             target_jefe_area = req_area
             if req_subarea == 'Admisiones': target_jefe_area = 'Administrativo'
-            elif req_subarea == 'Auditor Médico': target_jefe_area = 'Auditoria Médica'
-            elif req_subarea == 'Control Interno': target_jefe_area = 'Control Interno'
-            elif req_subarea == 'Enfermería': target_jefe_area = 'Control Interno'
+            elif req_subarea in ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']: 
+                target_jefe_area = 'Control Interno'
             elif req_role == 'coordinador' and req_managed:
                 c_depts = [d.strip() for d in req_managed.split(',') if d.strip()]
-                if 'Enfermería' in c_depts:
+                if any(dept in c_depts for dept in ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']):
                     target_jefe_area = 'Control Interno'
-                    
             # Find Jefes of this area
             cur.execute("SELECT username FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1", (target_jefe_area,))
             jefes = cur.fetchall()
@@ -446,9 +446,8 @@ def db_cancel_leave_request(req_id, user_id, reason):
             elif prev_status == 'PENDING_JEFE':
                 target_jefe_area = emp_area
                 if emp_subarea == 'Admisiones': target_jefe_area = 'Administrativo'
-                elif emp_subarea == 'Auditor Médico': target_jefe_area = 'Auditoria Médica'
-                elif emp_subarea == 'Control Interno': target_jefe_area = 'Control Interno'
-                elif emp_subarea == 'Enfermería': target_jefe_area = 'Control Interno'
+                elif emp_subarea in ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']: 
+                    target_jefe_area = 'Control Interno'
                 
                 cur.execute("SELECT username FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1", (target_jefe_area,))
                 jefes = cur.fetchall()
@@ -540,4 +539,24 @@ def db_get_recent_notifications(user_id, limit=5):
 def db_mark_all_notifications_read(user_id):
     with db_session() as conn:
         cur = conn.cursor()
-        cur.execute("UPDATE notifications SET is_read = 1 WHERE user_id = ?", (user_id,))
+        cur.execute("UPDATE notifications SET is_read = 1 WHERE user_id = ?", (user_id,))
+
+# --- CACHED QUERIES PARA ACELERACIÓN (NUEVO) ---
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_employees():
+    """Retorna el DataFrame con el directorio básico de empleados (caché 60s)."""
+    with db_conn() as conn:
+        return pd.read_sql_query("SELECT user_id, full_name, department FROM employees ORDER BY full_name", conn)
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_users_app():
+    """Retorna el DataFrame con los usuarios administrativos (caché 60s)."""
+    with db_conn() as conn:
+        return pd.read_sql_query("SELECT username, full_name, role, emp_email, emp_area, emp_subarea, managed_department, active FROM users_app", conn)
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_profiles():
+    """Retorna el DataFrame con los perfiles de horarios (caché 60s)."""
+    with db_conn() as conn:
+        return pd.read_sql_query("SELECT profile_id, name, description, works_holidays FROM profiles ORDER BY name", conn)

@@ -42,9 +42,8 @@ def page_lateness_report():
         st.markdown("### 📊 Tabla General Resumida")
         
         # Unir nombre en el summary temporalmente para mostrarlo bonito
-        conn = db_conn()
-        nombres = pd.read_sql_query("SELECT user_id, full_name, department FROM employees", conn)
-        conn.close()
+        from database_conn.queries import get_cached_employees
+        nombres = get_cached_employees()
         
         summary_view = pd.merge(summary_df, nombres, on="user_id", how="left")
         

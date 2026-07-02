@@ -117,7 +117,7 @@ def show_leave_request_details(req_id: int):
         SELECT a.user_id, a.action, a.timestamp, u.full_name, a.details, u.role
         FROM audit_logs a
         LEFT JOIN users_app u ON a.user_id = u.username
-        WHERE a.details LIKE ? AND a.action LIKE 'APPROVE_%'
+        WHERE a.details LIKE ? AND (a.action LIKE 'APPROVE_%' OR a.action LIKE 'REJECT_%')
         ORDER BY a.timestamp ASC
     """, conn, params=(f"%Permiso #{req_id} %",))
     
@@ -172,6 +172,18 @@ def show_leave_request_details(req_id: int):
     if not req['is_paid'] and req['how_to_makeup']:
         st.markdown("**Acuerdo de Reposición Prometido:**")
         st.warning(req['how_to_makeup'])
+        
+    if not df_audit.empty:
+        st.divider()
+        st.markdown("**Trazabilidad de Aprobación:**")
+        for _, row in df_audit.iterrows():
+            is_approve = "APPROVE" in row['action']
+            icon = "✅" if is_approve else "❌"
+            action_text = "Aprobado por" if is_approve else "Rechazado por"
+            date_str = pd.to_datetime(row['timestamp']).strftime('%Y-%m-%d %H:%M')
+            role_map = {"admin": "Administrador", "nomina": "Nómina/RRHH", "jefe_area": "Jefe de Área", "coordinador": "Coordinador"}
+            rol_name = role_map.get(row['role'], "Autorizador")
+            st.info(f"{icon} **{action_text}:** {row['full_name']} ({rol_name}) - *{date_str}*")
         
     # --- GESTIÓN DOCUMENTAL: Soporte Médico o Legal Adjunto ---
     if 'attachment_path' in req and pd.notna(req['attachment_path']) and req['attachment_path']:
@@ -430,17 +442,16 @@ def page_employee_portal():
                                 
                                 target_jefe_area = area
                                 if subarea == 'Admisiones': target_jefe_area = 'Administrativo'
-                                elif subarea == 'Auditor Médico': target_jefe_area = 'Auditoria Médica'
-                                elif subarea == 'Control Interno': target_jefe_area = 'Control Interno'
                                 
-                                # Enrutamiento de Enfermería a Control Interno
-                                is_nursing = (subarea == 'Enfermería')
-                                if not is_nursing and u_role == 'coordinador' and managed_dept:
+                                # Enrutamiento especial a Control Interno
+                                special_areas = ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']
+                                is_special = (subarea in special_areas)
+                                if not is_special and u_role == 'coordinador' and managed_dept:
                                     c_depts = [d.strip() for d in managed_dept.split(',') if d.strip()]
-                                    if 'Enfermería' in c_depts:
-                                        is_nursing = True
+                                    if any(dept in c_depts for dept in special_areas):
+                                        is_special = True
                                         
-                                if is_nursing:
+                                if is_special:
                                     target_jefe_area = 'Control Interno'
                                 jefe_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(target_jefe_area,))
                                 target_emails = jefe_df['emp_email'].tolist()

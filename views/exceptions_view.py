@@ -156,8 +156,8 @@ def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
     with col1:
         if st.button("Confirmar Rechazo", type="primary", use_container_width=True):
             if reason:
-                db_reject_leave_request(req_id, user_id, reason)
-                log_audit("REJECT_LEAVE_L1", f"Permiso #{req_id} ({reason_type}) de {full_name} rechazado por {user_id}. Motivo: {reason}")
+                db_reject_leave_request(req_id, st.session_state["user"]["username"], reason)
+                log_audit("REJECT_LEAVE_L1", f"Permiso #{req_id} ({reason_type}) de {full_name} rechazado por {st.session_state['user']['full_name']}. Motivo: {reason}")
                 notify_employee_status(user_id, full_name, req_id, reason_type, "RECHAZADA", f"Tu permiso fue rechazado por la jefatura/RRHH. Motivo: {reason}", st.session_state["user"]["full_name"])
                 st.success("Solicitud rechazada y empleado notificado.")
                 st.rerun()
@@ -217,15 +217,13 @@ def page_exceptions():
                     JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_JEFE' AND 
                           (
-                              (ua.emp_area = ? AND ua.emp_subarea != 'Enfermería') OR 
-                              ((ua.emp_subarea = 'Enfermería' OR (ua.role = 'coordinador' AND ua.managed_department LIKE '%Enfermería%')) AND ? = 'Control Interno') OR
-                              (ua.emp_subarea = 'Admisiones' AND ? = 'Administrativo') OR
-                              (ua.emp_subarea = 'Auditor Médico' AND ? = 'Auditoria Médica') OR
-                              (ua.emp_subarea = 'Control Interno' AND ? = 'Control Interno')
+                              (ua.emp_area = ? AND ua.emp_subarea NOT IN ('Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno')) OR 
+                              ((ua.emp_subarea IN ('Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno') OR (ua.role = 'coordinador' AND (ua.managed_department LIKE '%Enfermería%' OR ua.managed_department LIKE '%Rehabilitación%' OR ua.managed_department LIKE '%Tecnólogo Rayos X%' OR ua.managed_department LIKE '%Auditor Médico%' OR ua.managed_department LIKE '%Medico%' OR ua.managed_department LIKE '%Farmacia%' OR ua.managed_department LIKE '%Control Interno%'))) AND ? = 'Control Interno') OR
+                              (ua.emp_subarea = 'Admisiones' AND ? = 'Administrativo')
                           )
                     ORDER BY lr.id ASC
                 """
-                params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
+                params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
                 
             with db_session() as conn:
                 df_pend = pd.read_sql_query(query, conn, params=params)
@@ -403,8 +401,8 @@ def page_exceptions():
 
     st.write("Registra permisos, incapacidades médicas o vacaciones. El sistema **no penalizará** a estos empleados en los reportes de tardanzas para los días seleccionados.")
 
-    with db_session() as conn:
-        emp_df = pd.read_sql_query("SELECT user_id, full_name, department FROM employees ORDER BY full_name", conn)
+    from database_conn.queries import get_cached_employees
+    emp_df = get_cached_employees()
 
     if emp_df.empty:
         st.warning("No hay empleados en el directorio.")
@@ -649,10 +647,8 @@ def page_exceptions():
                                         AND managed_area = (
                                             SELECT CASE 
                                                 WHEN emp_subarea = 'Admisiones' THEN 'Administrativo' 
-                                                WHEN emp_subarea = 'Auditor Médico' THEN 'Auditoria Médica'
-                                                WHEN emp_subarea = 'Control Interno' THEN 'Control Interno'
-                                                WHEN emp_subarea = 'Enfermería' THEN 'Control Interno'
-                                                WHEN role = 'coordinador' AND managed_department LIKE '%Enfermería%' THEN 'Control Interno'
+                                                WHEN emp_subarea IN ('Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno') THEN 'Control Interno'
+                                                WHEN role = 'coordinador' AND (managed_department LIKE '%Enfermería%' OR managed_department LIKE '%Rehabilitación%' OR managed_department LIKE '%Tecnólogo Rayos X%' OR managed_department LIKE '%Auditor Médico%' OR managed_department LIKE '%Medico%' OR managed_department LIKE '%Farmacia%' OR managed_department LIKE '%Control Interno%') THEN 'Control Interno'
                                                 ELSE emp_area 
                                             END
                                             FROM users_app WHERE username = ?
@@ -771,12 +767,11 @@ def page_exceptions():
                         
                         target_jefe_area = area
                         if subarea == 'Admisiones': target_jefe_area = 'Administrativo'
-                        elif subarea == 'Auditor Médico': target_jefe_area = 'Auditoria Médica'
-                        elif subarea == 'Control Interno': target_jefe_area = 'Control Interno'
-                        elif subarea == 'Enfermería': target_jefe_area = 'Control Interno'
+                        elif subarea in ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']: 
+                            target_jefe_area = 'Control Interno'
                         elif role == 'coordinador' and managed_dept:
                             c_depts = [d.strip() for d in managed_dept.split(',') if d.strip()]
-                            if 'Enfermería' in c_depts:
+                            if any(dept in c_depts for dept in ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']):
                                 target_jefe_area = 'Control Interno'
                                 
                         matching_jefes = []

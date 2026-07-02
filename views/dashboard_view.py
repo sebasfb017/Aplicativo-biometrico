@@ -63,7 +63,8 @@ def page_dashboard():
         if summary_df.empty:
             st.success("¡Excelente! No hay tardanzas acumuladas este mes.")
         else:
-            nombres = pd.read_sql_query("SELECT user_id, full_name, department FROM employees", conn)
+            from database_conn.queries import get_cached_employees
+            nombres = get_cached_employees()
             
             merged = pd.merge(summary_df, nombres, on="user_id", how="left")
             
