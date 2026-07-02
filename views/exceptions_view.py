@@ -191,6 +191,7 @@ def page_exceptions():
                 
                 query = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                           lr.start_time, lr.end_time, lr.total_time,
                            lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
@@ -207,6 +208,7 @@ def page_exceptions():
             else:
                 query = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                           lr.start_time, lr.end_time, lr.total_time,
                            lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
@@ -238,6 +240,8 @@ def page_exceptions():
                         with cols[0]:
                             st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}*")
                             st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
+                            if pd.notna(r.get('start_time')) and r.get('start_time'):
+                                st.write(f"**Horario:** {r['start_time']} a {r['end_time']} | **Tiempo Total:** {r['total_time']}")
                             if 'coord_name' in r and pd.notna(r['coord_name']):
                                 st.info(f"✅ **Visto Bueno Previo:** Coordinador {r['coord_name']}")
                             if 'rrhh_name' in r and pd.notna(r['rrhh_name']):
@@ -562,6 +566,7 @@ def page_exceptions():
         with db_session() as conn:
             df_pend = pd.read_sql_query("""
                 SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                       lr.start_time, lr.end_time, lr.total_time,
                        lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path,
                        (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
                        (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
@@ -582,6 +587,8 @@ def page_exceptions():
                         badge = "🟣 RRHH FINAL"
                         st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}* | {badge}")
                         st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
+                        if pd.notna(r.get('start_time')) and r.get('start_time'):
+                            st.write(f"**Horario:** {r['start_time']} a {r['end_time']} | **Tiempo Total:** {r['total_time']}")
                         
                         if ('coord_name' in r and pd.notna(r['coord_name'])) or ('jefe_name' in r and pd.notna(r['jefe_name'])):
                             with st.expander("✅ Ver Historial de Aprobaciones Previas", expanded=True):
