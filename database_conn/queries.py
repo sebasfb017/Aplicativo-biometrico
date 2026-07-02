@@ -214,6 +214,12 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             return
         req_name, req_area, req_subarea, req_role, req_managed = req_row
         
+        # Get request details for notifications
+        cur.execute("SELECT reason_type, reason_description FROM leave_requests WHERE id = ?", (req_id,))
+        req_info = cur.fetchone()
+        req_type = req_info[0] if req_info else "Permiso"
+        req_desc = req_info[1] if (req_info and req_info[1]) else "Sin justificación."
+        
         # 1. Notify the requester of the status change
         if status == 'PENDING_COORD':
             msg = f"Tu solicitud #{req_id} ha sido radicada y está pendiente del visto bueno de tu Coordinador."
@@ -257,7 +263,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                 depts = [d.strip() for d in m_dept.split(',') if d.strip()]
                 if req_subarea in depts:
                     cur.execute("INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
-                                (c[0], "Permiso por Autorizar", f"Nueva solicitud #{req_id} de {req_name} ({req_subarea}) esperando tu aprobación.", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                                (c[0], "Permiso por Autorizar", f"Nueva solicitud #{req_id} ({req_type}) de {req_name} ({req_subarea}) esperando tu aprobación.<br><b>Justificación:</b> {req_desc}", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         
         elif status == 'PENDING_RRHH':
             # Notify all RRHH / admin users
@@ -265,7 +271,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             admins = cur.fetchall()
             for a in admins:
                 cur.execute("INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
-                            (a[0], "Validación RRHH", f"Solicitud #{req_id} de {req_name} ({req_subarea or req_area}) requiere revisión de RRHH.", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                            (a[0], "Validación RRHH", f"Solicitud #{req_id} ({req_type}) de {req_name} ({req_subarea or req_area}) requiere revisión de RRHH.<br><b>Justificación:</b> {req_desc}", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                             
         elif status == 'PENDING_JEFE':
             # Resolve Jefe's area
@@ -284,7 +290,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             jefes = cur.fetchall()
             for j in jefes:
                 cur.execute("INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
-                            (j[0], "Firma de Jefe Requerida", f"Solicitud #{req_id} de {req_name} pendiente de tu firma final.", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                            (j[0], "Firma de Jefe Requerida", f"Solicitud #{req_id} ({req_type}) de {req_name} pendiente de tu firma final.<br><b>Justificación:</b> {req_desc}", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
 
 def db_approve_leave_request_coord(req_id, coord_username):
     with db_session() as conn:
@@ -303,8 +309,10 @@ def db_approve_leave_request_coord(req_id, coord_username):
             WHERE id = ? AND status = 'PENDING_COORD'
         """, (coord_username, datetime.now().isoformat(timespec="seconds"), req_id))
         
-        if cur.rowcount > 0 and user_id:
-            db_notify_next_approvers(req_id, user_id, 'PENDING_RRHH', coord_name)
+        notify = (cur.rowcount > 0 and user_id)
+
+    if notify:
+        db_notify_next_approvers(req_id, user_id, 'PENDING_RRHH', coord_name)
 
 def db_approve_leave_request_jefe(req_id, jefe_username):
     with db_session() as conn:
@@ -323,8 +331,10 @@ def db_approve_leave_request_jefe(req_id, jefe_username):
             WHERE id = ? AND status = 'PENDING_JEFE'
         """, (jefe_username, datetime.now().isoformat(timespec="seconds"), req_id))
         
-        if cur.rowcount > 0 and user_id:
-            db_notify_next_approvers(req_id, user_id, 'APPROVED', jefe_name)
+        notify = (cur.rowcount > 0 and user_id)
+
+    if notify:
+        db_notify_next_approvers(req_id, user_id, 'APPROVED', jefe_name)
 
 def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
     with db_session() as conn:
@@ -345,8 +355,10 @@ def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
             WHERE id = ?
         """, (status, approver_user, now, req_id))
         
-        if cur.rowcount > 0 and user_id:
-            db_notify_next_approvers(req_id, user_id, status, approver_name)
+        notify = (cur.rowcount > 0 and user_id)
+
+    if notify:
+        db_notify_next_approvers(req_id, user_id, status, approver_name)
 
 def db_reject_leave_request(req_id, rejected_by, rejection_reason):
     with db_session() as conn:
@@ -365,14 +377,18 @@ def db_reject_leave_request(req_id, rejected_by, rejection_reason):
             WHERE id = ?
         """, (rejection_reason, req_id,))
         
+        update_success = (cur.rowcount > 0)
+        
         # Registrar el rechazo en la bitácora de auditoría
         cur.execute("""
             INSERT INTO audit_logs (user_id, action, details, timestamp)
             VALUES (?, ?, ?, ?)
         """, (rejected_by, "REJECT_LEAVE", f"Rechazó la solicitud #{req_id}. Motivo: {rejection_reason}", datetime.now().isoformat(timespec="seconds")))
         
-        if cur.rowcount > 0 and user_id:
-            db_notify_next_approvers(req_id, user_id, 'REJECTED', rejecter_name)
+        notify = (update_success and user_id)
+
+    if notify:
+        db_notify_next_approvers(req_id, user_id, 'REJECTED', rejecter_name)
 
 def db_cancel_leave_request(req_id, user_id, reason):
     """
@@ -400,7 +416,6 @@ def db_cancel_leave_request(req_id, user_id, reason):
                 VALUES (?, ?, ?, ?)
             """, (user_id, "CANCEL_LEAVE", f"El empleado canceló la solicitud #{req_id}. Motivo: {reason}", datetime.now().isoformat(timespec="seconds")))
             
-            db_notify_next_approvers(req_id, user_id, 'CANCELLED')
             
             # Notificar al revisor/jefe actual de la cancelación
             cur.execute("SELECT full_name FROM users_app WHERE username = ?", (user_id,))
@@ -442,8 +457,14 @@ def db_cancel_leave_request(req_id, user_id, reason):
                                 (j[0], "Solicitud Cancelada", f"El empleado {emp_name} canceló su solicitud #{req_id}.", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             
             success = True
+            notify_cancel = True
         else:
             success = False
+            notify_cancel = False
+            
+    if notify_cancel:
+        db_notify_next_approvers(req_id, user_id, 'CANCELLED')
+        
     return success
 
 def db_hide_leave_request(req_id, user_id):
