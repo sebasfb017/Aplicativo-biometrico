@@ -79,6 +79,7 @@ def download_attendance_from_device(device: dict):
 
     # Implementar 3 intentos con estrategia adaptativa
     for attempt in range(3):
+        conn = None
         # ommit_ping=True es fundamental en Docker con concurrencia para evitar Errno 110 (Connection timed out)
         zk_kwargs = {"ip": ip, "port": port, "timeout": timeout, "password": password, "ommit_ping": True}
         
@@ -159,6 +160,7 @@ def sync_device_time(device: dict):
 
     last_error = None
     for attempt in range(3):
+        conn = None
         # Clonamos kwargs para este intento
         zk_kwargs = {"ip": ip, "port": port, "timeout": timeout, "password": password, "ommit_ping": True}
         
@@ -223,6 +225,7 @@ def get_device_users_status(device: dict):
     
     last_error = None
     for attempt in range(3):
+        conn = None
         zk_kwargs = {"ip": ip, "port": port, "timeout": timeout, "password": password, "ommit_ping": True}
         if attempt == 1: zk_kwargs["force_udp"] = True
         elif attempt == 2: zk_kwargs["password"] = 0; zk_kwargs.pop("force_udp", None)
@@ -270,6 +273,7 @@ def upload_user_to_device(device: dict, user_id: str, name: str, privilege: int 
     
     last_error = None
     for attempt in range(3):
+        conn = None
         zk_kwargs = {"ip": ip, "port": port, "timeout": timeout, "password": password, "ommit_ping": True}
         if attempt == 1: zk_kwargs["force_udp"] = True
         elif attempt == 2: zk_kwargs["password"] = 0; zk_kwargs.pop("force_udp", None)
@@ -313,6 +317,7 @@ def delete_user_from_device(device: dict, uid: int):
     
     last_error = None
     for attempt in range(3):
+        conn = None
         zk_kwargs = {"ip": ip, "port": port, "timeout": timeout, "password": password, "ommit_ping": True}
         if attempt == 1: zk_kwargs["force_udp"] = True
         elif attempt == 2: zk_kwargs["password"] = 0; zk_kwargs.pop("force_udp", None)
