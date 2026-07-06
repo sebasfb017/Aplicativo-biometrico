@@ -183,7 +183,11 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
                 coordinators = cur.fetchall()
                 for c_row in coordinators:
                     c_depts = [d.strip() for d in c_row[0].split(',') if d.strip()]
-                    if subarea in c_depts:
+                    target_subarea = subarea
+                    if target_subarea == 'Servicios Generales': target_subarea = 'Calidad'
+                    elif target_subarea == 'Orientador': target_subarea = 'Seguridad'
+                    
+                    if target_subarea in c_depts or subarea in c_depts:
                         has_coordinator = True
                         break
         if not has_coordinator:
@@ -263,7 +267,11 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                 cur.execute("SELECT managed_department FROM users_app WHERE username = ?", (c[0],))
                 m_dept = cur.fetchone()[0] or ""
                 depts = [d.strip() for d in m_dept.split(',') if d.strip()]
-                if req_subarea in depts:
+                target_subarea = req_subarea
+                if target_subarea == 'Servicios Generales': target_subarea = 'Calidad'
+                elif target_subarea == 'Orientador': target_subarea = 'Seguridad'
+                
+                if target_subarea in depts or req_subarea in depts:
                     cur.execute("INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
                                 (c[0], "Permiso por Autorizar", f"Nueva solicitud #{req_id} ({req_type}) de {req_name} ({req_subarea}) esperando tu aprobación.<br><b>Justificación:</b> {req_desc}", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         
@@ -278,15 +286,24 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
         elif status == 'PENDING_JEFE':
             # Resolve Jefe's area
             target_jefe_area = req_area
-            if req_subarea == 'Admisiones': target_jefe_area = 'Administrativo'
-            elif req_subarea in ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']: 
+            if req_subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
+                target_jefe_area = 'Administrativo'
+            elif req_subarea in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']: 
                 target_jefe_area = 'Control Interno'
             elif req_role == 'coordinador' and req_managed:
                 c_depts = [d.strip() for d in req_managed.split(',') if d.strip()]
-                if any(dept in c_depts for dept in ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']):
+                if any(dept in c_depts for dept in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']):
+                    target_jefe_area = 'Administrativo'
+                elif any(dept in c_depts for dept in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']):
                     target_jefe_area = 'Control Interno'
-            # Find Jefes of this area
-            cur.execute("SELECT username FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1", (target_jefe_area,))
+                    
+            areas_to_notify = [target_jefe_area]
+            if 'Control Interno' not in areas_to_notify:
+                areas_to_notify.append('Control Interno')
+                
+            # Find Jefes of these areas
+            placeholders = ','.join(['?'] * len(areas_to_notify))
+            cur.execute(f"SELECT username FROM users_app WHERE role = 'jefe_area' AND managed_area IN ({placeholders}) AND active = 1", tuple(areas_to_notify))
             jefes = cur.fetchall()
             for j in jefes:
                 cur.execute("INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
@@ -445,8 +462,9 @@ def db_cancel_leave_request(req_id, user_id, reason):
                                 (a[0], "Solicitud Cancelada", f"El empleado {emp_name} canceló su solicitud #{req_id}.", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             elif prev_status == 'PENDING_JEFE':
                 target_jefe_area = emp_area
-                if emp_subarea == 'Admisiones': target_jefe_area = 'Administrativo'
-                elif emp_subarea in ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']: 
+                if emp_subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
+                    target_jefe_area = 'Administrativo'
+                elif emp_subarea in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']: 
                     target_jefe_area = 'Control Interno'
                 
                 cur.execute("SELECT username FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1", (target_jefe_area,))
