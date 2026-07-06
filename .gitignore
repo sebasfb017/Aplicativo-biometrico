@@ -10,3 +10,5 @@ ruff_errors.txt
 .pytest_cache/
 test_zk.py
 
+scratch/
+*.db
