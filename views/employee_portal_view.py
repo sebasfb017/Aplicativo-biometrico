@@ -250,7 +250,7 @@ def cancel_leave_request_dialog(req_id: int, user_id: str, full_name: str, reaso
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Confirmar Cancelación", type="primary", use_container_width=True):
+        if st.button("Confirmar Cancelación", type="primary", use_container_width=True, key=f"confirm_cancel_{req_id}"):
             if reason:
                 success = db_cancel_leave_request(req_id, user_id, reason)
                 if success:
@@ -261,8 +261,7 @@ def cancel_leave_request_dialog(req_id: int, user_id: str, full_name: str, reaso
             else:
                 st.error("El motivo de cancelación no puede estar vacío.")
     with col2:
-        if st.button("Volver", use_container_width=True):
-            st.session_state[f"show_cancellation_dialog_{req_id}"] = False
+        if st.button("Volver", use_container_width=True, key=f"volver_cancel_{req_id}"):
             st.rerun()
 
 def page_employee_portal():
@@ -309,37 +308,61 @@ def page_employee_portal():
         st.subheader("Solicitud de Permisos Laborales Y/O Personales")
         st.info("Llena el siguiente formulario digital equivalente al formato F-TH-012 físico.")
         
+        if st.session_state.get("submit_success"):
+            st.success("✅ Solicitud enviada exitosamente. El formulario ha sido limpiado.")
+            st.session_state.submit_success = False
+        
+        if "form_key" not in st.session_state:
+            st.session_state.form_key = 0
+        fk = st.session_state.form_key
+
         with st.container(border=True):
             c1, c2 = st.columns(2)
             with c1:
-                leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona uno o varios días de ausencia.", format="YYYY-MM-DD")
+                leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona uno o varios días de ausencia.", format="YYYY-MM-DD", key=f"leave_dates_{fk}")
                 
-                categoria = st.selectbox("Categoría de Novedad", ["Citas", "Permisos", "Licencias", "Vacaciones", "Incapacidad"])
+                categoria = st.selectbox("Categoría de Novedad", ["Citas", "Permisos", "Licencias", "Vacaciones", "Incapacidad"], key=f"categoria_{fk}")
                 
                 if categoria == "Citas":
-                    reason_type = st.selectbox("Detalle", ["Cita Médica", "Cita Médica con desplazamiento a otra ciudad"])
+                    reason_type = st.selectbox("Detalle", ["Cita Médica", "Cita Médica con desplazamiento a otra ciudad"], key=f"rt_citas_{fk}")
                 elif categoria == "Permisos":
-                    reason_type = st.selectbox("Detalle", ["Permiso Personal", "Permiso Laboral"])
+                    reason_type = st.selectbox("Detalle", ["Permiso Personal", "Permiso Laboral"], key=f"rt_permisos_{fk}")
                 elif categoria == "Licencias":
-                    reason_type = st.selectbox("Detalle", ["Calamidad Doméstica", "Licencia de Luto", "Licencia de Paternidad", "Licencia por Votación", "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"])
+                    reason_type = st.selectbox("Detalle", ["Calamidad Doméstica", "Licencia de Luto", "Licencia de Paternidad", "Licencia por Votación", "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"], key=f"rt_licencias_{fk}")
                 elif categoria == "Incapacidad":
                     reason_type = "Incapacidad"
-                    st.text_input("Detalle", value="Incapacidad", disabled=True)
+                    st.text_input("Detalle", value="Incapacidad", disabled=True, key=f"rt_incap_{fk}")
                 else: # Vacaciones
                     reason_type = "Vacaciones"
-                    st.text_input("Detalle", value="Vacaciones", disabled=True)
+                    st.text_input("Detalle", value="Vacaciones", disabled=True, key=f"rt_vac_{fk}")
                 
-                is_paid = st.radio("¿Permiso Remunerado?", ["No", "Sí"], horizontal=True)
+                is_paid = st.radio("¿Permiso Remunerado?", ["No", "Sí"], horizontal=True, key=f"is_paid_{fk}")
             with c2:
-                time_s = st.time_input("Hora de Salida (Opcional)", value=None)
-                time_e = st.time_input("Hora de Entrada (Opcional)", value=None)
+                tipo_tiempo = st.radio("¿Qué tipo de permiso es?", ["Por Días", "Rango de Horas", "Llegada Tarde", "Salida Temprano"], horizontal=True, key=f"tipo_tiempo_{fk}")
+                
+                time_s = None
+                time_e = None
+                
+                if tipo_tiempo == "Rango de Horas":
+                    time_s = st.time_input("Hora de Salida a la diligencia", value=None, key=f"ts_rango_{fk}")
+                    time_e = st.time_input("Hora de Regreso al trabajo", value=None, key=f"te_rango_{fk}")
+                elif tipo_tiempo == "Llegada Tarde":
+                    time_s = st.time_input("¿A qué hora iniciaba tu turno hoy?", value=None, key=f"ts_tarde_{fk}")
+                    time_e = st.time_input("Hora en la que llegaste al trabajo", value=None, key=f"te_tarde_{fk}")
+                elif tipo_tiempo == "Salida Temprano":
+                    time_s = st.time_input("Hora a la que te fuiste del trabajo", value=None, key=f"ts_temprano_{fk}")
+                    time_e = st.time_input("¿A qué hora terminaba tu turno hoy?", value=None, key=f"te_temprano_{fk}")
 
                 calculated_time = ""
-                if leave_dates:
-                    if isinstance(leave_dates, (tuple, list)) and len(leave_dates) > 1:
-                        dias = (leave_dates[1] - leave_dates[0]).days + 1
-                        calculated_time = f"{dias} Día(s)"
-                    elif time_s and time_e:
+                if tipo_tiempo == "Por Días":
+                    if leave_dates:
+                        if isinstance(leave_dates, (tuple, list)) and len(leave_dates) > 1:
+                            dias = (leave_dates[1] - leave_dates[0]).days + 1
+                            calculated_time = f"{dias} Día(s)"
+                        else:
+                            calculated_time = "1 Día"
+                else: # Rango de Horas, Llegada Tarde, Salida Temprano
+                    if time_s and time_e:
                         ts_dt = datetime.combine(date.today(), time_s)
                         te_dt = datetime.combine(date.today(), time_e)
                         if te_dt > ts_dt:
@@ -351,19 +374,19 @@ def page_employee_portal():
                             if m > 0: parts.append(f"{m} Minuto{'s' if m > 1 else ''}")
                             calculated_time = " y ".join(parts) if parts else "0 Minutos"
                         else:
-                            calculated_time = "Error: Horas inválidas"
+                            calculated_time = "Error: La hora fin debe ser mayor a la inicial"
                     else:
-                        calculated_time = "1 Día"
+                        calculated_time = "Ingresa ambas horas para calcular fracción"
 
                 st.text_input("Tiempo Total Calculado (Automático)", value=calculated_time, disabled=True)
                 total_time = calculated_time
 
-            r_desc = st.text_area("Justificación / Detalles del permiso")
-            makeup = st.text_input("¿Cómo se repone el tiempo? (Dejar en blanco si es remunerado/laboral)")
+            r_desc = st.text_area("Justificación / Detalles del permiso", key=f"r_desc_{fk}")
+            makeup = st.text_input("¿Cómo se repone el tiempo? (Dejar en blanco si es remunerado/laboral)", key=f"makeup_{fk}")
             
             st.markdown("---")
             st.write("📄 **Documento de Soporte (Opcional)**")
-            uploaded_file = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal. Tamaño máximo: 20MB", type=["pdf", "png", "jpg", "jpeg"])
+            uploaded_file = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal. Tamaño máximo: 20MB", type=["pdf", "png", "jpg", "jpeg"], key=f"upload_{fk}")
             
             submitted = st.button("Firmar y Enviar a RRHH", type="primary", use_container_width=True)
             
@@ -385,7 +408,9 @@ def page_employee_portal():
             elif not leave_dates:
                 st.error("Debes seleccionar obligatoriamente al menos una fecha de inicio.")
             elif "Error" in calculated_time:
-                st.error("Las horas ingresadas son inválidas. La hora de entrada debe ser mayor a la hora de salida.")
+                st.error("Las horas ingresadas son inválidas. La hora fin debe ser mayor a la hora de inicio.")
+            elif "Ingresa ambas horas" in calculated_time:
+                st.error("Para calcular una fracción de tiempo, debes ingresar tanto la Hora Inicio como la Hora Fin. (Ej. Si llegas tarde, Hora Inicio es tu horario normal y Hora Fin es tu llegada).")
             else:
                 d_start = leave_dates[0] if isinstance(leave_dates, (list, tuple)) else leave_dates
                 d_end = leave_dates[1] if isinstance(leave_dates, (list, tuple)) and len(leave_dates) > 1 else d_start
@@ -441,10 +466,11 @@ def page_employee_portal():
                                 managed_dept = user_app_df.iloc[0]['managed_department'] if not user_app_df.empty else ""
                                 
                                 target_jefe_area = area
-                                if subarea == 'Admisiones': target_jefe_area = 'Administrativo'
+                                if subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
+                                    target_jefe_area = 'Administrativo'
                                 
                                 # Enrutamiento especial a Control Interno
-                                special_areas = ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']
+                                special_areas = ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']
                                 is_special = (subarea in special_areas)
                                 if not is_special and u_role == 'coordinador' and managed_dept:
                                     c_depts = [d.strip() for d in managed_dept.split(',') if d.strip()]
@@ -453,7 +479,11 @@ def page_employee_portal():
                                         
                                 if is_special:
                                     target_jefe_area = 'Control Interno'
-                                jefe_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn, params=(target_jefe_area,))
+                                jefe_df = pd.read_sql_query("""
+                                    SELECT emp_email FROM users_app 
+                                    WHERE role = 'jefe_area' AND active = 1 AND emp_email IS NOT NULL AND emp_email != '' 
+                                    AND (managed_area = ? OR managed_area = 'Control Interno')
+                                """, conn, params=(target_jefe_area,))
                                 target_emails = jefe_df['emp_email'].tolist()
                             elif target_status == 'PENDING_RRHH':
                                 admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
@@ -481,7 +511,9 @@ def page_employee_portal():
                 except Exception as e:
                     print(f"Error enviando correo de radicación al empleado: {e}")
                 
-                st.success("✅ Solicitud enviada exitosamente.")
+                st.session_state.submit_success = True
+                st.session_state.form_key += 1
+                st.rerun()
                 
     with t2:
         with db_conn() as conn:
@@ -549,10 +581,6 @@ def page_employee_portal():
                             # Botón de Cancelar solo si el estado es PENDIENTE
                             if r['Estado'] in ['PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH']:
                                 if st.button("❌ Cancelar Solicitud", key=f"btn_cancel_{r['Radicado']}", use_container_width=True):
-                                    st.session_state[f"show_cancellation_dialog_{r['Radicado']}"] = True
-                                    st.rerun()
-
-                                if st.session_state.get(f"show_cancellation_dialog_{r['Radicado']}", False):
                                     cancel_leave_request_dialog(r['Radicado'], user['username'], r['full_name'], r['Motivo'])
                             
                             # Botón de Ocultar/Eliminar solo si el estado no es PENDIENTE (incluyendo terminales y desconocidos)
