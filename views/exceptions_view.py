@@ -10,6 +10,20 @@ from services.notifications import log_audit, notify_employee_status
 from utils.auth import require_role
 from views.employee_portal_view import show_leave_request_details
 
+def get_reason_icon(reason: str) -> str:
+    """Devuelve un emoji representativo según el motivo del permiso."""
+    if not reason: return "📝"
+    r_lower = reason.lower()
+    if 'vacaciones' in r_lower: return "🏖️"
+    if 'cita' in r_lower or 'médic' in r_lower or 'medic' in r_lower: return "🏥"
+    if 'calamidad' in r_lower: return "🌧️"
+    if 'votación' in r_lower or 'votacion' in r_lower: return "🗳️"
+    if 'personal' in r_lower: return "👤"
+    if 'laboral' in r_lower: return "💼"
+    if 'remunerada' in r_lower: return "📄"
+    return "📝"
+
+
 # --- Componente de Detección de Conflictos para Jefes ---
 def check_schedule_conflicts(request: pd.Series, approver_role: str, managed_entity: str):
     """
@@ -168,6 +182,41 @@ def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
             st.session_state[f"show_rejection_dialog_{req_id}"] = False
             st.rerun()
 
+def handle_approve_callback(r_dict, user):
+    if user["role"] == "coordinador":
+        db_approve_leave_request_coord(r_dict['id'], user['username'])
+        next_status = 'PENDING_RRHH'
+        
+        with db_session() as conn:
+            admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
+            if not admin_df.empty:
+                target_emails = admin_df['emp_email'].tolist()
+                from services.email_service import send_novedad_alert
+                send_novedad_alert(target_emails, r_dict['full_name'], r_dict['reason_type'], r_dict['reason_description'], "N/A", r_dict['leave_date_start'], user['full_name'])
+        
+        log_audit("APPROVE_LEAVE_L1", f"Permiso #{r_dict['id']} ({r_dict['reason_type']}) de {r_dict['full_name']} aprobado por {user['role']}. Pasa a {next_status}")
+        notify_employee_status(r_dict['user_id'], r_dict['full_name'], r_dict['id'], r_dict['reason_type'], "PRE-APROBADA", f"Tu solicitud avanzó en el flujo de firmas hacia el siguiente aprobador ({next_status}).", user['full_name'])
+        
+    else:
+        db_approve_leave_request_jefe(r_dict['id'], user['username'])
+        next_status = 'APPROVED'
+        
+        with db_session() as conn:
+            cur = conn.cursor()
+            d_start = date.fromisoformat(r_dict['leave_date_start'])
+            d_end = date.fromisoformat(r_dict['leave_date_end'])
+            delta = d_end - d_start
+            for i in range(delta.days + 1):
+                day_to_log = (d_start + timedelta(days=i)).isoformat()
+                cur.execute("""
+                    INSERT INTO exceptions(user_id, date, type, notes, created_at)
+                    VALUES(?,?,?,?,?)
+                    ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
+                """, (r_dict['user_id'], day_to_log, r_dict['reason_type'], f"Aprobado de Portal: {r_dict['reason_description']}", datetime.now().isoformat(timespec="seconds")))
+        
+        log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r_dict['id']} ({r_dict['reason_type']}) de {r_dict['full_name']} APROBADO FINAL por Jefe de Área.")
+        notify_employee_status(r_dict['user_id'], r_dict['full_name'], r_dict['id'], r_dict['reason_type'], "APROBACIÓN FINAL", "Tu solicitud fue completamente aprobada por tu Jefatura y registrada oficialmente en el sistema.", user['full_name'])
+
 
 def page_exceptions():
     require_role("admin", "nomina", "jefe_area", "coordinador")
@@ -205,11 +254,27 @@ def page_exceptions():
                     ORDER BY lr.id ASC
                 """
                 params = tuple(managed_depts)
+            elif user.get('managed_area', '') == 'Control Interno':
+                query = """
+                    SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                           lr.start_time, lr.end_time, lr.total_time,
+                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path,
+                           ua.emp_area, ua.emp_subarea,
+                           (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
+                           (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
+                    FROM leave_requests lr
+                    JOIN employees e ON lr.user_id = e.user_id
+                    JOIN users_app ua ON lr.user_id = ua.username
+                    WHERE lr.status = 'PENDING_JEFE'
+                    ORDER BY lr.id ASC
+                """
+                params = ()
             else:
                 query = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.start_time, lr.end_time, lr.total_time,
                            lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path,
+                           ua.emp_area, ua.emp_subarea,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
                     FROM leave_requests lr
@@ -217,13 +282,12 @@ def page_exceptions():
                     JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_JEFE' AND 
                           (
-                              (ua.emp_area = ? AND ua.emp_subarea NOT IN ('Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno')) OR 
-                              ((ua.emp_subarea IN ('Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno') OR (ua.role = 'coordinador' AND (ua.managed_department LIKE '%Enfermería%' OR ua.managed_department LIKE '%Rehabilitación%' OR ua.managed_department LIKE '%Tecnólogo Rayos X%' OR ua.managed_department LIKE '%Auditor Médico%' OR ua.managed_department LIKE '%Medico%' OR ua.managed_department LIKE '%Farmacia%' OR ua.managed_department LIKE '%Control Interno%'))) AND ? = 'Control Interno') OR
-                              (ua.emp_subarea = 'Admisiones' AND ? = 'Administrativo')
+                              (ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía')) OR 
+                              (ua.emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia') AND ? = 'Administrativo')
                           )
                     ORDER BY lr.id ASC
                 """
-                params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
+                params = (user.get('managed_area', ''), user.get('managed_area', ''))
                 
             with db_session() as conn:
                 df_pend = pd.read_sql_query(query, conn, params=params)
@@ -231,12 +295,33 @@ def page_exceptions():
             if df_pend.empty:
                 st.success("No hay solicitudes pendientes de revisión para tu área.")
             else:
-                st.write(f"Tienes **{len(df_pend)}** solicitud(es) por revisar.")
+                if user.get('managed_area', '') == 'Control Interno':
+                    st.write(f"Tienes **{len(df_pend)}** solicitud(es) por revisar en total.")
+                    
+                    areas = sorted(df_pend['emp_area'].dropna().unique().tolist())
+                    subareas = sorted(df_pend['emp_subarea'].dropna().unique().tolist())
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        filter_area = st.selectbox("Filtrar por Área", ["Todas"] + areas)
+                    with c2:
+                        filter_subarea = st.selectbox("Filtrar por Sub-área", ["Todas"] + subareas)
+                        
+                    if filter_area != "Todas":
+                        df_pend = df_pend[df_pend['emp_area'] == filter_area]
+                    if filter_subarea != "Todas":
+                        df_pend = df_pend[df_pend['emp_subarea'] == filter_subarea]
+                        
+                    st.write(f"Mostrando **{len(df_pend)}** solicitud(es) filtrada(s).")
+                else:
+                    st.write(f"Tienes **{len(df_pend)}** solicitud(es) por revisar.")
+                    
                 for _, r in df_pend.iterrows():
                     with st.container(border=True):
                         cols = st.columns([3, 1])
                         with cols[0]:
-                            st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}*")
+                            icon = get_reason_icon(r['reason_type'])
+                            st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{icon} {r['reason_type']}*")
                             st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
                             if pd.notna(r.get('start_time')) and r.get('start_time'):
                                 st.write(f"**Horario:** {r['start_time']} a {r['end_time']} | **Tiempo Total:** {r['total_time']}")
@@ -274,44 +359,7 @@ def page_exceptions():
                                     with open(file_path, "rb") as f:
                                         st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_coord_{r['id']}", use_container_width=True)
                         with cols[1]:
-                            if st.button("👍 Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True):
-                                if user["role"] == "coordinador":
-                                    db_approve_leave_request_coord(r['id'], user['username'])
-                                    next_status = 'PENDING_RRHH'
-                                    
-                                    # Notificar a RRHH
-                                    with db_session() as conn:
-                                        admin_df = pd.read_sql_query("SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''", conn)
-                                        if not admin_df.empty:
-                                            target_emails = admin_df['emp_email'].tolist()
-                                            from services.email_service import send_novedad_alert
-                                            send_novedad_alert(target_emails, r['full_name'], r['reason_type'], r['reason_description'], "N/A", r['leave_date_start'], user['full_name'])
-                                    
-                                    log_audit("APPROVE_LEAVE_L1", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} aprobado por {user['role']}. Pasa a {next_status}")
-                                    notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "PRE-APROBADA", f"Tu solicitud avanzó en el flujo de firmas hacia el siguiente aprobador ({next_status}).", user['full_name'])
-                                    st.rerun()
-                                    
-                                else:
-                                    db_approve_leave_request_jefe(r['id'], user['username'])
-                                    next_status = 'APPROVED'
-                                    
-                                    with db_session() as conn:
-                                        cur = conn.cursor()
-                                        # Inyectar en excepciones (eximir faltas)
-                                        d_start = date.fromisoformat(r['leave_date_start'])
-                                        d_end = date.fromisoformat(r['leave_date_end'])
-                                        delta = d_end - d_start
-                                        for i in range(delta.days + 1):
-                                            day_to_log = (d_start + timedelta(days=i)).isoformat()
-                                            cur.execute("""
-                                                INSERT INTO exceptions(user_id, date, type, notes, created_at)
-                                                VALUES(?,?,?,?,?)
-                                                ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
-                                            """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal: {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
-                                    
-                                    log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO FINAL por Jefe de Área.")
-                                    notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "APROBACIÓN FINAL", "Tu solicitud fue completamente aprobada por tu Jefatura y registrada oficialmente en el sistema.", user['full_name'])
-                                    st.rerun()
+                            st.button("👍 Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True, on_click=handle_approve_callback, args=(r.to_dict(), user))
                                 
                             if st.button("❌ Rechazar", key=f"btn_rej_{r['id']}", use_container_width=True):
                                 st.session_state[f"show_rejection_dialog_{r['id']}"] = True
@@ -583,7 +631,8 @@ def page_exceptions():
                     cols = st.columns([3, 1])
                     with cols[0]:
                         badge = "🟣 RRHH FINAL"
-                        st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{r['reason_type']}* | {badge}")
+                        icon = get_reason_icon(r['reason_type'])
+                        st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{icon} {r['reason_type']}* | {badge}")
                         st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
                         if pd.notna(r.get('start_time')) and r.get('start_time'):
                             st.write(f"**Horario:** {r['start_time']} a {r['end_time']} | **Tiempo Total:** {r['total_time']}")
@@ -642,17 +691,19 @@ def page_exceptions():
                                 # Notificar al jefe de área
                                 with db_session() as conn:
                                     jefe_df = pd.read_sql_query("""
-                                        SELECT emp_email FROM users_app 
-                                        WHERE role = 'jefe_area' AND active = 1 AND emp_email IS NOT NULL AND emp_email != '' 
-                                        AND managed_area = (
+                                        WITH TargetArea AS (
                                             SELECT CASE 
-                                                WHEN emp_subarea = 'Admisiones' THEN 'Administrativo' 
-                                                WHEN emp_subarea IN ('Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno') THEN 'Control Interno'
-                                                WHEN role = 'coordinador' AND (managed_department LIKE '%Enfermería%' OR managed_department LIKE '%Rehabilitación%' OR managed_department LIKE '%Tecnólogo Rayos X%' OR managed_department LIKE '%Auditor Médico%' OR managed_department LIKE '%Medico%' OR managed_department LIKE '%Farmacia%' OR managed_department LIKE '%Control Interno%') THEN 'Control Interno'
+                                                WHEN emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia') THEN 'Administrativo' 
+                                                WHEN emp_subarea IN ('Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía') THEN 'Control Interno'
+                                                WHEN role = 'coordinador' AND (managed_department LIKE '%Admisiones%' OR managed_department LIKE '%Rehabilitación%' OR managed_department LIKE '%Tecnólogo Rayos X%' OR managed_department LIKE '%Farmacia%') THEN 'Administrativo'
+                                                WHEN role = 'coordinador' AND (managed_department LIKE '%Enfermería%' OR managed_department LIKE '%Auditor Médico%' OR managed_department LIKE '%Medico%' OR managed_department LIKE '%Control Interno%' OR managed_department LIKE '%Cirugía%') THEN 'Control Interno'
                                                 ELSE emp_area 
-                                            END
+                                            END as area_name
                                             FROM users_app WHERE username = ?
                                         )
+                                        SELECT emp_email FROM users_app 
+                                        WHERE role = 'jefe_area' AND active = 1 AND emp_email IS NOT NULL AND emp_email != '' 
+                                        AND (managed_area = (SELECT area_name FROM TargetArea) OR managed_area = 'Control Interno')
                                     """, conn, params=(r['user_id'],))
                                     if not jefe_df.empty:
                                         target_emails = jefe_df['emp_email'].tolist()
@@ -751,10 +802,14 @@ def page_exceptions():
                         subarea = row['emp_subarea'] or row['department']
                         if not subarea:
                             return "Coordinador"
+                        target_subarea = subarea
+                        if target_subarea == 'Servicios Generales': target_subarea = 'Calidad'
+                        elif target_subarea == 'Orientador': target_subarea = 'Seguridad'
+
                         matching_coords = []
                         for name, m_depts in coordinators:
                             depts = [d.strip() for d in (m_depts or "").split(",") if d.strip()]
-                            if subarea in depts:
+                            if target_subarea in depts or subarea in depts:
                                 matching_coords.append(name)
                         if matching_coords:
                             return ", ".join(matching_coords)
@@ -762,16 +817,19 @@ def page_exceptions():
                     elif status == 'PENDING_JEFE':
                         area = row['emp_area']
                         subarea = row['emp_subarea'] or row['department']
-                        role = row['user_role']
-                        managed_dept = row['user_managed_dept']
+                        u_role = row['user_role']
+                        u_managed = row['user_managed_dept']
                         
                         target_jefe_area = area
-                        if subarea == 'Admisiones': target_jefe_area = 'Administrativo'
-                        elif subarea in ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']: 
+                        if subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
+                            target_jefe_area = 'Administrativo'
+                        elif subarea in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']: 
                             target_jefe_area = 'Control Interno'
-                        elif role == 'coordinador' and managed_dept:
-                            c_depts = [d.strip() for d in managed_dept.split(',') if d.strip()]
-                            if any(dept in c_depts for dept in ['Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno']):
+                        elif u_role == 'coordinador' and u_managed:
+                            c_depts = [d.strip() for d in u_managed.split(',') if d.strip()]
+                            if any(dept in c_depts for dept in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']):
+                                target_jefe_area = 'Administrativo'
+                            elif any(dept in c_depts for dept in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']):
                                 target_jefe_area = 'Control Interno'
                                 
                         matching_jefes = []
