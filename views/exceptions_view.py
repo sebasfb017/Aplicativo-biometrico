@@ -182,6 +182,12 @@ def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
             st.session_state[f"show_rejection_dialog_{req_id}"] = False
             st.rerun()
 
+# --- CALLBACK DE APROBACIÓN (PREVENCIÓN DE ERRORES UI) ---
+# Extraemos la lógica de aprobación a este "Callback". Al hacerlo, le indicamos a Streamlit
+# que ejecute toda la lógica pesada de base de datos y envío de correos en SEGUNDO PLANO
+# antes de refrescar la pantalla. Si hacíamos esto directamente dentro del botón (inline),
+# el navegador colapsaba (NotFoundError) al intentar borrar visores de PDF pesados
+# al mismo tiempo que la página se reiniciaba con st.rerun().
 def handle_approve_callback(r_dict, user):
     if user["role"] == "coordinador":
         db_approve_leave_request_coord(r_dict['id'], user['username'])

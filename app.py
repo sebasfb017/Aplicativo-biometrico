@@ -25,6 +25,9 @@ def main():
     init_db()
 
     # --- CSS GLOBAL (ESTÉTICA PREMIUM Y FLUIDEZ) ---
+    # Inyectamos estilos CSS personalizados para darle a la aplicación un aspecto moderno.
+    # Evitamos usar el archivo de configuración global config.toml para no bloquear 
+    # el botón nativo de Modo Oscuro/Claro del navegador de Streamlit.
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
@@ -69,6 +72,8 @@ def main():
     }
     
     /* Estilizar botones para efecto premium */
+    /* ATENCIÓN: Forzamos el color azul aquí (var(--primary-blue)) para los botones principales,
+       de modo que sigan siendo azules en el Modo Oscuro nativo de Streamlit en lugar de cambiar a rojo. */
     button[kind="primary"] {
         background-color: var(--primary-blue) !important;
         color: white !important;
@@ -152,18 +157,21 @@ def main():
     user_role = user["role"]
     
     # Asignación de rol efectivo: si el rol es auxiliar ('empleado') y su sub-área es Nómina o Talento Humano,
-    # le asignamos dinámicamente los permisos y la interfaz del rol administrativo 'nomina'
+    # le asignamos dinámicamente los permisos y la interfaz del rol administrativo 'nomina' para que 
+    # puedan acceder al panel de RRHH sin ser administradores globales.
     if user_role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
         user_role = "nomina"
 
     # --- INACTIVITY TIMEOUT (10 min) ---
+    # Sistema de seguridad que cierra la sesión automáticamente si el usuario 
+    # no interactúa con la aplicación durante 10 minutos seguidos.
     from datetime import datetime, timedelta
     last_activity = st.session_state.get("last_activity")
     now = datetime.now()
     if last_activity:
         if now - last_activity > timedelta(minutes=10):
             st.session_state.clear()
-            st.warning("⏱️ Sesión cerrada automáticamente por 10 minutos de inactividad por seguridad.")
+            st.error("Sesión cerrada automáticamente por 10 minutos de inactividad por seguridad.")
             st.rerun()
     st.session_state["last_activity"] = now
     # ------------------------------------
@@ -238,6 +246,9 @@ def main():
             st.session_state.clear()
             st.rerun()
 
+    # --- ENRUTADOR DE VISTAS (ROUTER) ---
+    # Diccionario que mapea los nombres de las pestañas en el menú lateral 
+    # a las funciones correspondientes que renderizan las páginas.
     router = {
         "Dashboard": page_dashboard,
         "Sincronizar Relojes": page_sync,

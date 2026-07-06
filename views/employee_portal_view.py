@@ -312,6 +312,11 @@ def page_employee_portal():
             st.success("✅ Solicitud enviada exitosamente. El formulario ha sido limpiado.")
             st.session_state.submit_success = False
         
+        # --- SISTEMA DE REINICIO DE FORMULARIO (form_key) ---
+        # Usamos una variable en session_state llamada 'form_key' que se añade como sufijo
+        # a los identificadores (key) de todos los campos del formulario. Cuando el formulario
+        # se envía con éxito, incrementamos este valor (+1), lo que obliga a Streamlit a 
+        # renderizar componentes completamente nuevos y "vacíos", logrando así limpiar la pantalla.
         if "form_key" not in st.session_state:
             st.session_state.form_key = 0
         fk = st.session_state.form_key
@@ -353,6 +358,9 @@ def page_employee_portal():
                     time_s = st.time_input("Hora a la que te fuiste del trabajo", value=None, key=f"ts_temprano_{fk}")
                     time_e = st.time_input("¿A qué hora terminaba tu turno hoy?", value=None, key=f"te_temprano_{fk}")
 
+                # --- CÁLCULO DINÁMICO DE TIEMPO ---
+                # Dependiendo de lo que seleccione el usuario, calculamos el tiempo automáticamente.
+                # Las variables time_s y time_e capturan las horas seleccionadas por el usuario.
                 calculated_time = ""
                 if tipo_tiempo == "Por Días":
                     if leave_dates:
@@ -378,6 +386,9 @@ def page_employee_portal():
                     else:
                         calculated_time = "Ingresa ambas horas para calcular fracción"
 
+                # ATENCIÓN: Este campo NO tiene el parámetro `key`. Esto es intencional.
+                # Si le ponemos `key`, Streamlit guardaría en caché el valor inicial (ej. vacío) 
+                # y no se actualizaría visualmente en tiempo real al cambiar las horas arriba.
                 st.text_input("Tiempo Total Calculado (Automático)", value=calculated_time, disabled=True)
                 total_time = calculated_time
 

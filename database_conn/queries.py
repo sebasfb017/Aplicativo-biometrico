@@ -284,10 +284,16 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                             (a[0], "Validación RRHH", f"Solicitud #{req_id} ({req_type}) de {req_name} ({req_subarea or req_area}) requiere revisión de RRHH.<br><b>Justificación:</b> {req_desc}", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                             
         elif status == 'PENDING_JEFE':
-            # Resolve Jefe's area
+            # --- RUTAS DE APROBACIÓN PERSONALIZADAS ---
+            # Resolvemos qué Jefatura debe aprobar la solicitud basándonos en la sub-área.
             target_jefe_area = req_area
+            
+            # 1. Estas sub-áreas siempre son aprobadas por la jefatura Administrativa.
             if req_subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
                 target_jefe_area = 'Administrativo'
+                
+            # 2. Estas sub-áreas (incluyendo Cirugía) saltan la jerarquía normal y pasan
+            # de forma estricta por el escrutinio de Control Interno.
             elif req_subarea in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']: 
                 target_jefe_area = 'Control Interno'
             elif req_role == 'coordinador' and req_managed:
