@@ -2,42 +2,6 @@ import os
 import streamlit as st
 from streamlit_option_menu import option_menu
 
-# --- Inicialización del Tema (Debe ser lo primero en el script) ---
-# En lugar de usar la sesión (que se pierde al recargar), 
-# leemos qué tema está configurado actualmente en config.toml.
-def get_current_theme():
-    config_path = os.path.join(os.path.dirname(__file__), ".streamlit", "config.toml")
-    if os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
-            if 'base="dark"' in f.read():
-                return "dark"
-    return "light" # Fallback si no existe o dice light
-
-def apply_theme(theme):
-    config_path = os.path.join(os.path.dirname(__file__), ".streamlit", "config.toml")
-    new_content = f'''[theme]
-primaryColor="#0D6EFD"
-base="{theme}"
-font="sans serif"
-
-[server]
-maxUploadSize = 20
-'''
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(new_content)
-
-# Leemos el tema directamente del archivo de configuración, esto lo hace persistente siempre.
-current_theme = get_current_theme()
-
-# Si deseas forzar el tema oscuro por defecto la primera vez, 
-# puedes habilitar esto, pero actualmente respetará lo que diga el archivo.
-if "theme_initialized" not in st.session_state:
-    st.session_state.theme_initialized = True
-    # Si quisieras que el predeterminado absoluto fuera oscuro para nuevos usuarios, harías:
-    # si el archivo no existiera, lo creas con dark. 
-    # Por ahora, simplemente confiaremos en get_current_theme()
-
 # --- Fin de la inicialización del Tema ---
 
 from database_conn.connection import db_conn
@@ -106,6 +70,9 @@ def main():
     
     /* Estilizar botones para efecto premium */
     button[kind="primary"] {
+        background-color: var(--primary-blue) !important;
+        color: white !important;
+        border-color: var(--primary-blue) !important;
         border-radius: 10px !important;
         font-weight: 600 !important;
         letter-spacing: 0.5px;
@@ -267,16 +234,6 @@ def main():
         )
         st.markdown("<br><br>", unsafe_allow_html=True)
         
-        current_mode_icon = "☀️" if current_theme == "dark" else "🌙"
-        current_mode_text = "Claro" if current_theme == "dark" else "Oscuro"
-        
-        if st.button(f"Cambiar a Tema {current_mode_icon} {current_mode_text}", use_container_width=True):
-            new_theme = "dark" if current_theme == "light" else "light"
-            apply_theme(new_theme)
-            import time
-            time.sleep(0.3) # Pequeña pausa para asegurar que el archivo se escriba antes del rerun
-            st.rerun()
-            
         if st.button("Cerrar Sesión", type="primary", use_container_width=True):
             st.session_state.clear()
             st.rerun()
