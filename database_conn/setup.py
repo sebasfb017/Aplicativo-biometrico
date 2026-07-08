@@ -195,6 +195,12 @@ def init_db():
     # Crear índices para optimizar consultas de marcaciones y permisos
     cur.execute("CREATE INDEX IF NOT EXISTS idx_attendance_user_ts ON attendance_raw (user_id, ts);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_dates ON leave_requests (user_id, leave_date_start, leave_date_end);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_exceptions_user_id ON exceptions(user_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_exceptions_date ON exceptions(date);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_user_id ON leave_requests(user_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);")
 
 
     # Crear administrador por defecto si no existen usuarios

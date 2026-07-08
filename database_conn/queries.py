@@ -289,7 +289,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             target_jefe_area = req_area
             
             # 1. Estas sub-áreas siempre son aprobadas por la jefatura Administrativa.
-            if req_subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
+            if req_subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador']: 
                 target_jefe_area = 'Administrativo'
                 
             # 2. Estas sub-áreas (incluyendo Cirugía) saltan la jerarquía normal y pasan
@@ -298,7 +298,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                 target_jefe_area = 'Control Interno'
             elif req_role == 'coordinador' and req_managed:
                 c_depts = [d.strip() for d in req_managed.split(',') if d.strip()]
-                if any(dept in c_depts for dept in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']):
+                if any(dept in c_depts for dept in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador']):
                     target_jefe_area = 'Administrativo'
                 elif any(dept in c_depts for dept in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']):
                     target_jefe_area = 'Control Interno'

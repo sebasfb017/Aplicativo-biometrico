@@ -288,8 +288,8 @@ def page_exceptions():
                     JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_JEFE' AND 
                           (
-                              (ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía')) OR 
-                              (ua.emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia') AND ? = 'Administrativo')
+                              (ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
+                              (ua.emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo')
                           )
                     ORDER BY lr.id ASC
                 """
@@ -512,7 +512,7 @@ def page_exceptions():
             if "filter_exc_type" not in st.session_state:
                 st.session_state.filter_exc_type = []
             if "filter_exc_dates" not in st.session_state:
-                st.session_state.filter_exc_dates = []
+                st.session_state.filter_exc_dates = [date.today() - timedelta(days=30), date.today()]
 
             # --- Buscador y Filtros Avanzados ---
             with st.expander("🔍 Buscador y Filtros Avanzados", expanded=True):
@@ -545,7 +545,7 @@ def page_exceptions():
                     if st.button("🧹 Limpiar Filtros", use_container_width=True):
                         st.session_state.filter_exc_name = ""
                         st.session_state.filter_exc_type = []
-                        st.session_state.filter_exc_dates = []
+                        st.session_state.filter_exc_dates = [date.today() - timedelta(days=30), date.today()]
                         st.rerun()
             
             # Aplicar filtros dinámicos en el DataFrame
@@ -676,7 +676,7 @@ def page_exceptions():
                                 with open(file_path, "rb") as f:
                                     st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_rrhh_{r['id']}", use_container_width=True)
                     with cols[1]:
-                        requiere_jefe = r['reason_type'] in [
+                        requiere_jefe_tipo = r['reason_type'] in [
                             "Vacaciones", 
                             "Calamidad Doméstica", 
                             "Licencia de Luto", 
@@ -686,6 +686,11 @@ def page_exceptions():
                             "Licencia Remunerada", 
                             "Licencia No Remunerada"
                         ]
+                        
+                        # Si no tuvo coordinador (pasó directo a RRHH) y no es una incapacidad,
+                        # forzamos que pase a la firma del Jefe de Área.
+                        requiere_jefe = requiere_jefe_tipo or (pd.isna(r.get('coord_name')) and r['reason_type'] != "Incapacidad")
+                        
                         btn_label = "✅ Visto Bueno (A Jefe)" if requiere_jefe else "✅ Aprobar Final"
                         
                         if st.button(btn_label, key=f"btn_acc_hr_{r['id']}", type="primary", use_container_width=True):
@@ -699,9 +704,9 @@ def page_exceptions():
                                     jefe_df = pd.read_sql_query("""
                                         WITH TargetArea AS (
                                             SELECT CASE 
-                                                WHEN emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia') THEN 'Administrativo' 
+                                                WHEN emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') THEN 'Administrativo' 
                                                 WHEN emp_subarea IN ('Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía') THEN 'Control Interno'
-                                                WHEN role = 'coordinador' AND (managed_department LIKE '%Admisiones%' OR managed_department LIKE '%Rehabilitación%' OR managed_department LIKE '%Tecnólogo Rayos X%' OR managed_department LIKE '%Farmacia%') THEN 'Administrativo'
+                                                WHEN role = 'coordinador' AND (managed_department LIKE '%Admisiones%' OR managed_department LIKE '%Rehabilitación%' OR managed_department LIKE '%Tecnólogo Rayos X%' OR managed_department LIKE '%Farmacia%' OR managed_department LIKE '%Mantenimiento%' OR managed_department LIKE '%Seguridad%' OR managed_department LIKE '%Orientador%') THEN 'Administrativo'
                                                 WHEN role = 'coordinador' AND (managed_department LIKE '%Enfermería%' OR managed_department LIKE '%Auditor Médico%' OR managed_department LIKE '%Medico%' OR managed_department LIKE '%Control Interno%' OR managed_department LIKE '%Cirugía%') THEN 'Control Interno'
                                                 ELSE emp_area 
                                             END as area_name
