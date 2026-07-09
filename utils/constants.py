@@ -10,3 +10,8 @@ AREA_MAPPING = {
     "Rayos X": ["Tecnólogo Rayos X"]
 }
 # Touch para recargar cache
+
+ZARZAL_EMPLOYEES = [
+    "100389343", "100628953", "100643956", "100748910",
+    "111421083", "111644217", "38797265", "66681600", "16732215"
+]
