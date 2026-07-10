@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime, date
 from database_conn.connection import db_conn, db_session
+from utils.constants import ZARZAL_EMPLOYEES
 
 # --- GESTIÓN DE USUARIOS (Corrección de Errores y Consultas) ---
 
@@ -174,24 +175,28 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
         # Si radica el Jefe, se auto-aprueba (es la última instancia)
         target_status = "APPROVED"
     elif role == "empleado":
-        # Si es empleado, pero no tiene coordinador activo para su subárea, pasa directo a RRHH
-        has_coordinator = False
-        if subarea:
-            with db_session() as conn:
-                cur = conn.cursor()
-                cur.execute("SELECT managed_department FROM users_app WHERE role = 'coordinador' AND active = 1")
-                coordinators = cur.fetchall()
-                for c_row in coordinators:
-                    c_depts = [d.strip() for d in c_row[0].split(',') if d.strip()]
-                    target_subarea = subarea
-                    if target_subarea == 'Servicios Generales': target_subarea = 'Calidad'
-                    elif target_subarea == 'Orientador': target_subarea = 'Seguridad'
-                    
-                    if target_subarea in c_depts or subarea in c_depts:
-                        has_coordinator = True
-                        break
-        if not has_coordinator:
-            target_status = "PENDING_RRHH"
+        # Override Sede Zarzal
+        if str(user_id) in ZARZAL_EMPLOYEES:
+            target_status = "PENDING_COORD"
+        else:
+            # Si es empleado, pero no tiene coordinador activo para su subárea, pasa directo a RRHH
+            has_coordinator = False
+            if subarea:
+                with db_session() as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT managed_department FROM users_app WHERE role = 'coordinador' AND active = 1")
+                    coordinators = cur.fetchall()
+                    for c_row in coordinators:
+                        c_depts = [d.strip() for d in c_row[0].split(',') if d.strip()]
+                        target_subarea = subarea
+                        if target_subarea == 'Servicios Generales': target_subarea = 'Calidad'
+                        elif target_subarea == 'Orientador': target_subarea = 'Seguridad'
+                        
+                        if target_subarea in c_depts or subarea in c_depts:
+                            has_coordinator = True
+                            break
+            if not has_coordinator:
+                target_status = "PENDING_RRHH"
 
     with db_session() as conn:
         cur = conn.cursor()
@@ -259,21 +264,26 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                         (requester_id, "Solicitud Cancelada", msg, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
 
         # 2. Notify the approvers
-        if status == 'PENDING_COORD' and req_subarea:
-            # Find coordinators managing this subarea
-            cur.execute("SELECT username FROM users_app WHERE role = 'coordinador' AND active = 1")
-            coords = cur.fetchall()
-            for c in coords:
-                cur.execute("SELECT managed_department FROM users_app WHERE username = ?", (c[0],))
-                m_dept = cur.fetchone()[0] or ""
-                depts = [d.strip() for d in m_dept.split(',') if d.strip()]
-                target_subarea = req_subarea
-                if target_subarea == 'Servicios Generales': target_subarea = 'Calidad'
-                elif target_subarea == 'Orientador': target_subarea = 'Seguridad'
-                
-                if target_subarea in depts or req_subarea in depts:
-                    cur.execute("INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
-                                (c[0], "Permiso por Autorizar", f"Nueva solicitud #{req_id} ({req_type}) de {req_name} ({req_subarea}) esperando tu aprobación.<br><b>Justificación:</b> {req_desc}", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        if status == 'PENDING_COORD':
+            if str(requester_id) in ZARZAL_EMPLOYEES:
+                # Notify Jorge Horta (94152519) directly
+                cur.execute("INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                            ('94152519', "Permiso por Autorizar (Sede Zarzal)", f"Nueva solicitud #{req_id} ({req_type}) de {req_name} (Sede Zarzal) esperando tu aprobación.<br><b>Justificación:</b> {req_desc}", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            elif req_subarea:
+                # Find coordinators managing this subarea
+                cur.execute("SELECT username FROM users_app WHERE role = 'coordinador' AND active = 1")
+                coords = cur.fetchall()
+                for c in coords:
+                    cur.execute("SELECT managed_department FROM users_app WHERE username = ?", (c[0],))
+                    m_dept = cur.fetchone()[0] or ""
+                    depts = [d.strip() for d in m_dept.split(',') if d.strip()]
+                    target_subarea = req_subarea
+                    if target_subarea == 'Servicios Generales': target_subarea = 'Calidad'
+                    elif target_subarea == 'Orientador': target_subarea = 'Seguridad'
+                    
+                    if target_subarea in depts or req_subarea in depts:
+                        cur.execute("INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                                    (c[0], "Permiso por Autorizar", f"Nueva solicitud #{req_id} ({req_type}) de {req_name} ({req_subarea}) esperando tu aprobación.<br><b>Justificación:</b> {req_desc}", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         
         elif status == 'PENDING_RRHH':
             # Notify all RRHH / admin users
