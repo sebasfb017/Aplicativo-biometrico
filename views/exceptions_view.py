@@ -130,6 +130,31 @@ def show_exception_details(exc_id: int):
             st.markdown("**Acuerdo de Reposición (Tiempo):**")
             st.warning(req['how_to_makeup'])
             
+        if pd.notna(req['attachment_path']) and str(req['attachment_path']).strip():
+            st.write("**Soporte Adjunto:**")
+            import os
+            from database_conn.connection import DATA_DIR
+            file_path = os.path.join(DATA_DIR, "uploads", str(req['attachment_path']))
+            if os.path.exists(file_path):
+                with st.expander("👁️ Previsualizar Soporte Adjunto", expanded=False):
+                    ext = os.path.splitext(file_path)[1].lower()
+                    if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                        st.image(file_path, use_container_width=True)
+                    elif ext == ".pdf":
+                        try:
+                            import base64
+                            with open(file_path, "rb") as f:
+                                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+                            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
+                            st.markdown(pdf_display, unsafe_allow_html=True)
+                        except Exception as e:
+                            st.error(f"No se pudo cargar el PDF: {e}")
+                    else:
+                        st.info("Vista previa no disponible para este tipo de archivo.")
+                        
+                with open(file_path, "rb") as f:
+                    st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=str(req['attachment_path']), key=f"dl_det_{req['id']}", use_container_width=True)
+            
         with db_session() as conn:
             df_audit = pd.read_sql_query("""
                 SELECT a.user_id, a.action, a.timestamp, u.full_name, a.details, u.role
@@ -249,7 +274,7 @@ def page_exceptions():
                 query = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.start_time, lr.end_time, lr.total_time,
-                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path
+                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.how_to_makeup
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
@@ -269,7 +294,7 @@ def page_exceptions():
                 query = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.start_time, lr.end_time, lr.total_time,
-                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path,
+                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.how_to_makeup,
                            ua.emp_area, ua.emp_subarea,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
@@ -284,7 +309,7 @@ def page_exceptions():
                 query = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.start_time, lr.end_time, lr.total_time,
-                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path,
+                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.how_to_makeup,
                            ua.emp_area, ua.emp_subarea,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
@@ -343,6 +368,8 @@ def page_exceptions():
                             if 'rrhh_name' in r and pd.notna(r['rrhh_name']):
                                 st.info(f"✅ **Revisado por RRHH:** {r['rrhh_name']}")
                             st.write(f"**Justificación:** {r['reason_description']}")
+                            if not r['is_paid'] and pd.notna(r.get('how_to_makeup')) and str(r['how_to_makeup']).strip():
+                                st.warning(f"**Acuerdo de Reposición (Tiempo):** {r['how_to_makeup']}")
                             
                             # --- Llamada al detector de conflictos ---
                             managed_entity = user.get('managed_department') if user["role"] == "coordinador" else user.get('managed_area')
@@ -626,7 +653,7 @@ def page_exceptions():
             df_pend = pd.read_sql_query("""
                 SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                        lr.start_time, lr.end_time, lr.total_time,
-                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path,
+                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.how_to_makeup,
                        (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
                        (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
                 FROM leave_requests lr
@@ -658,6 +685,8 @@ def page_exceptions():
                                     st.markdown(f"- **Firma (Jefe de Área):** {r['jefe_name']}")
                         
                         st.write(f"**Justificación:** {r['reason_description']}")
+                        if not r['is_paid'] and pd.notna(r.get('how_to_makeup')) and str(r['how_to_makeup']).strip():
+                            st.warning(f"**Acuerdo de Reposición (Tiempo):** {r['how_to_makeup']}")
                         
                         if r['attachment_path']:
                             import os
