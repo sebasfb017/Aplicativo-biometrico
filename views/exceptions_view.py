@@ -8,6 +8,7 @@ from database_conn.queries import (upsert_exception, get_exceptions_df,
                                    db_reject_leave_request)
 from services.notifications import log_audit, notify_employee_status
 from utils.auth import require_role
+from utils.constants import ZARZAL_EMPLOYEES
 from views.employee_portal_view import show_leave_request_details
 
 def get_reason_icon(reason: str) -> str:
@@ -243,6 +244,7 @@ def page_exceptions():
                 placeholders = ','.join(['?'] * len(managed_depts))
                 cond_serv_gen = "OR (ua.emp_subarea = 'Servicios Generales')" if 'Calidad' in managed_depts else ""
                 cond_orientador = "OR (ua.emp_subarea = 'Orientador')" if 'Seguridad' in managed_depts else ""
+                cond_zarzal = f"OR (lr.user_id IN ({','.join(['?']*len(ZARZAL_EMPLOYEES))}))" if user['username'] == '94152519' else ""
                 
                 query = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -250,16 +252,19 @@ def page_exceptions():
                            lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
-                    JOIN users_app ua ON lr.user_id = ua.username
+                    LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_COORD' AND 
                           (
                               ua.emp_subarea IN ({placeholders})
                               {cond_serv_gen}
                               {cond_orientador}
+                              {cond_zarzal}
                           )
                     ORDER BY lr.id ASC
                 """
                 params = tuple(managed_depts)
+                if user['username'] == '94152519':
+                    params += tuple(ZARZAL_EMPLOYEES)
             elif user.get('managed_area', '') == 'Control Interno':
                 query = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -270,13 +275,13 @@ def page_exceptions():
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
-                    JOIN users_app ua ON lr.user_id = ua.username
+                    LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_JEFE'
                     ORDER BY lr.id ASC
                 """
                 params = ()
             else:
-                query = """
+                query = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.start_time, lr.end_time, lr.total_time,
                            lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path,
@@ -285,15 +290,17 @@ def page_exceptions():
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
-                    JOIN users_app ua ON lr.user_id = ua.username
+                    LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_JEFE' AND 
                           (
                               (ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
-                              (ua.emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo')
+                              (ua.emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo') OR
+                              (lr.user_id IN ({','.join(['?']*len(ZARZAL_EMPLOYEES))}) AND ? = 'Administrativo')
                           )
                     ORDER BY lr.id ASC
                 """
-                params = (user.get('managed_area', ''), user.get('managed_area', ''))
+                params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
+                params += tuple(ZARZAL_EMPLOYEES)
                 
             with db_session() as conn:
                 df_pend = pd.read_sql_query(query, conn, params=params)
