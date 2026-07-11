@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 # --- Componente Visual de Trazabilidad (Barra de Progreso) ---
 def create_status_tracker(current_status, reason_type):
@@ -365,10 +365,30 @@ def page_employee_portal():
                 if tipo_tiempo == "Por Días":
                     if leave_dates:
                         if isinstance(leave_dates, (tuple, list)) and len(leave_dates) > 1:
-                            dias = (leave_dates[1] - leave_dates[0]).days + 1
+                            d_start = leave_dates[0]
+                            d_end = leave_dates[1]
+                            delta_days = (d_end - d_start).days + 1
+                            
+                            if reason_type == "Vacaciones":
+                                from database_conn.queries import is_holiday
+                                count = 0
+                                for i in range(delta_days):
+                                    curr_date = d_start + timedelta(days=i)
+                                    if curr_date.weekday() != 6 and not is_holiday(curr_date):
+                                        count += 1
+                                dias = count
+                            else:
+                                dias = delta_days
+                            
                             calculated_time = f"{dias} Día(s)"
                         else:
-                            calculated_time = "1 Día"
+                            dias = 1
+                            if reason_type == "Vacaciones":
+                                from database_conn.queries import is_holiday
+                                curr_date = leave_dates[0]
+                                if curr_date.weekday() == 6 or is_holiday(curr_date):
+                                    dias = 0
+                            calculated_time = f"{dias} Día(s)"
                 else: # Rango de Horas, Llegada Tarde, Salida Temprano
                     if time_s and time_e:
                         ts_dt = datetime.combine(date.today(), time_s)

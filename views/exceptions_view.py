@@ -5,7 +5,7 @@ from datetime import date, timedelta, datetime
 from database_conn.connection import db_session, db_conn
 from database_conn.queries import (upsert_exception, get_exceptions_df, 
                                    db_approve_leave_request_coord, db_approve_leave_request_jefe, 
-                                   db_reject_leave_request)
+                                   db_reject_leave_request, is_holiday)
 from services.notifications import log_audit, notify_employee_status
 from utils.auth import require_role
 from utils.constants import ZARZAL_EMPLOYEES
@@ -187,6 +187,44 @@ def show_exception_details(exc_id: int):
     else:
         st.info("ℹ️ Esta novedad no parece tener una solicitud digital asociada del portal de empleados (o fue ingresada manualmente).")
 
+@st.dialog("👁️ Soporte Adjunto")
+def preview_attachment_dialog(attachment_path, employee_name):
+    st.markdown(f"**Empleado:** {employee_name}")
+    st.markdown(f"**Archivo:** `{attachment_path}`")
+    st.divider()
+    
+    import os
+    from database_conn.connection import DATA_DIR
+    file_path = os.path.join(DATA_DIR, "uploads", str(attachment_path))
+    if not os.path.exists(file_path):
+        st.error("El archivo soporte no se encuentra en el servidor.")
+        return
+    
+    ext = os.path.splitext(attachment_path)[1].lower()
+    if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+        st.image(file_path, use_container_width=True)
+    elif ext == ".pdf":
+        try:
+            import base64
+            with open(file_path, "rb") as f:
+                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
+            st.markdown(pdf_display, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"No se pudo cargar el PDF: {e}")
+    else:
+        st.info("Vista previa no disponible en pantalla para este tipo de archivo.")
+        
+    st.divider()
+    with open(file_path, "rb") as f:
+        st.download_button(
+            "📎 Descargar Soporte Adjunto",
+            data=f.read(),
+            file_name=str(attachment_path),
+            use_container_width=True,
+            key=f"dl_dialog_{attachment_path}"
+        )
+
 @st.dialog("Motivo de Rechazo")
 def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
     st.write(f"Rechazando solicitud #{req_id} de {full_name} ({reason_type}).")
@@ -239,7 +277,11 @@ def handle_approve_callback(r_dict, user):
             d_end = date.fromisoformat(r_dict['leave_date_end'])
             delta = d_end - d_start
             for i in range(delta.days + 1):
-                day_to_log = (d_start + timedelta(days=i)).isoformat()
+                curr_date = d_start + timedelta(days=i)
+                if r_dict['reason_type'] == "Vacaciones":
+                    if curr_date.weekday() == 6 or is_holiday(curr_date):
+                        continue
+                day_to_log = curr_date.isoformat()
                 cur.execute("""
                     INSERT INTO exceptions(user_id, date, type, notes, created_at)
                     VALUES(?,?,?,?,?)
@@ -333,80 +375,101 @@ def page_exceptions():
             if df_pend.empty:
                 st.success("No hay solicitudes pendientes de revisión para tu área.")
             else:
-                if user.get('managed_area', '') == 'Control Interno':
-                    st.write(f"Tienes **{len(df_pend)}** solicitud(es) por revisar en total.")
+                # --- Filtros Interactivos para Coordinadores/Jefes ---
+                with st.expander("🔍 Buscar y Filtrar Pendientes", expanded=False):
+                    f_col1, f_col2, f_col3 = st.columns(3)
+                    with f_col1:
+                        f_name = st.text_input("Buscar Empleado (Nombre o ID)", key="f_pend_name_coord")
+                    with f_col2:
+                        f_types = sorted(df_pend["reason_type"].dropna().unique().tolist())
+                        f_sel_types = st.multiselect("Filtrar por Tipo", options=f_types, key="f_pend_types_coord")
+                    with f_col3:
+                        # Rango de fechas
+                        f_date_range = st.date_input("Rango de Fechas (Inicio y Fin)", value=[], key="f_pend_dates_coord")
+                
+                # Aplicar filtros dinámicos
+                df_filtered = df_pend.copy()
+                if f_name.strip():
+                    term = f_name.strip().lower()
+                    df_filtered = df_filtered[
+                        (df_filtered["full_name"].astype(str).str.lower().str.contains(term)) |
+                        (df_filtered["user_id"].astype(str).str.lower().str.contains(term))
+                    ]
+                if f_sel_types:
+                    df_filtered = df_filtered[df_filtered["reason_type"].isin(f_sel_types)]
+                
+                if isinstance(f_date_range, (list, tuple)) and len(f_date_range) > 0:
+                    start_f = f_date_range[0]
+                    end_f = f_date_range[1] if len(f_date_range) > 1 else start_f
                     
-                    areas = sorted(df_pend['emp_area'].dropna().unique().tolist())
-                    subareas = sorted(df_pend['emp_subarea'].dropna().unique().tolist())
-                    
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        filter_area = st.selectbox("Filtrar por Área", ["Todas"] + areas)
-                    with c2:
-                        filter_subarea = st.selectbox("Filtrar por Sub-área", ["Todas"] + subareas)
-                        
-                    if filter_area != "Todas":
-                        df_pend = df_pend[df_pend['emp_area'] == filter_area]
-                    if filter_subarea != "Todas":
-                        df_pend = df_pend[df_pend['emp_subarea'] == filter_subarea]
-                        
-                    st.write(f"Mostrando **{len(df_pend)}** solicitud(es) filtrada(s).")
+                    df_filtered["temp_date_start"] = pd.to_datetime(df_filtered["leave_date_start"]).dt.date
+                    df_filtered["temp_date_end"] = pd.to_datetime(df_filtered["leave_date_end"]).dt.date
+                    df_filtered = df_filtered[
+                        (df_filtered["temp_date_end"] >= start_f) & (df_filtered["temp_date_start"] <= end_f)
+                    ]
+                    df_filtered = df_filtered.drop(columns=["temp_date_start", "temp_date_end"])
+
+                if df_filtered.empty:
+                    st.warning("⚠️ No se encontraron solicitudes con los filtros seleccionados.")
                 else:
-                    st.write(f"Tienes **{len(df_pend)}** solicitud(es) por revisar.")
-                    
-                for _, r in df_pend.iterrows():
-                    with st.container(border=True):
-                        cols = st.columns([3, 1])
-                        with cols[0]:
-                            icon = get_reason_icon(r['reason_type'])
-                            st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{icon} {r['reason_type']}*")
-                            st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
-                            if pd.notna(r.get('start_time')) and r.get('start_time'):
-                                st.write(f"**Horario:** {r['start_time']} a {r['end_time']} | **Tiempo Total:** {r['total_time']}")
-                            if 'coord_name' in r and pd.notna(r['coord_name']):
-                                st.info(f"✅ **Visto Bueno Previo:** Coordinador {r['coord_name']}")
-                            if 'rrhh_name' in r and pd.notna(r['rrhh_name']):
-                                st.info(f"✅ **Revisado por RRHH:** {r['rrhh_name']}")
-                            st.write(f"**Justificación:** {r['reason_description']}")
-                            if not r['is_paid'] and pd.notna(r.get('how_to_makeup')) and str(r['how_to_makeup']).strip():
-                                st.warning(f"**Acuerdo de Reposición (Tiempo):** {r['how_to_makeup']}")
+                    if user.get('managed_area', '') == 'Control Interno':
+                        st.write(f"Tienes **{len(df_filtered)}** solicitud(es) por revisar en total.")
+                        
+                        areas = sorted(df_filtered['emp_area'].dropna().unique().tolist())
+                        subareas = sorted(df_filtered['emp_subarea'].dropna().unique().tolist())
+                        
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            filter_area = st.selectbox("Filtrar por Área", ["Todas"] + areas)
+                        with c2:
+                            filter_subarea = st.selectbox("Filtrar por Sub-área", ["Todas"] + subareas)
                             
-                            # --- Llamada al detector de conflictos ---
-                            managed_entity = user.get('managed_department') if user["role"] == "coordinador" else user.get('managed_area')
-                            check_schedule_conflicts(r, user["role"], managed_entity)
+                        if filter_area != "Todas":
+                            df_filtered = df_filtered[df_filtered['emp_area'] == filter_area]
+                        if filter_subarea != "Todas":
+                            df_filtered = df_filtered[df_filtered['emp_subarea'] == filter_subarea]
                             
-                            if r['attachment_path']:
-                                import os
-                                from database_conn.connection import DATA_DIR
-                                file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
-                                if os.path.exists(file_path):
-                                    with st.expander("👁️ Previsualizar Soporte Adjunto", expanded=False):
-                                        ext = os.path.splitext(r['attachment_path'])[1].lower()
-                                        if ext in [".png", ".jpg", ".jpeg", ".webp"]:
-                                            st.image(file_path, use_container_width=True)
-                                        elif ext == ".pdf":
-                                            try:
-                                                import base64
-                                                with open(file_path, "rb") as f:
-                                                    base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-                                                pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
-                                                st.markdown(pdf_display, unsafe_allow_html=True)
-                                            except Exception as e:
-                                                st.error(f"No se pudo cargar el PDF: {e}")
-                                        else:
-                                            st.info("Vista previa no disponible para este tipo de archivo.")
-                                            
-                                    with open(file_path, "rb") as f:
-                                        st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_coord_{r['id']}", use_container_width=True)
-                        with cols[1]:
-                            st.button("👍 Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True, on_click=handle_approve_callback, args=(r.to_dict(), user))
+                        st.write(f"Mostrando **{len(df_filtered)}** solicitud(es) filtrada(s).")
+                    else:
+                        st.write(f"Tienes **{len(df_filtered)}** solicitud(es) por revisar.")
+                        
+                    for _, r in df_filtered.iterrows():
+                        with st.container(border=True):
+                            cols = st.columns([3, 1])
+                            with cols[0]:
+                                icon = get_reason_icon(r['reason_type'])
+                                st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{icon} {r['reason_type']}*")
+                                st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
+                                if pd.notna(r.get('start_time')) and r.get('start_time'):
+                                    st.write(f"**Horario:** {r['start_time']} a {r['end_time']} | **Tiempo Total:** {r['total_time']}")
+                                if 'coord_name' in r and pd.notna(r['coord_name']):
+                                    st.info(f"✅ **Visto Bueno Previo:** Coordinador {r['coord_name']}")
+                                if 'rrhh_name' in r and pd.notna(r['rrhh_name']):
+                                    st.info(f"✅ **Revisado por RRHH:** {r['rrhh_name']}")
+                                st.write(f"**Justificación:** {r['reason_description']}")
+                                if not r['is_paid'] and pd.notna(r.get('how_to_makeup')) and str(r['how_to_makeup']).strip():
+                                    st.warning(f"**Acuerdo de Reposición (Tiempo):** {r['how_to_makeup']}")
                                 
-                            if st.button("❌ Rechazar", key=f"btn_rej_{r['id']}", use_container_width=True):
-                                st.session_state[f"show_rejection_dialog_{r['id']}"] = True
-                                st.rerun()
-                            
-                            if st.session_state.get(f"show_rejection_dialog_{r['id']}", False):
-                                rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
+                                # --- Llamada al detector de conflictos ---
+                                managed_entity = user.get('managed_department') if user["role"] == "coordinador" else user.get('managed_area')
+                                check_schedule_conflicts(r, user["role"], managed_entity)
+                                
+                                if r['attachment_path']:
+                                    import os
+                                    from database_conn.connection import DATA_DIR
+                                    file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
+                                    if os.path.exists(file_path):
+                                        if st.button("👁️ Ver Soporte Adjunto", key=f"btn_preview_{r['id']}", use_container_width=True):
+                                            preview_attachment_dialog(r['attachment_path'], r['full_name'])
+                            with cols[1]:
+                                st.button("👍 Aprobar", key=f"btn_acc_{r['id']}", type="primary", use_container_width=True, on_click=handle_approve_callback, args=(r.to_dict(), user))
+                                    
+                                if st.button("❌ Rechazar", key=f"btn_rej_{r['id']}", use_container_width=True):
+                                    st.session_state[f"show_rejection_dialog_{r['id']}"] = True
+                                    st.rerun()
+                                
+                                if st.session_state.get(f"show_rejection_dialog_{r['id']}", False):
+                                    rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
                                 
         with tab2:
             if user["role"] == "coordinador":
@@ -665,52 +728,73 @@ def page_exceptions():
         if df_pend.empty:
             st.success("No hay solicitudes pendientes de revisión final.")
         else:
-            st.write(f"Tienes **{len(df_pend)}** solicitud(es) por procesar definitivamente.")
-            for _, r in df_pend.iterrows():
-                with st.container(border=True):
-                    cols = st.columns([3, 1])
-                    with cols[0]:
-                        badge = "🟣 RRHH FINAL"
-                        icon = get_reason_icon(r['reason_type'])
-                        st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{icon} {r['reason_type']}* | {badge}")
-                        st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
-                        if pd.notna(r.get('start_time')) and r.get('start_time'):
-                            st.write(f"**Horario:** {r['start_time']} a {r['end_time']} | **Tiempo Total:** {r['total_time']}")
-                        
-                        if ('coord_name' in r and pd.notna(r['coord_name'])) or ('jefe_name' in r and pd.notna(r['jefe_name'])):
-                            with st.expander("✅ Ver Historial de Aprobaciones Previas", expanded=True):
-                                if 'coord_name' in r and pd.notna(r['coord_name']):
-                                    st.markdown(f"- **Visto Bueno (Coordinador):** {r['coord_name']}")
-                                if 'jefe_name' in r and pd.notna(r['jefe_name']):
-                                    st.markdown(f"- **Firma (Jefe de Área):** {r['jefe_name']}")
-                        
-                        st.write(f"**Justificación:** {r['reason_description']}")
-                        if not r['is_paid'] and pd.notna(r.get('how_to_makeup')) and str(r['how_to_makeup']).strip():
-                            st.warning(f"**Acuerdo de Reposición (Tiempo):** {r['how_to_makeup']}")
-                        
-                        if r['attachment_path']:
-                            import os
-                            from database_conn.connection import DATA_DIR
-                            file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
-                            if os.path.exists(file_path):
-                                with st.expander("👁️ Previsualizar Soporte Adjunto", expanded=False):
-                                    ext = os.path.splitext(r['attachment_path'])[1].lower()
-                                    if ext in [".png", ".jpg", ".jpeg", ".webp"]:
-                                        st.image(file_path, use_container_width=True)
-                                    elif ext == ".pdf":
-                                        try:
-                                            import base64
-                                            with open(file_path, "rb") as f:
-                                                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-                                            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
-                                            st.markdown(pdf_display, unsafe_allow_html=True)
-                                        except Exception as e:
-                                            st.error(f"No se pudo cargar el PDF: {e}")
-                                    else:
-                                        st.info("Vista previa no disponible para este tipo de archivo.")
-                                        
-                                with open(file_path, "rb") as f:
-                                    st.download_button("📎 Descargar Soporte Adjunto", data=f.read(), file_name=r['attachment_path'], key=f"dl_rrhh_{r['id']}", use_container_width=True)
+            # --- Filtros Interactivos para Gestión Humana ---
+            with st.expander("🔍 Buscar y Filtrar Pendientes", expanded=False):
+                f_col1, f_col2, f_col3 = st.columns(3)
+                with f_col1:
+                    f_name_rrhh = st.text_input("Buscar Empleado (Nombre o ID)", key="f_pend_name_rrhh")
+                with f_col2:
+                    f_types_rrhh = sorted(df_pend["reason_type"].dropna().unique().tolist())
+                    f_sel_types_rrhh = st.multiselect("Filtrar por Tipo", options=f_types_rrhh, key="f_pend_types_rrhh")
+                with f_col3:
+                    # Rango de fechas
+                    f_date_range_rrhh = st.date_input("Rango de Fechas (Inicio y Fin)", value=[], key="f_pend_dates_rrhh")
+            
+            # Aplicar filtros dinámicos
+            df_filtered = df_pend.copy()
+            if f_name_rrhh.strip():
+                term = f_name_rrhh.strip().lower()
+                df_filtered = df_filtered[
+                    (df_filtered["full_name"].astype(str).str.lower().str.contains(term)) |
+                    (df_filtered["user_id"].astype(str).str.lower().str.contains(term))
+                ]
+            if f_sel_types_rrhh:
+                df_filtered = df_filtered[df_filtered["reason_type"].isin(f_sel_types_rrhh)]
+            
+            if isinstance(f_date_range_rrhh, (list, tuple)) and len(f_date_range_rrhh) > 0:
+                start_f = f_date_range_rrhh[0]
+                end_f = f_date_range_rrhh[1] if len(f_date_range_rrhh) > 1 else start_f
+                
+                df_filtered["temp_date_start"] = pd.to_datetime(df_filtered["leave_date_start"]).dt.date
+                df_filtered["temp_date_end"] = pd.to_datetime(df_filtered["leave_date_end"]).dt.date
+                df_filtered = df_filtered[
+                    (df_filtered["temp_date_end"] >= start_f) & (df_filtered["temp_date_start"] <= end_f)
+                ]
+                df_filtered = df_filtered.drop(columns=["temp_date_start", "temp_date_end"])
+
+            if df_filtered.empty:
+                st.warning("⚠️ No se encontraron solicitudes con los filtros seleccionados.")
+            else:
+                st.write(f"Tienes **{len(df_filtered)}** solicitud(es) por procesar definitivamente.")
+                for _, r in df_filtered.iterrows():
+                    with st.container(border=True):
+                        cols = st.columns([3, 1])
+                        with cols[0]:
+                            badge = "🟣 RRHH FINAL"
+                            icon = get_reason_icon(r['reason_type'])
+                            st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{icon} {r['reason_type']}* | {badge}")
+                            st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
+                            if pd.notna(r.get('start_time')) and r.get('start_time'):
+                                st.write(f"**Horario:** {r['start_time']} a {r['end_time']} | **Tiempo Total:** {r['total_time']}")
+                            
+                            if ('coord_name' in r and pd.notna(r['coord_name'])) or ('jefe_name' in r and pd.notna(r['jefe_name'])):
+                                with st.expander("✅ Ver Historial de Aprobaciones Previas", expanded=True):
+                                    if 'coord_name' in r and pd.notna(r['coord_name']):
+                                        st.markdown(f"- **Visto Bueno (Coordinador):** {r['coord_name']}")
+                                    if 'jefe_name' in r and pd.notna(r['jefe_name']):
+                                        st.markdown(f"- **Firma (Jefe de Área):** {r['jefe_name']}")
+                            
+                            st.write(f"**Justificación:** {r['reason_description']}")
+                            if not r['is_paid'] and pd.notna(r.get('how_to_makeup')) and str(r['how_to_makeup']).strip():
+                                st.warning(f"**Acuerdo de Reposición (Tiempo):** {r['how_to_makeup']}")
+                            
+                            if r['attachment_path']:
+                                import os
+                                from database_conn.connection import DATA_DIR
+                                file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
+                                if os.path.exists(file_path):
+                                    if st.button("👁️ Ver Soporte Adjunto", key=f"btn_preview_rrhh_{r['id']}", use_container_width=True):
+                                        preview_attachment_dialog(r['attachment_path'], r['full_name'])
                     with cols[1]:
                         requiere_jefe_tipo = r['reason_type'] in [
                             "Vacaciones", 
@@ -771,7 +855,11 @@ def page_exceptions():
                                 with db_session() as conn:
                                     cur = conn.cursor()
                                     for i in range(days_diff):
-                                        day_to_log = (start_d + timedelta(days=i)).strftime("%Y-%m-%d")
+                                        curr_date = start_d + timedelta(days=i)
+                                        if r['reason_type'] == "Vacaciones":
+                                            if curr_date.weekday() == 6 or is_holiday(curr_date):
+                                                continue
+                                        day_to_log = curr_date.strftime("%Y-%m-%d")
                                         cur.execute("""
                                             INSERT INTO exceptions (user_id, date, type, notes, created_at)
                                             VALUES (?, ?, ?, ?, ?)
