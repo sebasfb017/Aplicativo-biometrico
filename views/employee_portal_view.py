@@ -590,7 +590,7 @@ def page_employee_portal():
                 st.info("No tienes solicitudes en esta categoría.")
             else:
                 for _, r in filtered_df_reqs.iterrows(): # Usamos el DataFrame filtrado
-                    with st.container(border=True):
+                    with st.container(border=True, key=f"container_portal_{r['Radicado']}"):
                         cols = st.columns([3, 2])
                         with cols[0]:
                             status_badge = ""
