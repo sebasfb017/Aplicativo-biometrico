@@ -113,6 +113,7 @@ def show_exception_details(exc_id: int):
         with c1:
             st.markdown(f"**Radicado:** #{req['id']}")
             st.markdown(f"**Fecha de Solicitud:** {req['request_date']}")
+            st.markdown(f"**Fechas de Ausencia:** {req['leave_date_start']} al {req['leave_date_end']}")
             st.markdown(f"**Remunerado:** {'✅ Sí' if req['is_paid'] else '❌ No'}")
         with c2:
             h_in = req['start_time'] if req['start_time'] else "N/A"
@@ -360,14 +361,20 @@ def page_exceptions():
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_JEFE' AND 
                           (
-                              (ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
+                              (ua.username IN ('119279359', '111627893') AND ? = 'Administrativo') OR
+                              (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
                               (ua.emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo') OR
                               (lr.user_id IN ({','.join(['?']*len(ZARZAL_EMPLOYEES))}) AND ? = 'Administrativo')
                           )
                     ORDER BY lr.id ASC
                 """
-                params = (user.get('managed_area', ''), user.get('managed_area', ''), user.get('managed_area', ''))
+                params = (
+                    user.get('managed_area', ''),
+                    user.get('managed_area', ''),
+                    user.get('managed_area', ''),
+                )
                 params += tuple(ZARZAL_EMPLOYEES)
+                params += (user.get('managed_area', ''),)
                 
             with db_session() as conn:
                 df_pend = pd.read_sql_query(query, conn, params=params)
@@ -434,7 +441,7 @@ def page_exceptions():
                         st.write(f"Tienes **{len(df_filtered)}** solicitud(es) por revisar.")
                         
                     for _, r in df_filtered.iterrows():
-                        with st.container(border=True):
+                        with st.container(border=True, key=f"container_pend_{r['id']}"):
                             cols = st.columns([3, 1])
                             with cols[0]:
                                 icon = get_reason_icon(r['reason_type'])
@@ -767,7 +774,7 @@ def page_exceptions():
             else:
                 st.write(f"Tienes **{len(df_filtered)}** solicitud(es) por procesar definitivamente.")
                 for _, r in df_filtered.iterrows():
-                    with st.container(border=True):
+                    with st.container(border=True, key=f"container_rrhh_{r['id']}"):
                         cols = st.columns([3, 1])
                         with cols[0]:
                             badge = "🟣 RRHH FINAL"
@@ -808,8 +815,12 @@ def page_exceptions():
                         ]
                         
                         # Si no tuvo coordinador (pasó directo a RRHH) y no es una incapacidad,
-                        # forzamos que pase a la firma del Jefe de Área.
-                        requiere_jefe = requiere_jefe_tipo or (pd.isna(r.get('coord_name')) and r['reason_type'] != "Incapacidad")
+                        # forzamos que pase a la firma del Jefe de Área (excepto para permisos personales/laborales de Valentina/Steven).
+                        is_special_user = str(r['user_id']) in ['119279359', '111627893']
+                        if is_special_user and r['reason_type'] in ["Permiso Personal", "Permiso Laboral"]:
+                            requiere_jefe = False
+                        else:
+                            requiere_jefe = requiere_jefe_tipo or (pd.isna(r.get('coord_name')) and r['reason_type'] != "Incapacidad")
                         
                         btn_label = "✅ Visto Bueno (A Jefe)" if requiere_jefe else "✅ Aprobar Final"
                         
@@ -824,6 +835,7 @@ def page_exceptions():
                                     jefe_df = pd.read_sql_query("""
                                         WITH TargetArea AS (
                                             SELECT CASE 
+                                                WHEN username IN ('119279359', '111627893') THEN 'Administrativo'
                                                 WHEN emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') THEN 'Administrativo' 
                                                 WHEN emp_subarea IN ('Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía') THEN 'Control Interno'
                                                 WHEN role = 'coordinador' AND (managed_department LIKE '%Admisiones%' OR managed_department LIKE '%Rehabilitación%' OR managed_department LIKE '%Tecnólogo Rayos X%' OR managed_department LIKE '%Farmacia%' OR managed_department LIKE '%Mantenimiento%' OR managed_department LIKE '%Seguridad%' OR managed_department LIKE '%Orientador%') THEN 'Administrativo'
@@ -956,7 +968,9 @@ def page_exceptions():
                         u_managed = row['user_managed_dept']
                         
                         target_jefe_area = area
-                        if subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
+                        if str(row['user_id']) in ['119279359', '111627893']:
+                            target_jefe_area = 'Administrativo'
+                        elif subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
                             target_jefe_area = 'Administrativo'
                         elif subarea in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']: 
                             target_jefe_area = 'Control Interno'
