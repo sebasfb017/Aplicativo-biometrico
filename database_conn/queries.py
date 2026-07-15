@@ -175,8 +175,10 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
         # Si radica el Jefe, se auto-aprueba (es la última instancia)
         target_status = "APPROVED"
     elif role == "empleado":
+        if str(user_id) in ['119279359', '111627893']:
+            target_status = "PENDING_RRHH"
         # Override Sede Zarzal
-        if str(user_id) in ZARZAL_EMPLOYEES:
+        elif str(user_id) in ZARZAL_EMPLOYEES:
             target_status = "PENDING_COORD"
         else:
             # Si es empleado, pero no tiene coordinador activo para su subárea, pasa directo a RRHH
