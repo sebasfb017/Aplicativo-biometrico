@@ -28,6 +28,16 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS user_sessions (
+        token TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY(username) REFERENCES users_app(username)
+    );
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS profiles (
         profile_id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
@@ -438,6 +448,19 @@ def initialize_colombian_holidays(cur):
     
     for dt, name in sorted(co_holidays.items()):
         date_str = dt.strftime("%Y-%m-%d")
+        try:
+            cur.execute("""
+                INSERT OR IGNORE INTO holidays(date, description, created_at)
+                VALUES(?, ?, ?)
+            """, (date_str, name, datetime.now().isoformat(timespec="seconds")))
+        except Exception:
+            pass
+
+    # Festivos adicionales colombianos por Ley 2578 de 2026 (Virgen de Chiquinquirá)
+    custom_holidays = [
+        ("2026-07-13", "Día de Nuestra Señora del Rosario de Chiquinquirá (Ley 2578)"),
+    ]
+    for date_str, name in custom_holidays:
         try:
             cur.execute("""
                 INSERT OR IGNORE INTO holidays(date, description, created_at)
