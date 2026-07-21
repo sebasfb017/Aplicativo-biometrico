@@ -3,6 +3,54 @@ import streamlit as st
 from datetime import datetime, date
 from database_conn.connection import db_conn, db_session
 from utils.constants import ZARZAL_EMPLOYEES
+import secrets
+from datetime import timedelta
+
+def db_create_session(username: str) -> str:
+    """Genera un token de sesión seguro, lo registra en la base de datos y retorna el token."""
+    token = secrets.token_urlsafe(24)
+    now = datetime.now()
+    expires = now + timedelta(days=7) # Validez de 7 días
+    
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO user_sessions (token, username, created_at, expires_at)
+            VALUES (?, ?, ?, ?)
+        """, (token, username, now.isoformat(), expires.isoformat()))
+    return token
+
+def db_validate_session(token: str):
+    """Valida un token de sesión y retorna la información completa del usuario si es válido."""
+    now_str = datetime.now().isoformat()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT u.username, u.full_name, u.role, u.active, u.emp_area, u.emp_subarea, u.managed_department, u.managed_area
+            FROM user_sessions s
+            JOIN users_app u ON s.username = u.username
+            WHERE s.token = ? AND s.expires_at > ? AND u.active = 1
+        """, (token, now_str))
+        row = cur.fetchone()
+        
+    if row:
+        return {
+            "username": row[0],
+            "full_name": row[1],
+            "role": row[2],
+            "active": row[3],
+            "emp_area": row[4],
+            "emp_subarea": row[5],
+            "managed_department": row[6],
+            "managed_area": row[7]
+        }
+    return None
+
+def db_delete_session(token: str):
+    """Elimina la sesión correspondiente al token para cerrar la sesión."""
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM user_sessions WHERE token = ?", (token,))
 
 # --- GESTIÓN DE USUARIOS (Corrección de Errores y Consultas) ---
 
@@ -140,16 +188,41 @@ def upsert_exception(user_id, date_str, exc_type, notes):
         """, (user_id, date_str, exc_type, notes, datetime.now().isoformat(timespec="seconds")))
 
 def get_exceptions_df():
-    """Obtiene el histórico de todas las novedades para el visor administrativo."""
+    """Obtiene el histórico de todas las novedades agrupando días consecutivos."""
     conn = db_conn()
     df = pd.read_sql_query("""
         SELECT ex.id, ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
         FROM exceptions ex
         LEFT JOIN employees e ON ex.user_id = e.user_id
-        ORDER BY ex.date DESC
+        ORDER BY ex.user_id, ex.type, ex.date ASC
     """, conn)
     conn.close()
-    return df
+    
+    if df.empty:
+        df['date_end'] = pd.Series(dtype='object')
+        return df[['id', 'user_id', 'full_name', 'date', 'date_end', 'type', 'notes', 'created_at']]
+        
+    df['date_obj'] = pd.to_datetime(df['date'])
+    
+    df['grp'] = (
+        (df['user_id'] != df['user_id'].shift()) |
+        (df['type'] != df['type'].shift()) |
+        (df['date_obj'].diff().dt.days > 4) |
+        (df['date_obj'].diff().dt.days <= 0)
+    ).cumsum()
+    
+    grouped = df.groupby(['user_id', 'full_name', 'type', 'grp']).agg(
+        id=('id', 'first'),
+        date=('date', 'min'),
+        date_end=('date', 'max'),
+        notes=('notes', lambda x: ', '.join([str(i) for i in x.dropna().unique()]) if len(x.dropna()) > 0 else 'Ingresado por cuadro de turnos'),
+        created_at=('created_at', 'min')
+    ).reset_index()
+    
+    final_df = grouped[['id', 'user_id', 'full_name', 'date', 'date_end', 'type', 'notes', 'created_at']].copy()
+    final_df = final_df.sort_values('created_at', ascending=False)
+    
+    return final_df
 
 def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, total_time, r_type, r_desc, makeup, is_paid, attachment_path=None):
     """Crea una solicitud digital y define el flujo de aprobación inicial."""
