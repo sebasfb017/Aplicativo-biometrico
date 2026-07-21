@@ -90,7 +90,7 @@ def main():
     
     /* Contenedores Expander con hover Premium */
     div[data-testid="stExpander"] {
-        border-radius: 12px !important;
+        border-radius: 14px !important;
         background: var(--glass-bg);
         border: 1px solid var(--glass-border);
         transition: all 0.3s ease;
@@ -99,6 +99,53 @@ def main():
     div[data-testid="stExpander"]:hover {
         border-color: var(--primary-blue);
         box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    }
+    
+    /* Sombras y bordes redondeados para Tablas y Dataframes */
+    div[data-testid="stDataFrame"] > div, div[data-testid="stTable"] > div {
+        border-radius: 14px !important;
+        overflow: hidden !important;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.06) !important;
+        border: 1px solid var(--glass-border) !important;
+    }
+    
+    /* Inputs, Selects y TextAreas redondeados */
+    div[data-testid="stTextInput"] input, 
+    div[data-testid="stSelectbox"] div[data-baseweb="select"], 
+    div[data-testid="stNumberInput"] input, 
+    div[data-testid="stTextArea"] textarea {
+        border-radius: 10px !important;
+        border: 1px solid rgba(128,128,128,0.2) !important;
+        transition: box-shadow 0.2s, border-color 0.2s !important;
+    }
+    div[data-testid="stTextInput"] input:focus, 
+    div[data-testid="stSelectbox"] div[data-baseweb="select"]:focus-within, 
+    div[data-testid="stTextArea"] textarea:focus {
+        box-shadow: 0 0 0 2px var(--glow-blue) !important;
+        border-color: var(--primary-blue) !important;
+    }
+    
+    /* Estilizar los Formularios como Tarjetas (Cards) */
+    div[data-testid="stForm"] {
+        background-color: var(--glass-bg);
+        border-radius: 16px !important;
+        padding: 24px !important;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.04) !important;
+        border: 1px solid var(--glass-border) !important;
+    }
+    
+    /* Estilizar la barra lateral (Sidebar) */
+    section[data-testid="stSidebar"] {
+        box-shadow: 2px 0 12px rgba(0,0,0,0.05) !important;
+    }
+    
+    /* Pestañas (Tabs) estilo "Pill" modernas */
+    button[data-baseweb="tab"] {
+        border-radius: 8px 8px 0 0 !important;
+        transition: background-color 0.2s;
+    }
+    button[data-baseweb="tab"]:hover {
+        background-color: rgba(128,128,128,0.05) !important;
     }
 
     /* Skeleton Loader para carga asíncrona */
@@ -113,7 +160,7 @@ def main():
         width: 100%;
         background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
         background-size: 200% 100%;
-        border-radius: 12px;
+        border-radius: 14px;
         animation: skeleton-loading 1.5s infinite linear;
         margin-bottom: 1rem;
         border: 1px solid var(--glass-border);
@@ -125,6 +172,38 @@ def main():
             background: linear-gradient(90deg, #2b2b2b 25%, #3b3b3b 50%, #2b2b2b 75%);
             background-size: 200% 100%;
         }
+    }
+    
+    /* Scrollbar Personalizada (Barras de desplazamiento) */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: rgba(13, 110, 253, 0.3);
+        border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: rgba(13, 110, 253, 0.7);
+    }
+
+    /* Animación de Carga (Spinners) y Barra Superior */
+    div[data-testid="stSpinner"] circle {
+        stroke: var(--primary-blue) !important;
+    }
+    div[data-testid="stSpinner"] div {
+        border-top-color: var(--primary-blue) !important;
+        border-left-color: var(--primary-blue) !important;
+    }
+    /* El indicador de "Running..." arriba a la derecha */
+    div[data-testid="stStatusWidget"] {
+        background: var(--glass-bg);
+        border: 1px solid var(--primary-blue);
+        border-radius: 8px;
+        box-shadow: 0 0 10px var(--glow-blue);
     }
     </style>
     """, unsafe_allow_html=True)
@@ -145,6 +224,16 @@ def main():
             
     _ = init_scheduler()
     # --- FIN BACKGROUND SCHEDULER ---
+
+    from database_conn.queries import db_validate_session, db_delete_session
+
+    # --- PERSISTENCIA DE SESIÓN POR TOKEN (QUERY PARAMS) ---
+    if not st.session_state.get("user") and "session_token" in st.query_params:
+        token = st.query_params["session_token"]
+        user_info = db_validate_session(token)
+        if user_info:
+            st.session_state["user"] = user_info
+            st.session_state["session_token"] = token
 
     user = st.session_state.get("user")
     if not user:
@@ -170,6 +259,13 @@ def main():
     now = datetime.now()
     if last_activity:
         if now - last_activity > timedelta(minutes=10):
+            token = st.session_state.get("session_token")
+            if token:
+                try:
+                    db_delete_session(token)
+                except Exception:
+                    pass
+            st.query_params.clear()
             st.session_state.clear()
             st.error("Sesión cerrada automáticamente por 10 minutos de inactividad por seguridad.")
             st.rerun()
@@ -186,8 +282,17 @@ def main():
         pass
     # -------------------------------------------
 
+    from datetime import datetime
+    current_hour = datetime.now().hour
+    if current_hour < 12:
+        greeting_msg = "☕ Buenos días"
+    elif current_hour < 19:
+        greeting_msg = "🌤️ Buenas tardes"
+    else:
+        greeting_msg = "🌙 Buenas noches"
+
     st.sidebar.markdown(f"<h2 style='text-align: center; color: #0066cc;'>Dolormed RRHH</h2>", unsafe_allow_html=True)
-    st.sidebar.markdown(f"<div style='text-align: center; color: gray; margin-bottom: 20px;'>Hola, <b>{user['full_name']}</b><br><small>({user['role'].upper()})</small></div>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div style='text-align: center; color: gray; margin-bottom: 20px;'>{greeting_msg}, <b>{user['full_name'].split()[0]}</b><br><small>({user['role'].upper()})</small></div>", unsafe_allow_html=True)
 
     ROLES_MENU = {
         "admin": (["Dashboard", "Mi Portal de Autogestión", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"],
@@ -224,25 +329,44 @@ def main():
                 if st.button("Marcar todas como leídas", key="mark_all_read_top_btn", use_container_width=True):
                     db_mark_all_notifications_read(user['username'])
                     st.rerun()
-        st.markdown("<br>", unsafe_allow_html=True)
-        # ----------------------------------
-        
+        # --- PERSISTENCIA DEL MENÚ ACTIVO ---
+        if "menu_sel" in st.query_params:
+            stored_sel = st.query_params["menu_sel"]
+            if stored_sel in menu_options:
+                st.session_state["menu_selection"] = stored_sel
+            st.query_params.pop("menu_sel", None)
+            
+        default_idx = 0
+        if "menu_selection" in st.session_state:
+            stored_sel = st.session_state["menu_selection"]
+            if stored_sel in menu_options:
+                default_idx = menu_options.index(stored_sel)
+
         sel = option_menu(
             menu_title=None,
             options=menu_options,
             icons=menu_icons,
             menu_icon="cast",
-            default_index=0,
+            default_index=default_idx,
+            key="sidebar_menu",
             styles={
                 "container": {"padding": "0!important", "background-color": "transparent"},
                 "icon": {"color": "#0066cc", "font-size": "18px"},
-                "nav-link": {"font-size": "15px", "text-align": "left", "margin":"0px", "--hover-color": "#e9ecef"},
+                "nav-link": {"font-size": "15px", "text-align": "left", "margin":"0px", "--hover-color": "rgba(128,128,128,0.15)"},
                 "nav-link-selected": {"background-color": "#0066cc", "color": "white", "icon-color":"white"},
             }
         )
+        st.session_state["menu_selection"] = sel
         st.markdown("<br><br>", unsafe_allow_html=True)
         
         if st.button("Cerrar Sesión", type="primary", use_container_width=True):
+            token = st.session_state.get("session_token")
+            if token:
+                try:
+                    db_delete_session(token)
+                except Exception:
+                    pass
+            st.query_params.clear()
             st.session_state.clear()
             st.rerun()
 
