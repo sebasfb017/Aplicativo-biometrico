@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta, datetime
+from streamlit_option_menu import option_menu
 
 from database_conn.connection import db_session, db_conn
 from database_conn.queries import (upsert_exception, get_exceptions_df, 
@@ -292,18 +293,342 @@ def handle_approve_callback(r_dict, user):
         log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r_dict['id']} ({r_dict['reason_type']}) de {r_dict['full_name']} APROBADO FINAL por Jefe de Área.")
         notify_employee_status(r_dict['user_id'], r_dict['full_name'], r_dict['id'], r_dict['reason_type'], "APROBACIÓN FINAL", "Tu solicitud fue completamente aprobada por tu Jefatura y registrada oficialmente en el sistema.", user['full_name'])
 
+def render_absence_calendar(user):
+    import calendar
+    
+    st.write("Visualiza las ausencias programadas y pendientes del personal a tu cargo.")
+    
+    # 1. Filtros de Fecha
+    hoy = date.today()
+    meses = [
+        "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+        "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+    ]
+    
+    c_m1, c_m2 = st.columns(2)
+    with c_m1:
+        selected_month_name = st.selectbox("Mes", meses, index=hoy.month - 1, key="cal_sel_month")
+        selected_month = meses.index(selected_month_name) + 1
+    with c_m2:
+        selected_year = st.selectbox("Año", list(range(hoy.year - 1, hoy.year + 2)), index=1, key="cal_sel_year")
+        
+    # Leyenda
+    st.markdown("""
+    <div style='display: flex; gap: 15px; margin-bottom: 15px; font-size: 0.85rem; background-color: rgba(128,128,128,0.05); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(128,128,128,0.1);'>
+        <div><span style='display:inline-block; width:12px; height:12px; background-color:#3b82f6; border-radius:3px; vertical-align:middle; margin-right:4px;'></span><strong>Botón Azul:</strong> Solicitud Aprobada (Confirmado)</div>
+        <div><span style='display:inline-block; width:12px; height:12px; background-color:#eab308; border-radius:3px; vertical-align:middle; margin-right:4px;'></span><strong>Botón Amarillo:</strong> Solicitud Pendiente (Advertencia)</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # 2. Consultar Solicitudes del mes
+    first_day = date(selected_year, selected_month, 1)
+    dias_del_mes = calendar.monthrange(selected_year, selected_month)[1]
+    last_day = date(selected_year, selected_month, dias_del_mes)
+    
+    first_day_str = first_day.isoformat()
+    last_day_str = last_day.isoformat()
+    
+    status_filter = "('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH', 'APPROVED')"
+    
+    effective_role = user["role"]
+    if effective_role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
+        effective_role = "nomina"
+        
+    if effective_role not in ["admin", "nomina", "coordinador", "jefe_area"]:
+        return
+        
+    query = ""
+    params = ()
+    
+    if effective_role in ["admin", "nomina"]:
+        query = f"""
+            SELECT lr.id, lr.user_id, e.full_name, lr.leave_date_start, lr.leave_date_end, 
+                   lr.reason_type, lr.total_time, lr.status, lr.reason_description
+            FROM leave_requests lr
+            JOIN employees e ON lr.user_id = e.user_id
+            LEFT JOIN users_app ua ON lr.user_id = ua.username
+            WHERE lr.status IN {status_filter}
+              AND lr.leave_date_start <= ? AND lr.leave_date_end >= ?
+            ORDER BY lr.leave_date_start ASC
+        """
+        params = (last_day_str, first_day_str)
+    elif effective_role == "coordinador":
+        managed_depts = [d.strip() for d in user.get('managed_department', '').split(',') if d.strip()]
+        if not managed_depts:
+            managed_depts = ['']
+        placeholders = ','.join(['?'] * len(managed_depts))
+        cond_serv_gen = "OR (ua.emp_subarea = 'Servicios Generales')" if 'Calidad' in managed_depts else ""
+        cond_orientador = "OR (ua.emp_subarea = 'Orientador')" if 'Seguridad' in managed_depts else ""
+        cond_zarzal = f"OR (lr.user_id IN ({','.join(['?']*len(ZARZAL_EMPLOYEES))}))" if user['username'] == '94152519' else ""
+        
+        query = f"""
+            SELECT lr.id, lr.user_id, e.full_name, lr.leave_date_start, lr.leave_date_end, 
+                   lr.reason_type, lr.total_time, lr.status, lr.reason_description
+            FROM leave_requests lr
+            JOIN employees e ON lr.user_id = e.user_id
+            LEFT JOIN users_app ua ON lr.user_id = ua.username
+            WHERE lr.status IN {status_filter}
+              AND lr.leave_date_start <= ? AND lr.leave_date_end >= ?
+              AND (
+                  ua.emp_subarea IN ({placeholders})
+                  {cond_serv_gen}
+                  {cond_orientador}
+                  {cond_zarzal}
+              )
+            ORDER BY lr.leave_date_start ASC
+        """
+        params = [last_day_str, first_day_str] + managed_depts
+        if user['username'] == '94152519':
+            params += ZARZAL_EMPLOYEES
+        params = tuple(params)
+    elif effective_role == "jefe_area":
+        if user.get('managed_area', '') == 'Control Interno':
+            query = f"""
+                SELECT lr.id, lr.user_id, e.full_name, lr.leave_date_start, lr.leave_date_end, 
+                       lr.reason_type, lr.total_time, lr.status, lr.reason_description
+                FROM leave_requests lr
+                JOIN employees e ON lr.user_id = e.user_id
+                LEFT JOIN users_app ua ON lr.user_id = ua.username
+                WHERE lr.status IN {status_filter}
+                  AND lr.leave_date_start <= ? AND lr.leave_date_end >= ?
+                ORDER BY lr.leave_date_start ASC
+            """
+            params = (last_day_str, first_day_str)
+        else:
+            query = f"""
+                SELECT lr.id, lr.user_id, e.full_name, lr.leave_date_start, lr.leave_date_end, 
+                       lr.reason_type, lr.total_time, lr.status, lr.reason_description
+                FROM leave_requests lr
+                JOIN employees e ON lr.user_id = e.user_id
+                LEFT JOIN users_app ua ON lr.user_id = ua.username
+                WHERE lr.status IN {status_filter}
+                  AND lr.leave_date_start <= ? AND lr.leave_date_end >= ?
+                  AND (
+                      (ua.username IN ('119279359', '111627893') AND ? = 'Administrativo') OR
+                      (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
+                      (ua.emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo') OR
+                      (lr.user_id IN ({','.join(['?']*len(ZARZAL_EMPLOYEES))}) AND ? = 'Administrativo')
+                  )
+                ORDER BY lr.leave_date_start ASC
+            """
+            params = [last_day_str, first_day_str]
+            params += [
+                user.get('managed_area', ''),
+                user.get('managed_area', ''),
+                user.get('managed_area', ''),
+            ]
+            params += ZARZAL_EMPLOYEES
+            params += [user.get('managed_area', '')]
+            params = tuple(params)
+            
+    with db_session() as conn:
+        df_reqs = pd.read_sql_query(query, conn, params=params)
+        
+    # Agrupar eventos por día
+    events_by_day = {}
+    for d in range(1, dias_del_mes + 1):
+        curr_date = date(selected_year, selected_month, d)
+        date_str = curr_date.isoformat()
+        events_by_day[date_str] = []
+        for _, r in df_reqs.iterrows():
+            start_d = date.fromisoformat(r['leave_date_start'])
+            end_d = date.fromisoformat(r['leave_date_end'])
+            if start_d <= curr_date <= end_d:
+                events_by_day[date_str].append(r)
+                
+    # Construir HTML del grid con Estilo Super Premium
+    grid_html = """
+<style>
+.cal-wrapper { 
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(128,128,128,0.15); 
+  border-radius: 18px; 
+  padding: 24px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.08);
+  overflow-x: auto;
+  margin-bottom: 2rem;
+}
+.cal-header { 
+  display: flex; min-width: 800px;
+  text-align: center; font-weight: 700; margin-bottom: 15px; opacity: 0.8; font-size: 0.95rem; 
+}
+.cal-header > div { flex: 1; }
+.cal-grid { 
+  display: flex; flex-wrap: wrap; gap: 10px; min-width: 800px;
+}
+.cal-cell {
+  width: calc(14.28% - 9px); min-height: 120px; border-radius: 14px; padding: 10px;
+  display: flex; flex-direction: column;
+  position: relative; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  border: 1px solid rgba(128,128,128,0.12);
+  background-color: rgba(128,128,128,0.02);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.02);
+}
+.cal-cell:hover { 
+  transform: translateY(-5px) scale(1.03); 
+  z-index: 10; 
+  box-shadow: 0 15px 30px rgba(13, 110, 253, 0.15); 
+  border-color: rgba(13, 110, 253, 0.5); 
+}
+
+.day-number { align-self: flex-end; font-weight: 700; font-size: 1.05rem; opacity: 0.9; margin-bottom: 5px; }
+
+/* Tipos de celda */
+.day-empty { background: transparent; pointer-events: none; border: none; }
+.day-today { border-color: #0d6efd !important; background-color: rgba(13, 110, 253, 0.03) !important; }
+
+/* Enlaces de eventos */
+.event-link {
+  display: block;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  border-radius: 5px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: none !important;
+  transition: all 0.2s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.event-link:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+}
+.event-approved {
+  background-color: rgba(13, 110, 253, 0.2) !important;
+  color: #3b82f6 !important;
+  border: 1px solid rgba(13, 110, 253, 0.4) !important;
+}
+.event-approved:hover {
+  background-color: rgba(13, 110, 253, 0.35) !important;
+  color: #60a5fa !important;
+}
+.event-pending {
+  background-color: rgba(234, 179, 8, 0.2) !important;
+  color: #facc15 !important;
+  border: 1px solid rgba(234, 179, 8, 0.4) !important;
+}
+.event-pending:hover {
+  background-color: rgba(234, 179, 8, 0.35) !important;
+  color: #fef08a !important;
+}
+</style>
+<div class="cal-wrapper">
+<div class="cal-header">
+    <div>Lunes</div><div>Martes</div><div>Miércoles</div><div>Jueves</div><div>Viernes</div><div>Sábado</div><div>Domingo</div>
+</div>
+<div class="cal-grid">
+"""
+    
+    start_weekday = first_day.weekday() # 0=Lun, 6=Dom
+    
+    # Rellenar celdas vacías al inicio
+    for _ in range(start_weekday):
+        grid_html += '<div class="cal-cell day-empty"></div>'
+        
+    import urllib.parse
+    
+    session_token = st.session_state.get("session_token", "")
+    session_param = f"&session_token={session_token}" if session_token else ""
+    current_tab = st.session_state.get("exceptions_active_tab", 0)
+    tab_param = f"&tab_sel={current_tab}"
+    
+    menu_name = "Autorización de Permisos" if effective_role in ["coordinador", "jefe_area"] else "Novedades y Excepciones"
+    menu_param_val = urllib.parse.quote_plus(menu_name)
+    
+    for d in range(1, dias_del_mes + 1):
+        curr_date = date(selected_year, selected_month, d)
+        date_str = curr_date.isoformat()
+        day_events = events_by_day.get(date_str, [])
+        
+        # Clases de la celda
+        cell_classes = ["cal-cell"]
+        if curr_date == date.today():
+            cell_classes.append("day-today")
+            
+        grid_html += f'<div class="{" ".join(cell_classes)}">'
+        grid_html += f'<div class="day-number">{d}</div>'
+        
+        for r in day_events:
+            icon = get_reason_icon(r['reason_type'])
+            status = r['status']
+            event_class = "event-approved" if status == 'APPROVED' else "event-pending"
+            anchor_id = f"req-{r['id']}"
+            grid_html += f'<a id="{anchor_id}" href="?selected_req_id={r["id"]}&menu_sel={menu_param_val}{session_param}{tab_param}#{anchor_id}" target="_self" class="event-link {event_class}">{icon} {r["full_name"]}</a>'
+            
+        grid_html += '</div>'
+        
+    grid_html += """
+</div>
+</div>
+"""
+    st.markdown(grid_html, unsafe_allow_html=True)
 
 def page_exceptions():
     require_role("admin", "nomina", "jefe_area", "coordinador")
+    
+    # Interceptar clic en el calendario (parámetro de consulta)
+    if "selected_req_id" in st.query_params:
+        try:
+            req_id = int(st.query_params["selected_req_id"])
+            if st.session_state.get("last_opened_req_id") != req_id:
+                # Abrir el modal en esta recarga
+                st.session_state["last_opened_req_id"] = req_id
+                show_leave_request_details(req_id)
+            else:
+                # En la siguiente interacción o recarga, limpiamos la URL para no reabrir el modal
+                del st.query_params["selected_req_id"]
+                st.session_state["last_opened_req_id"] = None
+        except Exception:
+            pass
+
     st.title("🛡️ Novedades y Justificaciones")
     user = st.session_state["user"]
+
+    # --- PERSISTENCIA DE PESTAÑA ACTIVA ---
+    if "tab_sel" in st.query_params:
+        try:
+            st.session_state["exceptions_active_tab"] = int(st.query_params["tab_sel"])
+        except Exception:
+            pass
+        st.query_params.pop("tab_sel", None)
+        
+    default_tab_idx = 0
+    if "exceptions_active_tab" in st.session_state:
+        default_tab_idx = st.session_state["exceptions_active_tab"]
 
     if user["role"] in ["coordinador", "jefe_area"]:
         st.write(f"Panel de Gestión para: **{user.get('managed_department') or user.get('managed_area')}**")
         
-        tab1, tab2 = st.tabs(["📥 Bandeja de Aprobación", "🕰️ Historial de Decisiones"])
+        tab_options = ["📥 Bandeja de Aprobación", "📅 Calendario de Ausencias", "🕰️ Historial de Decisiones"]
+        sel_tab = option_menu(
+            menu_title=None,
+            options=tab_options,
+            icons=["inbox", "calendar", "clock-history"],
+            menu_icon="cast",
+            default_index=default_tab_idx,
+            orientation="horizontal",
+            key="coord_tabs_menu",
+            styles={
+                "container": {"padding": "0!important", "background-color": "transparent", "border": "none"},
+                "icon": {"color": "#0066cc", "font-size": "14px"},
+                "nav-link": {"font-size": "14px", "text-align": "center", "margin":"0px", "--hover-color": "rgba(128,128,128,0.15)"},
+                "nav-link-selected": {"background-color": "#0066cc", "color": "white", "icon-color":"white"},
+            }
+        )
+        st.session_state["exceptions_active_tab"] = tab_options.index(sel_tab)
         
-        with tab1:
+        if sel_tab == "📥 Bandeja de Aprobación":
+            
+            col_t, col_btn = st.columns([7, 3])
+            with col_btn:
+                if st.button("🔄 Actualizar Bandeja", use_container_width=True, key="btn_refresh_coord", help="Obtener nuevas solicitudes sin recargar toda la página"):
+                    st.rerun()
+                st.caption(f"Última actualización: {datetime.now().strftime('%H:%M:%S')}")
+            
             if user["role"] == "coordinador":
                 managed_depts = [d.strip() for d in user.get('managed_department', '').split(',') if d.strip()]
                 if not managed_depts:
@@ -328,7 +653,7 @@ def page_exceptions():
                               {cond_orientador}
                               {cond_zarzal}
                           )
-                    ORDER BY lr.id ASC
+                    ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
                 params = tuple(managed_depts)
                 if user['username'] == '94152519':
@@ -345,7 +670,7 @@ def page_exceptions():
                     JOIN employees e ON lr.user_id = e.user_id
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_JEFE'
-                    ORDER BY lr.id ASC
+                    ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
                 params = ()
             else:
@@ -366,7 +691,7 @@ def page_exceptions():
                               (ua.emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo') OR
                               (lr.user_id IN ({','.join(['?']*len(ZARZAL_EMPLOYEES))}) AND ? = 'Administrativo')
                           )
-                    ORDER BY lr.id ASC
+                    ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
                 params = (
                     user.get('managed_area', ''),
@@ -478,7 +803,10 @@ def page_exceptions():
                                 if st.session_state.get(f"show_rejection_dialog_{r['id']}", False):
                                     rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
                                 
-        with tab2:
+        elif sel_tab == "📅 Calendario de Ausencias":
+            render_absence_calendar(user)
+            
+        elif sel_tab == "🕰️ Historial de Decisiones":
             if user["role"] == "coordinador":
                 managed_depts = [d.strip() for d in user.get('managed_department', '').split(',') if d.strip()]
                 if not managed_depts:
@@ -566,9 +894,37 @@ def page_exceptions():
         st.warning("No hay empleados en el directorio.")
         return
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 Registrar Novedad Manual", "📋 Listado de Novedades", "📥 Solicitudes Digitales de Empleados", "🌐 Monitoreo Global"])
+    # --- PERSISTENCIA DE PESTAÑA ACTIVA ---
+    if "tab_sel" in st.query_params:
+        try:
+            st.session_state["exceptions_active_tab"] = int(st.query_params["tab_sel"])
+        except Exception:
+            pass
+        st.query_params.pop("tab_sel", None)
+        
+    default_tab_idx = 0
+    if "exceptions_active_tab" in st.session_state:
+        default_tab_idx = st.session_state["exceptions_active_tab"]
 
-    with tab1:
+    tab_options = ["📝 Registrar Novedad Manual", "📋 Listado de Novedades", "📥 Solicitudes Digitales de Empleados", "📅 Calendario de Ausencias", "🌐 Monitoreo Global"]
+    sel_tab = option_menu(
+        menu_title=None,
+        options=tab_options,
+        icons=["pencil", "list-task", "download", "calendar", "globe"],
+        menu_icon="cast",
+        default_index=default_tab_idx,
+        orientation="horizontal",
+        key="admin_tabs_menu",
+        styles={
+            "container": {"padding": "0!important", "background-color": "transparent", "border": "none"},
+            "icon": {"color": "#0066cc", "font-size": "14px"},
+            "nav-link": {"font-size": "14px", "text-align": "center", "margin":"0px", "--hover-color": "rgba(128,128,128,0.15)"},
+            "nav-link-selected": {"background-color": "#0066cc", "color": "white", "icon-color":"white"},
+        }
+    )
+    st.session_state["exceptions_active_tab"] = tab_options.index(sel_tab)
+
+    if sel_tab == "📝 Registrar Novedad Manual":
         with st.form("form_exceptions"):
             col1, col2 = st.columns(2)
             with col1:
@@ -602,13 +958,20 @@ def page_exceptions():
                     upsert_exception(selected_emp, day_to_log, exc_type, notes)
                 st.success(f"Novedad registrada del {d_start} al {d_end} para el usuario {selected_emp}.")
 
-    with tab2:
-        st.info("💡 Haz clic en cualquier fila para ver los detalles completos del permiso o novedad.")
+    elif sel_tab == "📋 Listado de Novedades":
+        col_t, col_btn = st.columns([8, 2])
+        with col_t:
+            st.info("💡 Haz clic en cualquier fila para ver los detalles completos del permiso o novedad.")
+        with col_btn:
+            if st.button("🔄 Actualizar Lista", use_container_width=True, key="btn_refresh_admin", help="Obtener novedades recientes sin recargar la página"):
+                st.rerun()
+            st.caption(f"Última actualización: {datetime.now().strftime('%H:%M:%S')}")
+            
         df_exc = get_exceptions_df()
         if df_exc.empty:
             st.info("No hay novedades registradas.")
         else:
-            df_exc.columns = ["ID", "Usuario", "Nombre", "Fecha", "Tipo", "Observaciones", "Registrado El"]
+            df_exc.columns = ["ID", "Usuario", "Nombre", "Fecha Inicio", "Fecha Fin", "Tipo", "Observaciones", "Registrado El"]
             
             # Inicializar variables de estado para los filtros si no existen
             if "filter_exc_name" not in st.session_state:
@@ -673,7 +1036,7 @@ def page_exceptions():
                 end_f = filter_dates[1] if len(filter_dates) > 1 else start_f
                 
                 # Convertir la columna Fecha a datetime.date para comparar correctamente
-                filtered_df["temp_date"] = pd.to_datetime(filtered_df["Fecha"]).dt.date
+                filtered_df["temp_date"] = pd.to_datetime(filtered_df["Fecha Inicio"]).dt.date
                 filtered_df = filtered_df[(filtered_df["temp_date"] >= start_f) & (filtered_df["temp_date"] <= end_f)]
                 filtered_df = filtered_df.drop(columns=["temp_date"])
                 
@@ -717,8 +1080,14 @@ def page_exceptions():
                 else:
                     st.session_state.last_processed_exc = None
 
-    with tab3:
-        st.subheader("Bandeja de Aprobación Final de Permisos (Gestión Humana)")
+    elif sel_tab == "📥 Solicitudes Digitales de Empleados":
+        st.write("Gestiona la revisión final de las incapacidades, permisos y vacaciones tramitadas por el personal.")
+        
+        col_t, col_btn = st.columns([8, 2])
+        with col_btn:
+            if st.button("🔄 Actualizar Bandeja", use_container_width=True, key="btn_refresh_admin"):
+                st.rerun()
+
         with db_session() as conn:
             df_pend = pd.read_sql_query("""
                 SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -729,7 +1098,7 @@ def page_exceptions():
                 FROM leave_requests lr
                 JOIN employees e ON lr.user_id = e.user_id
                 WHERE lr.status = 'PENDING_RRHH'
-                ORDER BY lr.id ASC
+                ORDER BY lr.leave_date_start ASC, lr.id ASC
             """, conn)
         
         if df_pend.empty:
@@ -889,7 +1258,10 @@ def page_exceptions():
                         if st.session_state.get(f"show_rejection_dialog_rrhh_{r['id']}", False):
                             rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
 
-    with tab4:
+    elif sel_tab == "📅 Calendario de Ausencias":
+        render_absence_calendar(user)
+
+    elif sel_tab == "🌐 Monitoreo Global":
         # Obtener el rol de la sesión actual
         user_role = st.session_state["user"]["role"]
         
