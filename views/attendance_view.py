@@ -266,7 +266,11 @@ def page_view_attendance():
                 "ID", "Dispositivo", "IP", "ID Usuario", "Nombre", "Área", "Sub-área", "Hora Marcación", "Tardanza", "Status", "Tipo", "Descargado en"
             ]
             df = df[[c for c in cols_order if c in df.columns]]
-
+            
+            # Ordenar ascendente para que lo más antiguo salga arriba en pantalla
+            df = df.sort_values("Hora Marcación", ascending=True)
+            
+            st.markdown("#### Vista de Datos")
             is_admin = st.session_state.get("user", {}).get("role") == "admin"
             if is_admin:
                 st.info(f"💡 Selecciona una marcación para editar manualmente su hora o eliminarla. Total de registros: {len(df)}")
@@ -305,8 +309,10 @@ def page_view_attendance():
                 st.session_state.last_processed_attendance = None
 
             excel_bytes = io.BytesIO()
+            # Ordenar ascendente para que los datos más antiguos salgan primero en el Excel
+            df_export = df.sort_values("Hora Marcación", ascending=True)
             with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
-                df.to_excel(writer, index=False, sheet_name="Marcaciones")
+                df_export.to_excel(writer, index=False, sheet_name="Marcaciones")
             excel_bytes.seek(0)
 
             st.download_button(
