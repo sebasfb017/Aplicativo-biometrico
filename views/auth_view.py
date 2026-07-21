@@ -5,7 +5,7 @@ import random
 from datetime import datetime, timedelta
 
 from database_conn.connection import db_conn
-from database_conn.queries import get_users_by_role
+from database_conn.queries import get_users_by_role, db_create_session
 from utils.auth import verify_login, validate_password # Importar validate_password
 from utils.constants import AREA_MAPPING
 from services.email_service import send_welcome_email, send_password_reset_pin, send_password_changed_email
@@ -372,6 +372,9 @@ def page_login():
                     user = verify_login(username.strip(), password)
                     if user and "error" not in user:
                         st.session_state["user"] = user
+                        token = db_create_session(user["username"])
+                        st.session_state["session_token"] = token
+                        st.query_params["session_token"] = token
                         st.success(f"¡Bienvenido, {user['full_name']}!")
                         import time
                         time.sleep(0.5)
@@ -391,6 +394,9 @@ def page_login():
                         user = verify_login(cedula_log.strip(), pw_log)
                         if user and "error" not in user:
                             st.session_state["user"] = user
+                            token = db_create_session(user["username"])
+                            st.session_state["session_token"] = token
+                            st.query_params["session_token"] = token
                             st.success(f"Acceso exitoso: {user['full_name']}")
                             import time
                             time.sleep(0.5)
