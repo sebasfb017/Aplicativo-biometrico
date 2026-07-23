@@ -245,10 +245,10 @@ def page_view_attendance():
         late_punch_map = get_late_punch_ids(start_date, end_date)
         
         def get_lateness_label(row):
+            rid = int(row["ID"])
+            if rid in late_punch_map:
+                return f"⏰ {late_punch_map[rid]} min tarde"
             if row["Tipo"] == "Entrada":
-                rid = int(row["ID"])
-                if rid in late_punch_map:
-                    return f"⏰ {late_punch_map[rid]} min tarde"
                 return "✅ A tiempo"
             return "-"
             
@@ -319,5 +319,5 @@ def page_view_attendance():
                 "📥 Descargar registros en Excel",
                 data=excel_bytes.getvalue(),
                 file_name=f"marcaciones_{start_date.isoformat()}_{end_date.isoformat()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                mime="application/octet-stream"
             )

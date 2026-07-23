@@ -82,11 +82,15 @@ def deduplicate_attendance(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     # Asegurar orden temporal ascendente por usuario para la deduplicación
-    df = df.sort_values(by=["user_id", "ts"])
-    
-    # Copia de timestamps para cálculos seguros
-    orig_ts = df["ts"]
-    df["datetime_ts"] = pd.to_datetime(orig_ts)
+    # Calcular diferencia de tiempo con la marcación anterior del mismo usuario
+    # Ordenamos por user_id, ts, y también por id para garantizar un orden determinista
+    # sin importar el orden original del DataFrame.
+    if "id" in df.columns:
+        df = df.sort_values(["user_id", "ts", "id"]).reset_index(drop=True)
+    else:
+        df = df.sort_values(["user_id", "ts"]).reset_index(drop=True)
+        
+    df["datetime_ts"] = pd.to_datetime(df["ts"])
 
     kept_indices = []
     last_ts_by_user = {}
@@ -208,8 +212,7 @@ def compute_month_lateness(year: int, month: int):
     conn.close()
     # ------------------------------------
 
-    # Filtrar solo marcaciones de Entrada (punch == 0)
-    entries_df = df[df["punch"] == 0].sort_values("ts")
+    entries_df = df.sort_values("ts")
     if entries_df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
@@ -233,31 +236,47 @@ def compute_month_lateness(year: int, month: int):
         if not sched:
             continue
             
-        # Comprobar retardos para cada entrada del día (entrada de mañana y retorno de break)
-        for idx, (_, r) in enumerate(group.iterrows()):
-            if idx == 0:
-                expected_start = datetime.combine(d, sched["start_time"])
-            elif idx == 1:
-                be = sched.get("break_end") or sched.get("start_time_2")
-                if be:
-                    expected_start = datetime.combine(d, be)
-                else:
-                    continue
-            else:
-                continue
-                
-            late_min = int((r["ts"] - expected_start).total_seconds() // 60)
-            if late_min >= 1:
-                details.append({
-                    "user_id": r["user_id"],
-                    "fecha": d.isoformat(),
-                    "hora_marcacion": r["ts"].strftime("%H:%M:%S"),
-                    "hora_inicio": expected_start.strftime("%H:%M"),
-                    "gracia_min": 0,
-                    "minutos_tarde": late_min,
-                    "device_name": r["device_name"],
-                    "device_ip": r["device_ip"],
-                })
+        punches = list(group.iterrows())
+        if not punches:
+            continue
+            
+        # 1. Mañana: Primer punch del día (sin importar si marcó 0 o 1)
+        r0 = punches[0][1]
+        expected_start = datetime.combine(d, sched["start_time"])
+        late_min = int((r0["ts"] - expected_start).total_seconds() // 60)
+        late_min -= sched.get("grace_minutes", 0)
+        if late_min >= 1:
+            details.append({
+                "user_id": r0["user_id"],
+                "fecha": d.isoformat(),
+                "hora_marcacion": r0["ts"].strftime("%H:%M:%S"),
+                "hora_inicio": expected_start.strftime("%H:%M"),
+                "gracia_min": sched.get("grace_minutes", 0),
+                "minutos_tarde": late_min,
+                "device_name": r0["device_name"],
+                "device_ip": r0["device_ip"],
+            })
+            
+        # 2. Break: Buscar el siguiente punch que sea Entrada (0) o Break In (2)
+        be = sched.get("break_end") or sched.get("start_time_2")
+        if be:
+            expected_be = datetime.combine(d, be)
+            for _, r in punches[1:]:
+                if r["punch"] in (0, 2):
+                    late_be = int((r["ts"] - expected_be).total_seconds() // 60)
+                    late_be -= sched.get("grace_minutes", 0)
+                    if late_be >= 1:
+                        details.append({
+                            "user_id": r["user_id"],
+                            "fecha": d.isoformat(),
+                            "hora_marcacion": r["ts"].strftime("%H:%M:%S"),
+                            "hora_inicio": expected_be.strftime("%H:%M"),
+                            "gracia_min": sched.get("grace_minutes", 0),
+                            "minutos_tarde": late_be,
+                            "device_name": r["device_name"],
+                            "device_ip": r["device_ip"],
+                        })
+                    break
 
     detail_df = pd.DataFrame(details)
     if detail_df.empty:
@@ -369,8 +388,8 @@ def get_late_punch_ids(start_date: date, end_date: date) -> dict:
         
     conn.close()
     
-    # 5. Tomar marcaciones de Entrada (punch == 0) y agrupar por usuario y día
-    entries_df = df[df["punch"] == 0].sort_values("ts")
+    # 5. Agrupar por usuario y día
+    entries_df = df.sort_values("ts")
     grouped = entries_df.groupby(["user_id", "day"])
                      
     late_dict = {}
@@ -391,21 +410,29 @@ def get_late_punch_ids(start_date: date, end_date: date) -> dict:
         if not sched:
             continue
             
-        # Comprobar cada marcación de entrada
-        for idx, (_, r) in enumerate(group.iterrows()):
-            if idx == 0:
-                expected_start = datetime.combine(d, sched["start_time"])
-            elif idx == 1:
-                be = sched.get("break_end") or sched.get("start_time_2")
-                if be:
-                    expected_start = datetime.combine(d, be)
-                else:
-                    continue
-            else:
-                continue
-                
-            late_min = int((r["ts"] - expected_start).total_seconds() // 60)
-            if late_min >= 1:
-                late_dict[int(r["id"])] = late_min
+        punches = list(group.iterrows())
+        if not punches:
+            continue
+            
+        # 1. Mañana: Primer punch del día
+        r0 = punches[0][1]
+        expected_start = datetime.combine(d, sched["start_time"])
+        late_min = int((r0["ts"] - expected_start).total_seconds() // 60)
+        late_min -= sched.get("grace_minutes", 0)
+        
+        if late_min >= 1:
+            late_dict[int(r0["id"])] = late_min
+            
+        # 2. Break: Buscar el siguiente punch que sea Entrada (0 o 2)
+        be = sched.get("break_end") or sched.get("start_time_2")
+        if be:
+            expected_be = datetime.combine(d, be)
+            for _, r in punches[1:]:
+                if r["punch"] in (0, 2):
+                    late_be = int((r["ts"] - expected_be).total_seconds() // 60)
+                    late_be -= sched.get("grace_minutes", 0)
+                    if late_be >= 1:
+                        late_dict[int(r["id"])] = late_be
+                    break
             
     return late_dict

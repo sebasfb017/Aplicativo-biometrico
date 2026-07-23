@@ -249,7 +249,7 @@ def page_schedules():
                 st.warning(f"Mostrando preview de {max_edit_rows} filas debido al tamaño ({len(sch)} total). Descarga el CSV para editar masivamente.")
                 st.dataframe(sch.head(max_edit_rows), use_container_width=True, hide_index=True)
                 csv_bytes = sch.to_csv(index=False).encode("utf-8")
-                st.download_button("📥 Descargar Tabla Completa (CSV)", data=csv_bytes, file_name="horarios_completos.csv", mime="text/csv")
+                st.download_button("📥 Descargar Tabla Completa (CSV)", data=csv_bytes, file_name="horarios_completos.csv", mime="application/octet-stream")
             else:
                 edited = st.data_editor(sch, num_rows="dynamic", use_container_width=True)
                 if st.button("Guardar Cambios en Pantalla", type="primary"):
@@ -703,7 +703,7 @@ def page_bulk_assign_shifts():
         label="⬇️ Descargar Plantilla Ejemplo (.xlsx)",
         data=buffer.getvalue(),
         file_name="plantilla_turnos_asistencial.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/octet-stream"
     )
     
     st.markdown("### 3. Sube tu archivo diligenciado")
