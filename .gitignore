@@ -12,3 +12,4 @@ test_zk.py
 
 scratch/
 *.db
+static/*.pdf
