@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, timedelta
+from database_conn.connection import db_conn
 
 # --- Componente Visual de Trazabilidad (Barra de Progreso) ---
 def create_status_tracker(current_status, reason_type):
@@ -201,10 +202,16 @@ def show_leave_request_details(req_id: int):
                     st.image(file_path, use_container_width=True)
                 elif ext == ".pdf":
                     try:
-                        import base64
-                        with open(file_path, "rb") as f:
-                            base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-                        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
+                        import shutil
+                        static_dir = os.path.join(os.getcwd(), "static")
+                        os.makedirs(static_dir, exist_ok=True)
+                        static_file_path = os.path.join(static_dir, str(req['attachment_path']))
+                        
+                        if not os.path.exists(static_file_path):
+                            shutil.copy2(file_path, static_file_path)
+                            
+                        pdf_url = f"/app/static/{req['attachment_path']}"
+                        pdf_display = f'<iframe src="{pdf_url}" width="100%" height="600" style="border: none;"></iframe>'
                         st.markdown(pdf_display, unsafe_allow_html=True)
                     except Exception as e:
                         st.error(f"No se pudo cargar el PDF: {e}")
@@ -322,6 +329,8 @@ def page_employee_portal():
         fk = st.session_state.form_key
 
         with st.container(border=True):
+            dias_solicitados = 0
+            saldo_vac = 0
             c1, c2 = st.columns(2)
             with c1:
                 leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona uno o varios días de ausencia.", format="YYYY-MM-DD", key=f"leave_dates_{fk}")
@@ -340,6 +349,15 @@ def page_employee_portal():
                 else: # Vacaciones
                     reason_type = "Vacaciones"
                     st.text_input("Detalle", value="Vacaciones", disabled=True, key=f"rt_vac_{fk}")
+                    
+                    conn_vac = db_conn()
+                    cur_vac = conn_vac.cursor()
+                    cur_vac.execute("SELECT vacation_balance FROM users_app WHERE username = ?", (user['username'],))
+                    row_vac = cur_vac.fetchone()
+                    conn_vac.close()
+                    saldo_vac = int(row_vac[0]) if row_vac and row_vac[0] is not None else 0
+                    
+                    st.info(f"🌴 **Tienes {saldo_vac} días de vacaciones a favor.**")
                 
                 is_paid = st.radio("¿Permiso Remunerado?", ["No", "Sí"], horizontal=True, key=f"is_paid_{fk}")
             with c2:
@@ -376,19 +394,19 @@ def page_employee_portal():
                                     curr_date = d_start + timedelta(days=i)
                                     if curr_date.weekday() != 6 and not is_holiday(curr_date):
                                         count += 1
-                                dias = count
+                                dias_solicitados = count
                             else:
-                                dias = delta_days
+                                dias_solicitados = delta_days
                             
-                            calculated_time = f"{dias} Día(s)"
+                            calculated_time = f"{dias_solicitados} Día(s)"
                         else:
-                            dias = 1
+                            dias_solicitados = 1
                             if reason_type == "Vacaciones":
                                 from database_conn.queries import is_holiday
                                 curr_date = leave_dates[0]
                                 if curr_date.weekday() == 6 or is_holiday(curr_date):
-                                    dias = 0
-                            calculated_time = f"{dias} Día(s)"
+                                    dias_solicitados = 0
+                            calculated_time = f"{dias_solicitados} Día(s)"
                 else: # Rango de Horas, Llegada Tarde, Salida Temprano
                     if time_s and time_e:
                         ts_dt = datetime.combine(date.today(), time_s)
@@ -442,6 +460,8 @@ def page_employee_portal():
                 st.error("Las horas ingresadas son inválidas. La hora fin debe ser mayor a la hora de inicio.")
             elif "Ingresa ambas horas" in calculated_time:
                 st.error("Para calcular una fracción de tiempo, debes ingresar tanto la Hora Inicio como la Hora Fin. (Ej. Si llegas tarde, Hora Inicio es tu horario normal y Hora Fin es tu llegada).")
+            elif reason_type == "Vacaciones" and dias_solicitados > saldo_vac:
+                st.error(f"❌ Has solicitado {dias_solicitados} días de vacaciones, pero solo tienes {saldo_vac} días a favor.")
             else:
                 d_start = leave_dates[0] if isinstance(leave_dates, (list, tuple)) else leave_dates
                 d_end = leave_dates[1] if isinstance(leave_dates, (list, tuple)) and len(leave_dates) > 1 else d_start

@@ -668,4 +668,42 @@ def get_cached_users_app():
 def get_cached_profiles():
     """Retorna el DataFrame con los perfiles de horarios (caché 60s)."""
     with db_conn() as conn:
-        return pd.read_sql_query("SELECT profile_id, name, description, works_holidays FROM profiles ORDER BY name", conn)
+        return pd.read_sql_query("SELECT profile_id, name, description, works_holidays FROM profiles ORDER BY name", conn)
+
+def db_run_vacation_accruals():
+    """Calcula y asigna días de vacaciones (15 por año) a los empleados que cumplen año laboral."""
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT username, hire_date, vacation_balance, last_anniversary_year FROM users_app WHERE hire_date IS NOT NULL AND active = 1")
+        users = cur.fetchall()
+        
+        current_year = datetime.now().year
+        current_date = datetime.now().date()
+        
+        for u in users:
+            username, hire_date_str, bal, last_year = u
+            if not hire_date_str: continue
+            try:
+                hire_date = datetime.strptime(hire_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+                
+            if last_year is None:
+                last_year = hire_date.year
+            
+            updates_made = False
+            while last_year < current_year:
+                try:
+                    anniversary = date(last_year + 1, hire_date.month, hire_date.day)
+                except ValueError: # Bisiesto 29 feb
+                    anniversary = date(last_year + 1, hire_date.month, hire_date.day - 1)
+                    
+                if current_date >= anniversary:
+                    bal = (bal or 0) + 15
+                    last_year += 1
+                    updates_made = True
+                else:
+                    break
+                    
+            if updates_made:
+                cur.execute("UPDATE users_app SET vacation_balance = ?, last_anniversary_year = ? WHERE username = ?", (bal, last_year, username))

@@ -23,7 +23,10 @@ def init_db():
         managed_department TEXT,
         managed_area TEXT,
         reset_pin TEXT,
-        reset_expires TEXT
+        reset_expires TEXT,
+        hire_date TEXT,
+        vacation_balance INTEGER DEFAULT 0,
+        last_anniversary_year INTEGER
     );
     """)
 

@@ -157,9 +157,9 @@ def page_users_admin():
     
     is_admin = st.session_state.get("user", {}).get("role") == "admin"
     if is_admin:
-        tab1, tab2, tab3, tab4 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados", "⚙️ Servidor de Correos"])
+        tab1, tab2, tab3, tab_vac, tab4 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados", "🏖️ Vacaciones", "⚙️ Servidor de Correos"])
     else:
-        tab1, tab2, tab3 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados"])
+        tab1, tab2, tab3, tab_vac = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados", "🏖️ Vacaciones"])
 
     with tab1:
         st.subheader("Datos del Nuevo Usuario")
@@ -409,3 +409,105 @@ def page_users_admin():
     if user_to_edit:
         emp_df = get_all_employees()
         edit_user_dialog(user_to_edit, emp_df)
+    with tab_vac:
+        render_vacations_tab()
+
+def render_vacations_tab():
+    st.subheader("🏖️ Control de Vacaciones")
+    st.write("Gestiona el saldo de vacaciones y fechas de ingreso del personal.")
+    
+    # Run accruals when they open this tab so it's always fresh!
+    from database_conn.queries import db_run_vacation_accruals
+    db_run_vacation_accruals()
+    
+    conn = db_conn()
+    df_vac = pd.read_sql_query("SELECT username, full_name, role, hire_date, vacation_balance FROM users_app WHERE active = 1 ORDER BY full_name", conn)
+    conn.close()
+    
+    st.dataframe(df_vac, use_container_width=True, hide_index=True)
+    
+    st.markdown("---")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.write("**Cargar Histórico desde Excel**")
+        st.write("Sube un archivo Excel con las columnas `Cédula`, `Fecha Ingreso` (YYYY-MM-DD) y `Días a Favor`.")
+        uploaded_file = st.file_uploader("Subir Archivo Excel", type=["xlsx", "xls"], key="vacation_excel")
+        if uploaded_file is not None:
+            if st.button("Procesar Excel de Vacaciones"):
+                try:
+                    df_upload = pd.read_excel(uploaded_file)
+                    df_upload.columns = [str(c).strip().lower() for c in df_upload.columns]
+                    
+                    conn = db_conn()
+                    cur = conn.cursor()
+                    success_count = 0
+                    not_found = []
+                    for _, row in df_upload.iterrows():
+                        cedula_col = [c for c in df_upload.columns if 'cédula' in c or 'cedula' in c or 'identificaci' in c]
+                        fecha_col = [c for c in df_upload.columns if 'fecha' in c and 'ingreso' in c]
+                        dias_col = [c for c in df_upload.columns if 'favor' in c or 'saldo' in c]
+                        if not dias_col:
+                            dias_col = [c for c in df_upload.columns if 'días' in c or 'dias' in c]
+                        
+                        if not cedula_col or not dias_col:
+                            continue
+                            
+                        cedula = str(row[cedula_col[0]]).strip()
+                        if not cedula or cedula == 'nan': continue
+                        if cedula.endswith('.0'):
+                            cedula = cedula[:-2]
+                        
+                        hire_date = row[fecha_col[0]] if fecha_col else ''
+                        if pd.isna(hire_date): hire_date = ''
+                        else:
+                            try:
+                                from datetime import datetime
+                                if isinstance(hire_date, datetime):
+                                    hire_date = hire_date.strftime("%Y-%m-%d")
+                                else:
+                                    hire_date = str(hire_date)[:10]
+                            except:
+                                hire_date = ''
+                                
+                        dias = row[dias_col[0]]
+                        if pd.isna(dias): dias = 0
+                        else: dias = int(dias)
+                        
+                        from datetime import datetime
+                        cur.execute("UPDATE users_app SET hire_date = ?, vacation_balance = ?, last_anniversary_year = ? WHERE username = ?", (hire_date, dias, datetime.now().year, cedula))
+                        if cur.rowcount > 0:
+                            success_count += 1
+                        else:
+                            not_found.append(cedula)
+                            
+                    conn.commit()
+                    conn.close()
+                    st.success(f"✅ Se actualizaron los datos de {success_count} empleados.")
+                    if not_found:
+                        st.warning(f"⚠️ Las siguientes {len(not_found)} cédulas están en el Excel pero no se encontraron en la base de datos o el sistema:\n\n" + ", ".join(not_found))
+                    import time
+                    time.sleep(1.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error procesando el archivo: {e}")
+                    
+    with c2:
+        st.write("**Edición Manual Individual**")
+        selected_user = st.selectbox("Seleccionar Empleado", options=df_vac['username'].tolist(), format_func=lambda x: f"{x} - {df_vac[df_vac['username']==x]['full_name'].values[0]}")
+        
+        if selected_user:
+            u_data = df_vac[df_vac['username'] == selected_user].iloc[0]
+            m_hire_date = st.text_input("Fecha de Ingreso (YYYY-MM-DD)", value=u_data['hire_date'] if pd.notna(u_data['hire_date']) else "")
+            m_balance = st.number_input("Días a Favor", value=int(u_data['vacation_balance']) if pd.notna(u_data['vacation_balance']) else 0)
+            
+            if st.button("Guardar Cambios Manuales"):
+                conn = db_conn()
+                cur = conn.cursor()
+                from datetime import datetime
+                cur.execute("UPDATE users_app SET hire_date = ?, vacation_balance = ?, last_anniversary_year = ? WHERE username = ?", (m_hire_date, m_balance, datetime.now().year, selected_user))
+                conn.commit()
+                conn.close()
+                st.success("Cambios guardados exitosamente.")
+                import time
+                time.sleep(1)
+                st.rerun()
