@@ -24,6 +24,44 @@ def main():
     st.set_page_config(page_title="Nómina Dolormed", layout="wide", page_icon="🏢")
     init_db()
 
+    # --- INYECCIÓN PWA ---
+    import streamlit.components.v1 as components
+    components.html("""
+    <script>
+        const parent = window.parent.document;
+        if (!parent.querySelector('link[rel="manifest"]')) {
+            const manifestLink = parent.createElement('link');
+            manifestLink.rel = 'manifest';
+            manifestLink.href = '/app/static/manifest.json';
+            parent.head.appendChild(manifestLink);
+            
+            // Meta tags para PWA móvil (Apple)
+            const metaApple = parent.createElement('meta');
+            metaApple.name = 'apple-mobile-web-app-capable';
+            metaApple.content = 'yes';
+            parent.head.appendChild(metaApple);
+            
+            const metaAppleTitle = parent.createElement('meta');
+            metaAppleTitle.name = 'apple-mobile-web-app-title';
+            metaAppleTitle.content = 'Dolormed';
+            parent.head.appendChild(metaAppleTitle);
+            
+            const appleIcon = parent.createElement('link');
+            appleIcon.rel = 'apple-touch-icon';
+            appleIcon.href = '/app/static/icon-192x192.png';
+            parent.head.appendChild(appleIcon);
+            
+            if ('serviceWorker' in window.parent.navigator) {
+                window.parent.navigator.serviceWorker.register('/app/static/sw.js').then(function(registration) {
+                    console.log('ServiceWorker registration successful');
+                }).catch(function(err) {
+                    console.log('ServiceWorker registration failed: ', err);
+                });
+            }
+        }
+    </script>
+    """, height=0, width=0)
+
     # --- CSS GLOBAL (ESTÉTICA PREMIUM Y FLUIDEZ) ---
     # Inyectamos estilos CSS personalizados para darle a la aplicación un aspecto moderno.
     # Evitamos usar el archivo de configuración global config.toml para no bloquear 
