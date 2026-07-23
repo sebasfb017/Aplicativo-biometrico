@@ -67,6 +67,6 @@ def page_lateness_report():
             "📥 Descargar Archivo Oficial (Excel Completo)",
             data=excel_bytes,
             file_name=f"Reporte_Tardanzas_Dolormed_{year}_{month:02d}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            mime="application/octet-stream",
             use_container_width=True
         )

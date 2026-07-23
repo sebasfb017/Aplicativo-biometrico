@@ -144,10 +144,16 @@ def show_exception_details(exc_id: int):
                         st.image(file_path, use_container_width=True)
                     elif ext == ".pdf":
                         try:
-                            import base64
-                            with open(file_path, "rb") as f:
-                                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-                            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
+                            import shutil
+                            static_dir = os.path.join(os.getcwd(), "static")
+                            os.makedirs(static_dir, exist_ok=True)
+                            static_file_path = os.path.join(static_dir, str(req['attachment_path']))
+                            
+                            if not os.path.exists(static_file_path):
+                                shutil.copy2(file_path, static_file_path)
+                                
+                            pdf_url = f"/app/static/{req['attachment_path']}"
+                            pdf_display = f'<iframe src="{pdf_url}" width="100%" height="600" style="border: none;"></iframe>'
                             st.markdown(pdf_display, unsafe_allow_html=True)
                         except Exception as e:
                             st.error(f"No se pudo cargar el PDF: {e}")
@@ -207,10 +213,17 @@ def preview_attachment_dialog(attachment_path, employee_name):
         st.image(file_path, use_container_width=True)
     elif ext == ".pdf":
         try:
-            import base64
-            with open(file_path, "rb") as f:
-                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
+            import shutil
+            # Streamlit >= 1.18 permite servir archivos estáticos desde ./static
+            static_dir = os.path.join(os.getcwd(), "static")
+            os.makedirs(static_dir, exist_ok=True)
+            static_file_path = os.path.join(static_dir, str(attachment_path))
+            
+            if not os.path.exists(static_file_path):
+                shutil.copy2(file_path, static_file_path)
+                
+            pdf_url = f"/app/static/{attachment_path}"
+            pdf_display = f'<iframe src="{pdf_url}" width="100%" height="600" style="border: none;"></iframe>'
             st.markdown(pdf_display, unsafe_allow_html=True)
         except Exception as e:
             st.error(f"No se pudo cargar el PDF: {e}")
@@ -278,6 +291,7 @@ def handle_approve_callback(r_dict, user):
             d_start = date.fromisoformat(r_dict['leave_date_start'])
             d_end = date.fromisoformat(r_dict['leave_date_end'])
             delta = d_end - d_start
+            days_deducted = 0
             for i in range(delta.days + 1):
                 curr_date = d_start + timedelta(days=i)
                 if r_dict['reason_type'] == "Vacaciones":
@@ -289,6 +303,10 @@ def handle_approve_callback(r_dict, user):
                     VALUES(?,?,?,?,?)
                     ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
                 """, (r_dict['user_id'], day_to_log, r_dict['reason_type'], f"Aprobado de Portal: {r_dict['reason_description']}", datetime.now().isoformat(timespec="seconds")))
+                days_deducted += 1
+                
+            if r_dict['reason_type'] == "Vacaciones" and days_deducted > 0:
+                cur.execute("UPDATE users_app SET vacation_balance = vacation_balance - ? WHERE username = ?", (days_deducted, r_dict['user_id']))
         
         log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r_dict['id']} ({r_dict['reason_type']}) de {r_dict['full_name']} APROBADO FINAL por Jefe de Área.")
         notify_employee_status(r_dict['user_id'], r_dict['full_name'], r_dict['id'], r_dict['reason_type'], "APROBACIÓN FINAL", "Tu solicitud fue completamente aprobada por tu Jefatura y registrada oficialmente en el sistema.", user['full_name'])
@@ -1001,7 +1019,6 @@ def page_exceptions():
                     # Rango de fechas
                     filter_dates = st.date_input(
                         "Rango de Fechas (Novedad)",
-                        value=st.session_state.filter_exc_dates,
                         key="filter_exc_dates",
                         help="Filtrar novedades que ocurran dentro de este periodo."
                     )
@@ -1235,6 +1252,7 @@ def page_exceptions():
                                 
                                 with db_session() as conn:
                                     cur = conn.cursor()
+                                    days_deducted = 0
                                     for i in range(days_diff):
                                         curr_date = start_d + timedelta(days=i)
                                         if r['reason_type'] == "Vacaciones":
@@ -1246,6 +1264,10 @@ def page_exceptions():
                                             VALUES (?, ?, ?, ?, ?)
                                             ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
                                         """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal (RRHH): {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
+                                        days_deducted += 1
+                                        
+                                    if r['reason_type'] == "Vacaciones" and days_deducted > 0:
+                                        cur.execute("UPDATE users_app SET vacation_balance = vacation_balance - ? WHERE username = ?", (days_deducted, r['user_id']))
                                 
                                 log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO FINAL por RRHH.")
                                 notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "APROBACIÓN FINAL", "Tu solicitud fue completamente aprobada por Gestión Humana y registrada oficialmente en el sistema.", user['full_name'])
