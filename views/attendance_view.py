@@ -298,11 +298,14 @@ def page_view_attendance():
             if len(event.selection.rows) > 0:
                 if is_admin:
                     row_idx = event.selection.rows[0]
-                    selected_id = int(df.iloc[row_idx]["ID"])
-                    
-                    if selected_id != st.session_state.last_processed_attendance:
-                        st.session_state.last_processed_attendance = selected_id
-                        edit_attendance_dialog(selected_id)
+                    if row_idx < len(df):
+                        selected_id = int(df.iloc[row_idx]["ID"])
+                        
+                        if selected_id != st.session_state.last_processed_attendance:
+                            st.session_state.last_processed_attendance = selected_id
+                            edit_attendance_dialog(selected_id)
+                    else:
+                        st.session_state.last_processed_attendance = None
                 else:
                     st.session_state.last_processed_attendance = None
             else:

@@ -13,11 +13,20 @@ def page_lateness_report():
     st.write("Genera el archivo avalado para procesos disciplinarios y descuentos de nómina.")
 
     today = date.today()
+    default_year = today.year
+    default_month = today.month
+    
+    if today.day <= 5:
+        default_month -= 1
+        if default_month == 0:
+            default_month = 12
+            default_year -= 1
+
     col1, col2, col3 = st.columns(3)
     with col1:
-        year = st.number_input("Año Fiscal", min_value=2020, max_value=2100, value=today.year, step=1)
+        year = st.number_input("Año Fiscal", min_value=2020, max_value=2100, value=default_year, step=1)
     with col2:
-        month = st.number_input("Mes de Nómina", min_value=1, max_value=12, value=today.month, step=1)
+        month = st.number_input("Mes de Nómina", min_value=1, max_value=12, value=default_month, step=1)
     with col3:
         search_dni = st.text_input("Buscar DNI", value="", placeholder="Ej: 100646459")
 

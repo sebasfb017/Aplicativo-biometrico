@@ -180,7 +180,8 @@ def init_db():
         rrhh_approval_date TEXT,
         attachment_path TEXT,
         cancellation_reason TEXT,
-        rejection_reason TEXT
+        rejection_reason TEXT,
+        specific_dates TEXT
     );
     """)
 

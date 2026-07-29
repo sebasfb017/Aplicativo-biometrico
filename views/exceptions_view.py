@@ -114,7 +114,13 @@ def show_exception_details(exc_id: int):
         with c1:
             st.markdown(f"**Radicado:** #{req['id']}")
             st.markdown(f"**Fecha de Solicitud:** {req['request_date']}")
-            st.markdown(f"**Fechas de Ausencia:** {req['leave_date_start']} al {req['leave_date_end']}")
+            if 'specific_dates' in req and pd.notna(req.get('specific_dates')) and str(req.get('specific_dates')).strip() != 'None' and str(req.get('specific_dates')).strip() != '':
+                formatted_dates = str(req['specific_dates']).replace(',', ', ')
+                st.markdown(f"**Fechas de Ausencia:** {formatted_dates}")
+            elif req['leave_date_start'] == req['leave_date_end']:
+                st.markdown(f"**Fechas de Ausencia:** {req['leave_date_start']}")
+            else:
+                st.markdown(f"**Fechas de Ausencia:** {req['leave_date_start']} al {req['leave_date_end']}")
             st.markdown(f"**Remunerado:** {'✅ Sí' if req['is_paid'] else '❌ No'}")
         with c2:
             h_in = req['start_time'] if req['start_time'] else "N/A"
@@ -371,12 +377,9 @@ def render_absence_calendar(user):
         """
         params = (last_day_str, first_day_str)
     elif effective_role == "coordinador":
-        managed_depts = [d.strip() for d in user.get('managed_department', '').split(',') if d.strip()]
-        if not managed_depts:
-            managed_depts = ['']
-        placeholders = ','.join(['?'] * len(managed_depts))
-        cond_serv_gen = "OR (ua.emp_subarea = 'Servicios Generales')" if 'Calidad' in managed_depts else ""
-        cond_orientador = "OR (ua.emp_subarea = 'Orientador')" if 'Seguridad' in managed_depts else ""
+        managed_dept_str = user.get('managed_department', '')
+        cond_serv_gen = "OR (ua.emp_subarea = 'Servicios Generales')" if 'Calidad' in managed_dept_str else ""
+        cond_orientador = "OR (ua.emp_subarea = 'Orientador')" if 'Seguridad' in managed_dept_str else ""
         cond_zarzal = f"OR (lr.user_id IN ({','.join(['?']*len(ZARZAL_EMPLOYEES))}))" if user['username'] == '94152519' else ""
         
         query = f"""
@@ -388,14 +391,14 @@ def render_absence_calendar(user):
             WHERE lr.status IN {status_filter}
               AND lr.leave_date_start <= ? AND lr.leave_date_end >= ?
               AND (
-                  ua.emp_subarea IN ({placeholders})
+                  ? LIKE '%' || ua.emp_subarea || '%'
                   {cond_serv_gen}
                   {cond_orientador}
                   {cond_zarzal}
               )
             ORDER BY lr.leave_date_start ASC
         """
-        params = [last_day_str, first_day_str] + managed_depts
+        params = [last_day_str, first_day_str, managed_dept_str]
         if user['username'] == '94152519':
             params += ZARZAL_EMPLOYEES
         params = tuple(params)
@@ -648,39 +651,35 @@ def page_exceptions():
                 st.caption(f"Última actualización: {datetime.now().strftime('%H:%M:%S')}")
             
             if user["role"] == "coordinador":
-                managed_depts = [d.strip() for d in user.get('managed_department', '').split(',') if d.strip()]
-                if not managed_depts:
-                    managed_depts = ['']
-                    
-                placeholders = ','.join(['?'] * len(managed_depts))
-                cond_serv_gen = "OR (ua.emp_subarea = 'Servicios Generales')" if 'Calidad' in managed_depts else ""
-                cond_orientador = "OR (ua.emp_subarea = 'Orientador')" if 'Seguridad' in managed_depts else ""
+                managed_dept_str = user.get('managed_department', '')
+                cond_serv_gen = "OR (ua.emp_subarea = 'Servicios Generales')" if 'Calidad' in managed_dept_str else ""
+                cond_orientador = "OR (ua.emp_subarea = 'Orientador')" if 'Seguridad' in managed_dept_str else ""
                 cond_zarzal = f"OR (lr.user_id IN ({','.join(['?']*len(ZARZAL_EMPLOYEES))}))" if user['username'] == '94152519' else ""
                 
                 query = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.start_time, lr.end_time, lr.total_time,
-                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.how_to_makeup
+                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.specific_dates, lr.how_to_makeup
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_COORD' AND 
                           (
-                              ua.emp_subarea IN ({placeholders})
+                              ? LIKE '%' || ua.emp_subarea || '%'
                               {cond_serv_gen}
                               {cond_orientador}
                               {cond_zarzal}
                           )
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
-                params = tuple(managed_depts)
+                params = (managed_dept_str,)
                 if user['username'] == '94152519':
                     params += tuple(ZARZAL_EMPLOYEES)
             elif user.get('managed_area', '') == 'Control Interno':
                 query = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.start_time, lr.end_time, lr.total_time,
-                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.how_to_makeup,
+                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.specific_dates, lr.how_to_makeup,
                            ua.emp_area, ua.emp_subarea,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
@@ -695,7 +694,7 @@ def page_exceptions():
                 query = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.start_time, lr.end_time, lr.total_time,
-                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.how_to_makeup,
+                           lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.specific_dates, lr.how_to_makeup,
                            ua.emp_area, ua.emp_subarea,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
                            (SELECT full_name FROM users_app WHERE username = lr.approved_by_rrhh) as rrhh_name
@@ -826,13 +825,9 @@ def page_exceptions():
             
         elif sel_tab == "🕰️ Historial de Decisiones":
             if user["role"] == "coordinador":
-                managed_depts = [d.strip() for d in user.get('managed_department', '').split(',') if d.strip()]
-                if not managed_depts:
-                    managed_depts = ['']
-                    
-                placeholders = ','.join(['?'] * len(managed_depts))
-                cond_serv_gen = "OR (ua.emp_subarea = 'Servicios Generales')" if 'Calidad' in managed_depts else ""
-                cond_orientador = "OR (ua.emp_subarea = 'Orientador')" if 'Seguridad' in managed_depts else ""
+                managed_dept_str = user.get('managed_department', '')
+                cond_serv_gen = "OR (ua.emp_subarea = 'Servicios Generales')" if 'Calidad' in managed_dept_str else ""
+                cond_orientador = "OR (ua.emp_subarea = 'Orientador')" if 'Seguridad' in managed_dept_str else ""
                 
                 query_hist = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -842,13 +837,13 @@ def page_exceptions():
                     JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.approved_by_coord = ? 
                        OR (lr.status = 'REJECTED' AND (
-                              ua.emp_subarea IN ({placeholders})
+                              ? LIKE '%' || ua.emp_subarea || '%'
                               {cond_serv_gen}
                               {cond_orientador}
                           ))
                     ORDER BY lr.id DESC
                 """
-                params_hist = [user['username']] + managed_depts
+                params_hist = [user['username'], managed_dept_str]
             else:
                 query_hist = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -876,8 +871,7 @@ def page_exceptions():
                 st.write(f"Has procesado **{len(df_hist)}** solicitud(es) históricamente.")
                 
                 df_hist["Fechas"] = df_hist.apply(
-                    lambda r: r['leave_date_start'] if r['leave_date_start'] == r['leave_date_end'] 
-                    else f"{r['leave_date_start']} al {r['leave_date_end']}", 
+                    lambda r: r['specific_dates'].replace(',', ', ') if 'specific_dates' in r and pd.notna(r['specific_dates']) and str(r['specific_dates']).strip() != 'None' and str(r['specific_dates']).strip() != '' else (r['leave_date_start'] if r['leave_date_start'] == r['leave_date_end'] else f"{r['leave_date_start']} al {r['leave_date_end']}"), 
                     axis=1
                 )
                 
@@ -893,11 +887,14 @@ def page_exceptions():
                 
                 if len(event_h.selection.rows) > 0:
                     row_idx = event_h.selection.rows[0]
-                    req_id = int(display_df.iloc[row_idx]["Radicado"])
-                    
-                    if req_id != st.session_state.last_processed_hist:
-                        st.session_state.last_processed_hist = req_id
-                        show_leave_request_details(req_id)
+                    if row_idx < len(display_df):
+                        req_id = int(display_df.iloc[row_idx]["Radicado"])
+                        
+                        if req_id != st.session_state.last_processed_hist:
+                            st.session_state.last_processed_hist = req_id
+                            show_leave_request_details(req_id)
+                    else:
+                        st.session_state.last_processed_hist = None
                 else:
                     st.session_state.last_processed_hist = None
 
@@ -991,6 +988,12 @@ def page_exceptions():
         else:
             df_exc.columns = ["ID", "Usuario", "Nombre", "Fecha Inicio", "Fecha Fin", "Tipo", "Observaciones", "Registrado El"]
             
+            # Calcular Total Días (sumando 1 para que sea inclusivo)
+            df_exc["Total Días"] = (pd.to_datetime(df_exc["Fecha Fin"]) - pd.to_datetime(df_exc["Fecha Inicio"])).dt.days + 1
+            
+            # Reorganizar columnas para que Total Días quede junto a las fechas
+            df_exc = df_exc[["ID", "Usuario", "Nombre", "Fecha Inicio", "Fecha Fin", "Total Días", "Tipo", "Observaciones", "Registrado El"]]
+
             # Inicializar variables de estado para los filtros si no existen
             if "filter_exc_name" not in st.session_state:
                 st.session_state.filter_exc_name = ""
@@ -1089,11 +1092,14 @@ def page_exceptions():
                 
                 if len(event.selection.rows) > 0:
                     row_idx = event.selection.rows[0]
-                    selected_id = int(filtered_df.iloc[row_idx]["ID"])
-                    
-                    if selected_id != st.session_state.last_processed_exc:
-                        st.session_state.last_processed_exc = selected_id
-                        show_exception_details(selected_id)
+                    if row_idx < len(filtered_df):
+                        selected_id = int(filtered_df.iloc[row_idx]["ID"])
+                        
+                        if selected_id != st.session_state.last_processed_exc:
+                            st.session_state.last_processed_exc = selected_id
+                            show_exception_details(selected_id)
+                    else:
+                        st.session_state.last_processed_exc = None
                 else:
                     st.session_state.last_processed_exc = None
 
@@ -1109,7 +1115,7 @@ def page_exceptions():
             df_pend = pd.read_sql_query("""
                 SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                        lr.start_time, lr.end_time, lr.total_time,
-                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.how_to_makeup,
+                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.specific_dates, lr.how_to_makeup,
                        (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
                        (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
                 FROM leave_requests lr
@@ -1329,8 +1335,7 @@ def page_exceptions():
                 # De lo contrario (vacaciones cruzadas), concatenamos con un " al ".
                 # Esto ahorra un 20% del espacio invaluable en el ancho del monitor.
                 df_g["Fechas"] = df_g.apply(
-                    lambda r: r['leave_date_start'] if r['leave_date_start'] == r['leave_date_end'] 
-                    else f"{r['leave_date_start']} al {r['leave_date_end']}", 
+                    lambda r: r['specific_dates'].replace(',', ', ') if 'specific_dates' in r and pd.notna(r['specific_dates']) and str(r['specific_dates']).strip() != 'None' and str(r['specific_dates']).strip() != '' else (r['leave_date_start'] if r['leave_date_start'] == r['leave_date_end'] else f"{r['leave_date_start']} al {r['leave_date_end']}"), 
                     axis=1
                 )
                 
@@ -1349,8 +1354,8 @@ def page_exceptions():
 
                         matching_coords = []
                         for name, m_depts in coordinators:
-                            depts = [d.strip() for d in (m_depts or "").split(",") if d.strip()]
-                            if target_subarea in depts or subarea in depts:
+                            m_depts_str = m_depts or ""
+                            if target_subarea in m_depts_str or subarea in m_depts_str:
                                 matching_coords.append(name)
                         if matching_coords:
                             return ", ".join(matching_coords)
@@ -1399,15 +1404,18 @@ def page_exceptions():
                 
                 if len(event_g.selection.rows) > 0:
                     row_idx = event_g.selection.rows[0]
-                    req_id = int(display_df.iloc[row_idx]["Radicado"])
-                    
-                    # Interceptor lógico: ¿Es un click fresco en una fila NUEVA o quitada?
-                    # Si coincide con la memoria sucia, ignóralo para no interrumpir al Administrador.
-                    if req_id != st.session_state.last_processed_global:
-                        st.session_state.last_processed_global = req_id
+                    if row_idx < len(display_df):
+                        req_id = int(display_df.iloc[row_idx]["Radicado"])
                         
-                        # Invocación directa a la tarjeta visual que diseñamos en employee_portal (Modularidad)
-                        show_leave_request_details(req_id)
+                        # Interceptor lógico: ¿Es un click fresco en una fila NUEVA o quitada?
+                        # Si coincide con la memoria sucia, ignóralo para no interrumpir al Administrador.
+                        if req_id != st.session_state.last_processed_global:
+                            st.session_state.last_processed_global = req_id
+                            
+                            # Invocación directa a la tarjeta visual que diseñamos en employee_portal (Modularidad)
+                            show_leave_request_details(req_id)
+                    else:
+                        st.session_state.last_processed_global = None
                 else:
                     # En caso de que el admnistrador un-clickee la fila para "cerrar" visualmente.
                     st.session_state.last_processed_global = None

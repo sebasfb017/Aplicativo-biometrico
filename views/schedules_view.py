@@ -813,49 +813,56 @@ def process_bulk_shifts(df, year, month, num_days):
         
         # 3. Iterar cada fila
         for idx, row in df.iterrows():
-            uid = str(row[cedula_col]).strip()
-            if uid == "nan" or not uid:
+            try:
+                uid = str(row[cedula_col]).strip()
+                if uid.endswith('.0'):
+                    uid = uid[:-2]
+                    
+                if uid == "nan" or not uid:
+                    continue
+                if uid not in valid_users:
+                    errors.append(f"Fila {idx+2}: Cédula {uid} no encontrada en la base de datos.")
+                    continue
+                    
+                for d in range(1, num_days + 1):
+                    # Retrieve value using either int or string key
+                    val = row.get(d)
+                    if val is None or pd.isna(val):
+                        val = row.get(str(d))
+                    
+                    val = str(val).strip().upper() if pd.notna(val) else ""
+                    if val == "NAN":
+                        val = ""
+                    
+                    current_date = date(year, month, d)
+                    current_date_iso = current_date.isoformat()
+                    ws_iso = (current_date - timedelta(days=current_date.weekday())).isoformat()
+                    dow = current_date.weekday()
+                    
+                    # Reset assignments for this day
+                    cur.execute("DELETE FROM shift_assignments WHERE user_id = ? AND week_start = ? AND dow = ?", (uid, ws_iso, dow))
+                    cur.execute("DELETE FROM exceptions WHERE user_id = ? AND date = ?", (uid, current_date_iso))
+                    
+                    if val in shift_ids:
+                        cur.execute("""
+                            INSERT INTO shift_assignments (user_id, week_start, dow, shift_id, created_at)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (uid, ws_iso, dow, shift_ids[val], datetime.now().isoformat()))
+                        assigned += 1
+                    elif val in EXCEPTION_CODES_MAP:
+                        cur.execute("""
+                            INSERT INTO exceptions (user_id, date, type, created_at)
+                            VALUES (?, ?, ?, ?)
+                        """, (uid, current_date_iso, EXCEPTION_CODES_MAP[val], datetime.now().isoformat()))
+                        assigned += 1
+                    elif val == "L" or val == "":
+                        # Ya se limpió en los DELETE de arriba, día libre
+                        pass
+                    else:
+                        errors.append(f"Fila {idx+2}: Código desconocido '{val}' ignorado el día {d}.")
+            except Exception as e:
+                errors.append(f"Fila {idx+2}: Error procesando los datos. Verifica el formato de la fila - {e}")
                 continue
-            if uid not in valid_users:
-                errors.append(f"Fila {idx+2}: Cédula {uid} no encontrada en la base de datos.")
-                continue
-                
-            for d in range(1, num_days + 1):
-                # Retrieve value using either int or string key
-                val = row.get(d)
-                if val is None or pd.isna(val):
-                    val = row.get(str(d))
-                
-                val = str(val).strip().upper() if pd.notna(val) else ""
-                if val == "NAN":
-                    val = ""
-                
-                current_date = date(year, month, d)
-                current_date_iso = current_date.isoformat()
-                ws_iso = (current_date - timedelta(days=current_date.weekday())).isoformat()
-                dow = current_date.weekday()
-                
-                # Reset assignments for this day
-                cur.execute("DELETE FROM shift_assignments WHERE user_id = ? AND week_start = ? AND dow = ?", (uid, ws_iso, dow))
-                cur.execute("DELETE FROM exceptions WHERE user_id = ? AND date = ?", (uid, current_date_iso))
-                
-                if val in shift_ids:
-                    cur.execute("""
-                        INSERT INTO shift_assignments (user_id, week_start, dow, shift_id, created_at)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (uid, ws_iso, dow, shift_ids[val], datetime.now().isoformat()))
-                    assigned += 1
-                elif val in EXCEPTION_CODES_MAP:
-                    cur.execute("""
-                        INSERT INTO exceptions (user_id, date, type, created_at)
-                        VALUES (?, ?, ?, ?)
-                    """, (uid, current_date_iso, EXCEPTION_CODES_MAP[val], datetime.now().isoformat()))
-                    assigned += 1
-                elif val == "L" or val == "":
-                    # Ya se limpió en los DELETE de arriba, día libre
-                    pass
-                else:
-                    errors.append(f"Fila {idx+2}: Código desconocido '{val}' ignorado el día {d}.")
                     
     if errors:
         st.warning("El proceso terminó pero con las siguientes advertencias:")
