@@ -41,24 +41,70 @@ def page_dashboard():
     marcaciones_hoy = cur.fetchone()[0]
     
     col1, col2, col3 = st.columns(3)
+    
+    def render_kpi(icon, title, value, subtitle, color):
+        html = f"""
+        <div style="background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(0,0,0,0));
+                    border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 20px;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.1); border-bottom: 3px solid {color};
+                    animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; transform: translateY(20px);">
+            <style>
+            @keyframes slideUp {{
+                to {{ opacity: 1; transform: translateY(0); }}
+            }}
+            </style>
+            <div style="font-size: 1.0rem; color: #9CA3AF; font-weight: 500; margin-bottom: 5px; display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 1.3rem;">{icon}</span> {title}
+            </div>
+            <div style="font-size: 2.8rem; font-weight: 700; color: #F3F4F6; line-height: 1.1; text-shadow: 0 0 20px {color}40;">
+                {value}
+            </div>
+            <div style="font-size: 0.85rem; color: {color}; margin-top: 8px; font-weight: 600;">
+                {subtitle}
+            </div>
+        </div>
+        """
+        return html
+
     with col1:
-        with st.container(border=True):
-            st.metric("👥 Empleados Activos", total_empleados, "Base de datos")
+        st.markdown(render_kpi("👥", "Empleados Activos", total_empleados, "↑ Base de datos actualizada", "#3B82F6"), unsafe_allow_html=True)
     with col2:
-        with st.container(border=True):
-            st.metric("⏱️ Marcaciones de Hoy", marcaciones_hoy, "Actividad de red")
+        st.markdown(render_kpi("⏱️", "Marcaciones Hoy", marcaciones_hoy, "⚡ Actividad de red en vivo", "#10B981"), unsafe_allow_html=True)
     with col3:
-        with st.container(border=True):
-            st.metric("🔔 Permisos Pendientes", novedades_pend, "- Requieren revisión", delta_color="inverse")
+        alert_color = "#EF4444" if novedades_pend > 0 else "#6B7280"
+        alert_sub = "Requieren revisión urgente" if novedades_pend > 0 else "Todo al día"
+        st.markdown(render_kpi("🔔", "Permisos Pendientes", novedades_pend, alert_sub, alert_color), unsafe_allow_html=True)
     
     st.markdown("---")
     
     # Gráfico de Llegadas Tarde por Área (Este Mes)
-    st.subheader("⏱️ Minutos de Retraso por Área (Mes Actual)")
+    st.subheader("⏱️ Minutos de Retraso por Área")
     st.write("Cálculo dinámico cruzando horarios oficiales con marcaciones del biométrico.")
     
+    today = date.today()
+    default_year = today.year
+    default_month = today.month
+    
+    if today.day <= 5:
+        default_month -= 1
+        if default_month == 0:
+            default_month = 12
+            default_year -= 1
+
+    meses = [
+        "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+        "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+    ]
+
+    c_m1, c_m2 = st.columns(2)
+    with c_m1:
+        sel_month_name = st.selectbox("Mes", meses, index=default_month - 1, key="dash_month")
+        sel_month = meses.index(sel_month_name) + 1
+    with c_m2:
+        sel_year = st.selectbox("Año", list(range(today.year - 2, today.year + 2)), index=2, key="dash_year")
+    
     try:
-        summary_df, _ = compute_month_lateness(date.today().year, date.today().month)
+        summary_df, _ = compute_month_lateness(sel_year, sel_month)
         
         if summary_df.empty:
             st.success("¡Excelente! No hay tardanzas acumuladas este mes.")

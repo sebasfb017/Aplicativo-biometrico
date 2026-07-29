@@ -333,20 +333,64 @@ def forgot_password_dialog():
             st.session_state["fp_dni"] = ""
             st.rerun()
 def page_login():
-    # Inyección de CSS global para un acabado visual sutil:
+    # Inyección de CSS global para un acabado visual Inmersivo (Glassmorphism):
     st.markdown("""
         <style>
+        /* Fondo inmersivo para la pantalla de Login */
+        [data-testid="stAppViewContainer"] {
+            background: linear-gradient(135deg, #0F172A, #1E293B, #0F172A) !important;
+            background-size: 200% 200%;
+            animation: gradientBG 15s ease infinite;
+        }
+        @keyframes gradientBG {
+            0% {background-position: 0% 50%;}
+            50% {background-position: 100% 50%;}
+            100% {background-position: 0% 50%;}
+        }
+        [data-testid="stHeader"] {
+            background: transparent !important;
+        }
+        /* Tarjeta Glassmorphism */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background: rgba(255, 255, 255, 0.03) !important;
+            backdrop-filter: blur(12px) !important;
+            -webkit-backdrop-filter: blur(12px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            border-radius: 24px !important;
+            padding: 20px !important;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4) !important;
+            animation: fadeIn 1s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* Botones Premium */
         .stButton>button {
-            border-radius: 8px;
-            transition: all 0.2s ease-in-out;
+            border-radius: 12px;
+            background: linear-gradient(90deg, #6366f1, #8b5cf6) !important;
+            border: none !important;
+            color: white !important;
+            transition: all 0.3s ease !important;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4) !important;
         }
         .stButton>button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.6) !important;
+        }
+        /* Tabs centrados */
+        .stTabs [data-baseweb="tab-list"] {
+            justify-content: center;
+        }
+        /* Inputs estilizados */
+        div[data-baseweb="input"] {
+            border-radius: 8px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
         }
         /* Ajustar ancho máximo de las notificaciones */
         .stAlert {
-            border-radius: 8px;
+            border-radius: 12px;
         }
         </style>
     """, unsafe_allow_html=True)

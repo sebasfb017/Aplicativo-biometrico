@@ -76,10 +76,10 @@ def main():
     }
     
     :root {
-        --primary-blue: #0D6EFD;
-        --glow-blue: rgba(13, 110, 253, 0.4);
-        --glass-bg: rgba(255, 255, 255, 0.03);
-        --glass-border: rgba(200, 200, 200, 0.15);
+        --primary-blue: #6366f1;
+        --glow-blue: rgba(99, 102, 241, 0.4);
+        --glass-bg: rgba(255, 255, 255, 0.05);
+        --glass-border: rgba(255, 255, 255, 0.1);
     }
     
     /* Animación principal de renderizado (Fade-In) */
@@ -174,16 +174,60 @@ def main():
     
     /* Estilizar la barra lateral (Sidebar) */
     section[data-testid="stSidebar"] {
-        box-shadow: 2px 0 12px rgba(0,0,0,0.05) !important;
+        background: linear-gradient(180deg, #111827 0%, #1F2937 100%) !important;
+        box-shadow: 4px 0 20px rgba(0,0,0,0.3) !important;
+        border-right: 1px solid rgba(255,255,255,0.05) !important;
     }
+    
+    /* Botones del Menú Lateral (Sidebar) */
+    section[data-testid="stSidebar"] .stButton>button {
+        border-radius: 12px !important;
+        background: rgba(255,255,255,0.03) !important;
+        border: 1px solid rgba(255,255,255,0.05) !important;
+        color: #e5e7eb !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
+        padding-left: 20px !important;
+        font-weight: 500 !important;
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+        margin-bottom: 8px !important;
+    }
+    
+    section[data-testid="stSidebar"] .stButton>button:hover {
+        background: var(--primary-blue) !important;
+        border-color: var(--primary-blue) !important;
+        color: white !important;
+        transform: translateX(6px) !important;
+        box-shadow: 0 4px 15px var(--glow-blue) !important;
+    }
+    
+    /* Separador sutil del sidebar */
+    section[data-testid="stSidebar"] hr {
+        border-top: 1px solid rgba(255,255,255,0.08) !important;
+    }
+    
+    /* White-Labeling (Ocultar branding de Streamlit) */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header[data-testid="stHeader"] {background: transparent; box-shadow: none;}
     
     /* Pestañas (Tabs) estilo "Pill" modernas */
     button[data-baseweb="tab"] {
-        border-radius: 8px 8px 0 0 !important;
-        transition: background-color 0.2s;
+        border-radius: 12px 12px 0 0 !important;
+        background-color: var(--glass-bg) !important;
+        border: 1px solid var(--glass-border) !important;
+        border-bottom: none !important;
+        margin-right: 4px;
+        transition: all 0.3s ease;
     }
     button[data-baseweb="tab"]:hover {
-        background-color: rgba(128,128,128,0.05) !important;
+        background-color: rgba(99, 102, 241, 0.1) !important;
+        transform: translateY(-2px);
+    }
+    button[aria-selected="true"] {
+        background-color: var(--primary-blue) !important;
+        color: white !important;
+        border-color: var(--primary-blue) !important;
     }
 
     /* Skeleton Loader para carga asíncrona */

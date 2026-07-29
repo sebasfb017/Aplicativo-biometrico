@@ -333,7 +333,40 @@ def page_employee_portal():
             saldo_vac = 0
             c1, c2 = st.columns(2)
             with c1:
-                leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona uno o varios días de ausencia.", format="YYYY-MM-DD", key=f"leave_dates_{fk}")
+                tipo_fechas = st.radio("Tipo de selección de Fechas", ["Días consecutivos", "Días específicos"], horizontal=True, key=f"tipo_fechas_{fk}")
+                
+                if tipo_fechas == "Días consecutivos":
+                    leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona un día o un rango de días.", format="YYYY-MM-DD", key=f"leave_dates_{fk}")
+                    specific_dates_str = None
+                else:
+                    if f"specific_dates_list_{fk}" not in st.session_state:
+                        st.session_state[f"specific_dates_list_{fk}"] = []
+                    
+                    cc1, cc2 = st.columns([3, 1])
+                    with cc1:
+                        d_input = st.date_input("Seleccionar Día", format="YYYY-MM-DD", key=f"d_input_{fk}")
+                    with cc2:
+                        st.write("") # Spacer
+                        if st.button("➕ Añadir"):
+                            if d_input not in st.session_state[f"specific_dates_list_{fk}"]:
+                                st.session_state[f"specific_dates_list_{fk}"].append(d_input)
+                                st.session_state[f"specific_dates_list_{fk}"].sort()
+                    
+                    if st.session_state[f"specific_dates_list_{fk}"]:
+                        st.markdown("**Días Seleccionados:**")
+                        for d in st.session_state[f"specific_dates_list_{fk}"]:
+                            st.write(f"• {d.strftime('%Y-%m-%d')}")
+                        if st.button("🗑️ Limpiar Días", key=f"btn_clean_{fk}"):
+                            st.session_state[f"specific_dates_list_{fk}"] = []
+                            st.rerun()
+                    
+                    if st.session_state[f"specific_dates_list_{fk}"]:
+                        leave_dates = [st.session_state[f"specific_dates_list_{fk}"][0], st.session_state[f"specific_dates_list_{fk}"][-1]]
+                        specific_dates_str = ",".join([d.strftime('%Y-%m-%d') for d in st.session_state[f"specific_dates_list_{fk}"]])
+                    else:
+                        leave_dates = []
+                        specific_dates_str = None
+                
                 
                 categoria = st.selectbox("Categoría de Novedad", ["Citas", "Permisos", "Licencias", "Vacaciones", "Incapacidad"], key=f"categoria_{fk}")
                 
@@ -381,7 +414,11 @@ def page_employee_portal():
                 # Las variables time_s y time_e capturan las horas seleccionadas por el usuario.
                 calculated_time = ""
                 if tipo_tiempo == "Por Días":
-                    if leave_dates:
+                    if specific_dates_str:
+                        # Si son fechas específicas, simplemente contamos la cantidad de fechas
+                        dias_solicitados = len(st.session_state[f"specific_dates_list_{fk}"])
+                        calculated_time = f"{dias_solicitados} Día(s)"
+                    elif leave_dates:
                         if isinstance(leave_dates, (tuple, list)) and len(leave_dates) > 1:
                             d_start = leave_dates[0]
                             d_end = leave_dates[1]
@@ -403,7 +440,7 @@ def page_employee_portal():
                             dias_solicitados = 1
                             if reason_type == "Vacaciones":
                                 from database_conn.queries import is_holiday
-                                curr_date = leave_dates[0]
+                                curr_date = leave_dates[0] if isinstance(leave_dates, (list, tuple)) else leave_dates
                                 if curr_date.weekday() == 6 or is_holiday(curr_date):
                                     dias_solicitados = 0
                             calculated_time = f"{dias_solicitados} Día(s)"
@@ -435,7 +472,7 @@ def page_employee_portal():
             
             st.markdown("---")
             st.write("📄 **Documento de Soporte (Opcional)**")
-            uploaded_file = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal. Tamaño máximo: 20MB", type=["pdf", "png", "jpg", "jpeg"], key=f"upload_{fk}")
+            uploaded_files = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal (puedes subir varios). Tamaño máximo total: 20MB", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True, key=f"upload_{fk}")
             
             submitted = st.button("Firmar y Enviar a RRHH", type="primary", use_container_width=True)
             
@@ -444,11 +481,12 @@ def page_employee_portal():
             MAX_FILE_SIZE_MB = 20
             file_is_valid = True
 
-            if uploaded_file is not None:
-                # Obtenemos el tamaño del archivo subido en bytes y lo convertimos a MB
-                file_size_mb = uploaded_file.size / (1024 * 1024)
+            if uploaded_files:
+                # Obtenemos el tamaño de los archivos subidos en bytes y lo convertimos a MB
+                total_size = sum(uf.size for uf in uploaded_files)
+                file_size_mb = total_size / (1024 * 1024)
                 if file_size_mb > MAX_FILE_SIZE_MB:
-                    st.error(f"❌ El archivo '{uploaded_file.name}' es demasiado grande ({file_size_mb:.1f} MB). El tamaño máximo permitido es {MAX_FILE_SIZE_MB} MB. Por favor, comprime el archivo antes de subirlo.")
+                    st.error(f"❌ El tamaño total de los archivos es demasiado grande ({file_size_mb:.1f} MB). El tamaño máximo permitido es {MAX_FILE_SIZE_MB} MB. Por favor, comprime los archivos antes de subirlos.")
                     file_is_valid = False
             # ---------------------------------------
 
@@ -469,25 +507,37 @@ def page_employee_portal():
                 str_te = time_e.strftime("%H:%M") if time_e else ""
                 
                 attachment_path = None
-                if uploaded_file is not None:
+                if uploaded_files:
                     import os
                     import time
+                    import zipfile
                     from database_conn.connection import DATA_DIR
                     
                     uploads_dir = os.path.join(DATA_DIR, "uploads")
                     os.makedirs(uploads_dir, exist_ok=True)
                     
-                    file_extension = os.path.splitext(uploaded_file.name)[1]
-                    safe_filename = f"{user['username']}_{int(time.time())}{file_extension}"
-                    full_path = os.path.join(uploads_dir, safe_filename)
-                    
-                    with open(full_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    attachment_path = safe_filename
+                    if len(uploaded_files) == 1:
+                        uf = uploaded_files[0]
+                        file_extension = os.path.splitext(uf.name)[1]
+                        safe_filename = f"{user['username']}_{int(time.time())}{file_extension}"
+                        full_path = os.path.join(uploads_dir, safe_filename)
+                        with open(full_path, "wb") as f:
+                            f.write(uf.getbuffer())
+                        attachment_path = safe_filename
+                    else:
+                        safe_filename = f"{user['username']}_{int(time.time())}.zip"
+                        full_path = os.path.join(uploads_dir, safe_filename)
+                        with zipfile.ZipFile(full_path, "w") as zf:
+                            for i, uf in enumerate(uploaded_files):
+                                file_extension = os.path.splitext(uf.name)[1]
+                                original_name = os.path.splitext(uf.name)[0]
+                                name_in_zip = f"{original_name}_{i+1}{file_extension}"
+                                zf.writestr(name_in_zip, uf.getbuffer())
+                        attachment_path = safe_filename
                 
                 req_id = db_create_leave_request(
                     user["username"], d_start, d_end, str_ts, str_te,
-                    total_time, reason_type, r_desc, makeup, is_paid == "Sí", attachment_path
+                    total_time, reason_type, r_desc, makeup, is_paid == "Sí", attachment_path, specific_dates_str
                 )
                 
                 try:
@@ -610,22 +660,48 @@ def page_employee_portal():
                 st.info("No tienes solicitudes en esta categoría.")
             else:
                 for _, r in filtered_df_reqs.iterrows(): # Usamos el DataFrame filtrado
-                    with st.container(border=True, key=f"container_portal_{r['Radicado']}"):
-                        cols = st.columns([3, 2])
-                        with cols[0]:
-                            status_badge = ""
-                            if r['Estado'] == 'REJECTED':
-                                status_badge = "🔴 RECHAZADA"
-                            elif r['Estado'] == 'CANCELLED':
-                                status_badge = "⚪ CANCELADA"
+                    # Colores mágicos según estado
+                    if r['Estado'] == 'APPROVED':
+                        bg_color = "rgba(16, 185, 129, 0.1)"
+                        border_color = "rgba(16, 185, 129, 0.4)"
+                        title_color = "#10b981"
+                        icon = "✅"
+                        status_text = "APROBADA"
+                    elif r['Estado'] in ['REJECTED', 'CANCELLED']:
+                        bg_color = "rgba(239, 68, 68, 0.1)"
+                        border_color = "rgba(239, 68, 68, 0.4)"
+                        title_color = "#ef4444"
+                        icon = "🔴"
+                        status_text = "RECHAZADA / CANCELADA"
+                    else:
+                        bg_color = "rgba(245, 158, 11, 0.1)"
+                        border_color = "rgba(245, 158, 11, 0.4)"
+                        title_color = "#f59e0b"
+                        icon = "⏳"
+                        status_text = "PENDIENTE"
 
-                            st.markdown(f"🗓️ **{r['Fechas']}** | Radicado: `#{r['Radicado']}` {status_badge}")
-                            st.write(f"**Motivo:** {r['Motivo']} | **Duración:** {r['Duración']}")
-                            
-                            # Reemplazamos el texto simple por el tracker visual
-                            st.markdown(create_status_tracker(r['Estado'], r['Motivo']), unsafe_allow_html=True)
+                    card_html = f"""
+                    <div style="background: linear-gradient(135deg, {bg_color}, rgba(0,0,0,0)); border: 1px solid {border_color}; border-radius: 16px; padding: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.05); margin-bottom: 5px; transition: transform 0.3s ease;">
+                        <h4 style="margin-top:0; color: {title_color}; display: flex; justify-content: space-between; align-items: center;">
+                            <span>{icon} {status_text}</span>
+                            <span style="font-size: 0.7em; color: gray;">Radicado #{r['Radicado']}</span>
+                        </h4>
+                        <p style="margin: 5px 0;"><strong>🗓️ {r['Fechas']}</strong></p>
+                        <p style="margin: 5px 0;"><strong>Motivo:</strong> {r['Motivo']} | <strong>Duración:</strong> {r['Duración']}</p>
+                        <div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
+                            {create_status_tracker(r['Estado'], r['Motivo'])}
+                        </div>
+                    </div>
+                    """
+                    
+                    with st.container(border=False):
+                        cols = st.columns([7, 3])
+                        with cols[0]:
+                            st.markdown(card_html, unsafe_allow_html=True)
                         
                         with cols[1]:
+                            st.write("") # Espaciador superior
+                            st.write("")
                             if st.button("👁️ Ver Detalles", key=f"btn_detalles_{r['Radicado']}", use_container_width=True):
                                 show_leave_request_details(r['Radicado'])
 
