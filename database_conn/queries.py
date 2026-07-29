@@ -207,7 +207,7 @@ def get_exceptions_df():
     df['grp'] = (
         (df['user_id'] != df['user_id'].shift()) |
         (df['type'] != df['type'].shift()) |
-        (df['date_obj'].diff().dt.days > 4) |
+        (df['date_obj'].diff().dt.days > 1) |
         (df['date_obj'].diff().dt.days <= 0)
     ).cumsum()
     
@@ -224,7 +224,7 @@ def get_exceptions_df():
     
     return final_df
 
-def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, total_time, r_type, r_desc, makeup, is_paid, attachment_path=None):
+def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, total_time, r_type, r_desc, makeup, is_paid, attachment_path=None, specific_dates=None):
     """Crea una solicitud digital y define el flujo de aprobación inicial."""
     with db_session() as conn:
         cur = conn.cursor()
@@ -239,10 +239,10 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
     if r_type == "Incapacidad":
         target_status = "PENDING_RRHH"
     elif role == "coordinador":
-        # Salta al siguiente paso: Jefe de Área
-        target_status = "PENDING_JEFE"
+        # Salta la aprobación de coordinador (ya que él es uno), va a RRHH
+        target_status = "PENDING_RRHH"
     elif role in ["admin", "nomina"]:
-        # Si radica RRHH, salta al siguiente paso: Jefe de Área
+        # Si radica RRHH, también debería registrarse formalmente o saltar a Jefe
         target_status = "PENDING_JEFE"
     elif role == "jefe_area":
         # Si radica el Jefe, se auto-aprueba (es la última instancia)
@@ -262,12 +262,12 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
                     cur.execute("SELECT managed_department FROM users_app WHERE role = 'coordinador' AND active = 1")
                     coordinators = cur.fetchall()
                     for c_row in coordinators:
-                        c_depts = [d.strip() for d in c_row[0].split(',') if d.strip()]
+                        managed_dept = c_row[0] or ""
                         target_subarea = subarea
                         if target_subarea == 'Servicios Generales': target_subarea = 'Calidad'
                         elif target_subarea == 'Orientador': target_subarea = 'Seguridad'
                         
-                        if target_subarea in c_depts or subarea in c_depts:
+                        if target_subarea in managed_dept or subarea in managed_dept:
                             has_coordinator = True
                             break
             if not has_coordinator:
@@ -278,11 +278,11 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
         cur.execute("""
             INSERT INTO leave_requests (
                 user_id, request_date, leave_date_start, leave_date_end, start_time, end_time, 
-                total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status, attachment_path
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status, attachment_path, specific_dates
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (user_id, datetime.now().date().isoformat(), leave_start.isoformat(), leave_end.isoformat(),
               t_start, t_end, total_time, r_type, r_desc, makeup, 1 if is_paid else 0,
-              datetime.now().isoformat(timespec="seconds"), target_status, attachment_path))
+              datetime.now().isoformat(timespec="seconds"), target_status, attachment_path, specific_dates))
         
         req_id = cur.lastrowid
     
