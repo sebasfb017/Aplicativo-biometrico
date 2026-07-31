@@ -280,12 +280,38 @@ def main():
         border-top-color: var(--primary-blue) !important;
         border-left-color: var(--primary-blue) !important;
     }
-    /* El indicador de "Running..." arriba a la derecha */
+    /* El indicador de "Running..." arriba a la derecha (Custom Loading) */
     div[data-testid="stStatusWidget"] {
-        background: var(--glass-bg);
-        border: 1px solid var(--primary-blue);
-        border-radius: 8px;
-        box-shadow: 0 0 10px var(--glow-blue);
+        background: linear-gradient(90deg, #1E293B, #0F172A) !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        border-radius: 20px !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3), 0 0 10px rgba(99,102,241,0.2) !important;
+        padding: 4px 16px !important;
+    }
+    div[data-testid="stStatusWidget"] label {
+        color: #e5e7eb !important;
+        font-weight: 500 !important;
+        letter-spacing: 0.5px;
+    }
+    /* Ocultar muñequito corriendo (svg) si existe en la versión de streamlit */
+    div[data-testid="stStatusWidget"] svg {
+        display: none !important;
+    }
+    /* Añadir nuestro propio spinner (círculo) antes del texto */
+    div[data-testid="stStatusWidget"]::before {
+        content: "";
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(99, 102, 241, 0.3);
+        border-radius: 50%;
+        border-top-color: #6366f1;
+        animation: spin 1s ease-in-out infinite;
+        margin-right: 8px;
+        vertical-align: middle;
+    }
+    @keyframes spin {
+        to { transform: rotate(360deg); }
     }
     </style>
     """, unsafe_allow_html=True)
