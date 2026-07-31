@@ -350,20 +350,36 @@ def page_login():
         [data-testid="stHeader"] {
             background: transparent !important;
         }
-        /* Tarjeta Glassmorphism */
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: rgba(255, 255, 255, 0.03) !important;
-            backdrop-filter: blur(12px) !important;
-            -webkit-backdrop-filter: blur(12px) !important;
-            border: 1px solid rgba(255, 255, 255, 0.1) !important;
-            border-radius: 24px !important;
-            padding: 20px !important;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.4) !important;
-            animation: fadeIn 1s ease-out;
+        /* Fondo Animado de Pantalla Completa para el Login */
+        .stApp {
+            background: linear-gradient(-45deg, #0f172a, #1e1b4b, #312e81, #172554) !important;
+            background-size: 400% 400% !important;
+            animation: gradientBG 15s ease infinite !important;
         }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
+        @keyframes gradientBG {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        /* Ocultar sidebar en login si llegara a aparecer */
+        [data-testid="stSidebar"] { display: none !important; }
+        
+        /* Tarjeta Glassmorphism Premium */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background: rgba(255, 255, 255, 0.05) !important;
+            backdrop-filter: blur(20px) !important;
+            -webkit-backdrop-filter: blur(20px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            border-top: 1px solid rgba(255, 255, 255, 0.2) !important;
+            border-left: 1px solid rgba(255, 255, 255, 0.2) !important;
+            border-radius: 24px !important;
+            padding: 30px 20px !important;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+            animation: fadeInCard 1s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes fadeInCard {
+            from { opacity: 0; transform: translateY(30px) scale(0.95); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
         }
         /* Botones Premium */
         .stButton>button {
@@ -395,14 +411,20 @@ def page_login():
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    _, col_center, _ = st.columns([1, 2, 1])
+    st.markdown("<br><br><br>", unsafe_allow_html=True)
+    _, col_center, _ = st.columns([1, 3.5, 1])
     
     with col_center:
         with st.container(border=True):
-            st.markdown("<h1 style='text-align: center; font-size: 3.5rem; margin-bottom: 0; color: #0D6EFD;'>Dolormed</h1>", unsafe_allow_html=True)
-            st.markdown("<p style='text-align: center; color: gray; font-size: 1.1rem; margin-top: 0;'>Portal Web de Empleados y Administración</p>", unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("""
+                <div style='text-align: center; margin-bottom: 20px;'>
+                    <div style='display: inline-flex; align-items: center; justify-content: center; width: 80px; height: 80px; border-radius: 20px; background: linear-gradient(135deg, #6366f1, #3b82f6); box-shadow: 0 10px 25px rgba(99,102,241,0.5); margin-bottom: 15px;'>
+                        <span style='font-size: 40px;'>🏥</span>
+                    </div>
+                    <h1 style='margin: 0; font-size: 3.2rem; background: linear-gradient(to right, #fff, #a5b4fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;'>Dolormed</h1>
+                    <p style='color: #94a3b8; font-size: 1.1rem; margin-top: 5px; font-weight: 300;'>Portal Web de Empleados y Administración</p>
+                </div>
+            """, unsafe_allow_html=True)
 
             tab1, tab2 = st.tabs(["🔒 Ingreso Administrativo", "🧑‍⚕️ Portal de Empleados"])
 
