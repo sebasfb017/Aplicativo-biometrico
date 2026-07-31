@@ -501,6 +501,61 @@ def db_reject_leave_request(req_id, rejected_by, rejection_reason):
     if notify:
         db_notify_next_approvers(req_id, user_id, 'REJECTED', rejecter_name)
 
+def db_revert_leave_request(req_id, admin_user):
+    """
+    Revierte una solicitud finalizada (APPROVED o REJECTED) de vuelta a PENDING_RRHH.
+    Si fue aprobada, elimina las excepciones del calendario y restaura las vacaciones si aplica.
+    """
+    with db_session() as conn:
+        cur = conn.cursor()
+        
+        cur.execute("SELECT user_id, status, reason_type, leave_date_start, leave_date_end, specific_dates FROM leave_requests WHERE id = ?", (req_id,))
+        req_row = cur.fetchone()
+        if not req_row:
+            return False
+            
+        user_id, status, reason_type, start_date, end_date, specific_dates = req_row
+        
+        if status not in ['APPROVED', 'REJECTED']:
+            return False
+            
+        if status == 'APPROVED':
+            days_refunded = 0
+            if specific_dates:
+                dates_list = specific_dates.split(',')
+                for d in dates_list:
+                    cur.execute("DELETE FROM exceptions WHERE user_id = ? AND date = ? AND notes LIKE 'Aprobado de Portal%'", (user_id, d))
+                    days_refunded += cur.rowcount
+            else:
+                cur.execute("DELETE FROM exceptions WHERE user_id = ? AND date >= ? AND date <= ? AND notes LIKE 'Aprobado de Portal%'", (user_id, start_date, end_date))
+                days_refunded += cur.rowcount
+                
+            if reason_type == 'Vacaciones' and days_refunded > 0:
+                cur.execute("UPDATE users_app SET vacation_balance = vacation_balance + ? WHERE username = ?", (days_refunded, user_id))
+                
+        cur.execute("""
+            UPDATE leave_requests 
+            SET status = 'PENDING_RRHH', 
+                approved_by_rrhh = NULL, rrhh_approval_date = NULL,
+                approved_by_jefe = NULL, jefe_approval_date = NULL,
+                approved_by_coord = NULL, coord_approval_date = NULL,
+                rejection_reason = NULL, cancellation_reason = NULL
+            WHERE id = ?
+        """, (req_id,))
+        
+        now = datetime.now().isoformat(timespec="seconds")
+        cur.execute("""
+            INSERT INTO audit_logs (user_id, action, details, timestamp)
+            VALUES (?, ?, ?, ?)
+        """, (admin_user, "REVERT_LEAVE", f"Revirtió la solicitud #{req_id} ({reason_type}) al estado PENDING_RRHH.", now))
+        
+        cur.execute("""
+            INSERT INTO notifications (user_id, title, message, created_at)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, "Solicitud Devuelta a Revisión", f"Tu solicitud de permiso #{req_id} ha sido devuelta a revisión por Gestión Humana.", now))
+        
+        return True
+
 def db_cancel_leave_request(req_id, user_id, reason):
     """
     Cancela una solicitud de permiso por parte del empleado.
