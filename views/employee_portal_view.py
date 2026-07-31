@@ -378,34 +378,45 @@ def page_employee_portal():
                 st.subheader("1. Seleccionar Novedad, Fechas y Horas")
                 col_cat, col_det = st.columns(2)
                 with col_cat:
-                    categoria = st.selectbox("Categoría de Novedad", ["Citas", "Permisos", "Licencias", "Vacaciones", "Incapacidad"], key=f"categoria_{fk}")
+                    categoria = st.selectbox("Categoría de Novedad", ["Citas", "Permisos", "Licencias", "Vacaciones", "Incapacidad"], index=None, placeholder="Selecciona...", key=f"categoria_{fk}")
                 
                 with col_det:
+                    reason_type = None
                     if categoria == "Citas":
-                        reason_type = st.selectbox("Detalle", ["Cita Médica", "Cita Médica con desplazamiento a otra ciudad"], key=f"rt_citas_{fk}")
+                        reason_type = st.selectbox("Detalle", ["Cita Médica", "Cita Médica con desplazamiento a otra ciudad"], index=None, placeholder="Selecciona...", key=f"rt_citas_{fk}")
                     elif categoria == "Permisos":
-                        reason_type = st.selectbox("Detalle", ["Permiso Personal", "Permiso Laboral"], key=f"rt_permisos_{fk}")
+                        reason_type = st.selectbox("Detalle", ["Permiso Personal", "Permiso Laboral"], index=None, placeholder="Selecciona...", key=f"rt_permisos_{fk}")
                     elif categoria == "Licencias":
-                        reason_type = st.selectbox("Detalle", ["Calamidad Doméstica", "Licencia de Luto", "Licencia de Paternidad", "Licencia por Votación", "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"], key=f"rt_licencias_{fk}")
+                        reason_type = st.selectbox("Detalle", ["Calamidad Doméstica", "Licencia de Luto", "Licencia de Paternidad", "Licencia por Votación", "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"], index=None, placeholder="Selecciona...", key=f"rt_licencias_{fk}")
                     elif categoria == "Incapacidad":
                         reason_type = "Incapacidad"
                         st.text_input("Detalle", value="Incapacidad", disabled=True, key=f"rt_incap_{fk}")
-                    else: # Vacaciones
+                    elif categoria == "Vacaciones":
                         reason_type = "Vacaciones"
                         st.text_input("Detalle", value="Vacaciones", disabled=True, key=f"rt_vac_{fk}")
+                    else:
+                        st.selectbox("Detalle", [], disabled=True, index=None, placeholder="Primero elige categoría", key=f"rt_dummy_{fk}")
                 
-                is_paid = st.radio("¿Permiso Remunerado?", ["No", "Sí"], horizontal=True, key=f"is_paid_{fk}")
+                is_reason_selected = reason_type is not None
+                is_paid = st.radio("¿Permiso Remunerado?", ["No", "Sí"], horizontal=True, key=f"is_paid_{fk}", disabled=not is_reason_selected)
+                duracion_permiso = st.radio("¿Duración del permiso?", ["Por Horas", "Por Días"], horizontal=True, index=None, key=f"duracion_permiso_{fk}", disabled=not is_reason_selected)
                 
-                duracion_permiso = st.radio("¿Duración del permiso?", ["Por Horas", "Por Días"], horizontal=True, key=f"duracion_permiso_{fk}")
+                is_duration_selected = duracion_permiso is not None
                 
                 c1, c2 = st.columns(2)
                 with c1:
-                    if duracion_permiso == "Por Días":
+                    if not is_duration_selected:
+                        tipo_fechas = st.radio("Opciones de Días", ["Días consecutivos", "Días específicos"], horizontal=True, disabled=True, key=f"tipo_fechas_dummy_{fk}")
+                    elif duracion_permiso == "Por Días":
                         tipo_fechas = st.radio("Opciones de Días", ["Días consecutivos", "Días específicos"], horizontal=True, key=f"tipo_fechas_{fk}")
                     else:
                         tipo_fechas = "Día único"
                 
-                    if tipo_fechas == "Días consecutivos":
+                    leave_dates = []
+                    specific_dates_str = None
+                    if not is_duration_selected:
+                        st.date_input("Fecha(s) del Permiso", disabled=True, key=f"leave_dates_dummy_{fk}")
+                    elif tipo_fechas == "Días consecutivos":
                         leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona un día o un rango de días.", format="YYYY-MM-DD", key=f"leave_dates_{fk}")
                         specific_dates_str = None
                     elif tipo_fechas == "Día único":
@@ -442,7 +453,10 @@ def page_employee_portal():
                             specific_dates_str = None
                 # (Categoría y tipo de novedad movidos al principio del expander)
             with c2:
-                if duracion_permiso == "Por Días":
+                tipo_tiempo = None
+                if not is_duration_selected:
+                    st.radio("¿Qué tipo de permiso es?", ["Rango de Horas", "Llegada Tarde", "Salida Temprano"], horizontal=True, disabled=True, key=f"tipo_tiempo_dummy2_{fk}")
+                elif duracion_permiso == "Por Días":
                     tipo_tiempo = "Por Días"
                     st.radio("Tipo de permiso", ["Días completos (Auto)"], horizontal=True, key=f"tipo_tiempo_dummy_{fk}", disabled=True)
                 else:
@@ -451,7 +465,10 @@ def page_employee_portal():
                 time_s = None
                 time_e = None
                 
-                if tipo_tiempo == "Rango de Horas":
+                if not is_duration_selected:
+                    st.time_input("Hora Inicial", disabled=True, key=f"ts_dummy_{fk}")
+                    st.time_input("Hora Final", disabled=True, key=f"te_dummy_{fk}")
+                elif tipo_tiempo == "Rango de Horas":
                     time_s = st.time_input("Hora de Salida a la diligencia", value=None, key=f"ts_rango_{fk}")
                     time_e = st.time_input("Hora de Regreso al trabajo", value=None, key=f"te_rango_{fk}")
                 elif tipo_tiempo == "Llegada Tarde":
@@ -529,7 +546,7 @@ def page_employee_portal():
                 
             with st.container(border=True):
                 st.subheader("3. Soportes y Envío")
-                st.write("📄 **Documento de Soporte (Opcional)**")
+                st.write("📄 **Documento de Soporte (Obligatorio para Incapacidad y Jurado/Votación)**")
                 uploaded_files = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal (puedes subir varios). Tamaño máximo total: 20MB", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True, key=f"upload_{fk}")
                 
                 st.write("")
@@ -549,17 +566,31 @@ def page_employee_portal():
                     file_is_valid = False
             # ---------------------------------------
 
-            if not file_is_valid:
-                pass # Se detiene el proceso si el archivo es muy grande, mostrando el error
-            elif not leave_dates:
-                st.error("Debes seleccionar obligatoriamente al menos una fecha de inicio.")
-            elif "Error" in calculated_time:
-                st.error("Las horas ingresadas son inválidas. La hora fin debe ser mayor a la hora de inicio.")
-            elif "Ingresa ambas horas" in calculated_time:
-                st.error("Para calcular una fracción de tiempo, debes ingresar tanto la Hora Inicio como la Hora Fin. (Ej. Si llegas tarde, Hora Inicio es tu horario normal y Hora Fin es tu llegada).")
-            elif reason_type == "Vacaciones" and dias_solicitados > saldo_vac:
-                st.error(f"❌ Has solicitado {dias_solicitados} días de vacaciones, pero solo tienes {saldo_vac} días a favor.")
-            else:
+            is_valid_form = file_is_valid
+            
+            if is_valid_form:
+                if not categoria or not reason_type:
+                    st.error("❌ Debes seleccionar la Categoría y el Detalle de la Novedad.")
+                    is_valid_form = False
+                elif not leave_dates:
+                    st.error("❌ Debes seleccionar obligatoriamente al menos una fecha de inicio.")
+                    is_valid_form = False
+                elif "Error" in calculated_time or "Ingresa ambas" in calculated_time:
+                    st.error("❌ Las horas ingresadas son inválidas o incompletas. Verifica el tiempo calculado.")
+                    is_valid_form = False
+                elif not r_desc or not r_desc.strip():
+                    st.error("❌ Debes ingresar una Justificación / Detalles del permiso de manera obligatoria.")
+                    is_valid_form = False
+                elif reason_type == "Vacaciones" and dias_solicitados > saldo_vac:
+                    st.error(f"❌ Has solicitado {dias_solicitados} días de vacaciones, pero solo tienes {saldo_vac} días a favor.")
+                    is_valid_form = False
+                else:
+                    requires_attachment = categoria == "Incapacidad" or reason_type in ["Licencia por Votación", "Licencia por Jurado de Votación"]
+                    if requires_attachment and not uploaded_files:
+                        st.error(f"❌ Para **{reason_type}** es OBLIGATORIO adjuntar el documento de soporte.")
+                        is_valid_form = False
+                        
+            if is_valid_form:
                 d_start = leave_dates[0] if isinstance(leave_dates, (list, tuple)) else leave_dates
                 d_end = leave_dates[1] if isinstance(leave_dates, (list, tuple)) and len(leave_dates) > 1 else d_start
                 str_ts = time_s.strftime("%H:%M") if time_s else ""
