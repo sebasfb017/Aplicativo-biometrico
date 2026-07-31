@@ -138,7 +138,7 @@ def page_view_attendance():
     devices = [row[0] for row in cur.fetchall()]
     conn.close()
 
-    with st.expander("🔍 Buscador y Filtros Avanzados", expanded=True):
+    with st.expander("🔍 Buscador y Filtros Avanzados", expanded=False):
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             start_date = st.date_input("Desde el", value=date.today() - timedelta(days=7))
