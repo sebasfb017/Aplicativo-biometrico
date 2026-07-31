@@ -139,7 +139,12 @@ def page_dashboard():
                 top5_df = merged.sort_values(by="minutos_tarde_total", ascending=False).head(5)
                 top5_df = top5_df[top5_df["minutos_tarde_total"] > 0]
                 if not top5_df.empty:
-                    st.dataframe(top5_df[['full_name', 'minutos_tarde_total']].rename(columns={'full_name': 'Empleado', 'minutos_tarde_total': 'Minutos'}), hide_index=True, use_container_width=True)
+                    html_t5 = "<div class='premium-table-container'><table class='premium-table'>"
+                    html_t5 += "<thead><tr><th>Empleado</th><th>Minutos</th></tr></thead><tbody>"
+                    for _, r in top5_df.iterrows():
+                        html_t5 += f"<tr><td><b>{r['full_name']}</b></td><td><span class='badge-modern badge-amber'>⏱️ {r['minutos_tarde_total']} min</span></td></tr>"
+                    html_t5 += "</tbody></table></div>"
+                    st.markdown(html_t5, unsafe_allow_html=True)
                 else:
                     st.info("No hay retrasos registrados.")
                 
@@ -181,14 +186,14 @@ def page_dashboard():
     """, conn)
     
     if not df_pendientes.empty:
-        # Simplificar el estado para hacerlo más legible
-        def simplificar_pendiente(x):
-            if x == 'PENDING_COORD': return '🕒 Coord.'
-            if x == 'PENDING_JEFE': return '🕒 Jefe Área'
-            if x == 'PENDING_RRHH': return '🕒 RRHH'
-            return x
-        df_pendientes['Estado'] = df_pendientes['Estado'].apply(simplificar_pendiente)
-        st.dataframe(df_pendientes, hide_index=True, use_container_width=True)
+        html_table = "<div class='premium-table-container'><table class='premium-table'>"
+        html_table += "<thead><tr><th>Radicado</th><th>Fecha</th><th>Empleado</th><th>Departamento</th><th>Motivo</th><th>Estado</th></tr></thead><tbody>"
+        for _, r in df_pendientes.iterrows():
+            st_badge = "badge-amber"
+            estado_str = str(r['Estado']).replace('PENDING_COORD', '🕒 Coord.').replace('PENDING_JEFE', '🕒 Jefe Área').replace('PENDING_RRHH', '🕒 RRHH')
+            html_table += f"<tr><td>#{r['Radicado']}</td><td>{r['Fecha']}</td><td><b>{r['Empleado']}</b></td><td>{r.get('Departamento', 'N/A')}</td><td>{r['Motivo']}</td><td><span class='badge-modern {st_badge}'>{estado_str}</span></td></tr>"
+        html_table += "</tbody></table></div>"
+        st.markdown(html_table, unsafe_allow_html=True)
     else:
         st.success("¡Todo al día! No hay solicitudes pendientes de aprobación.")
 
