@@ -136,272 +136,169 @@ def _send_email(to_email, subject, html_content, text_content=""):
     thread.start()
     return True, "Enviando en segundo plano..."
 
-def send_welcome_email(to_email, full_name, username, password):
-    subject = "Bienvenido al Portal de Nómina Dolormed"
-    
-    html = f"""
+
+def _get_base_template(title, body_content, header_color="#0D6EFD"):
+    return f"""
+    <!DOCTYPE html>
     <html>
-      <head>
+    <head>
+        <meta charset="utf-8">
         <style>
-          body {{ font-family: Arial, sans-serif; background-color: #f4f7f6; color: #333; }}
-          .container {{ max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
-          .header {{ text-align: center; border-bottom: 2px solid #0D6EFD; padding-bottom: 10px; margin-bottom: 20px; }}
-          .header h2 {{ color: #0D6EFD; margin: 0; }}
-          .content {{ line-height: 1.6; }}
-          .info-box {{ background: #f8f9fa; border-left: 4px solid #0D6EFD; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-          .info-box p {{ margin: 5px 0; }}
-          .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: #777; }}
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; color: #334155; margin: 0; padding: 0; }}
+            .email-wrapper {{ width: 100%; background-color: #f8fafc; padding: 40px 0; }}
+            .container {{ max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }}
+            .header {{ background-color: {header_color}; padding: 35px; text-align: center; color: white; }}
+            .header img {{ width: 70px; height: 70px; margin-bottom: 15px; filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.2)); }}
+            .header h2 {{ margin: 0; font-size: 26px; font-weight: 600; letter-spacing: 0.5px; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }}
+            .content {{ padding: 40px 35px; line-height: 1.7; font-size: 16px; color: #475569; }}
+            .btn-container {{ text-align: center; margin-top: 40px; margin-bottom: 10px; }}
+            .btn {{ display: inline-block; background-color: {header_color}; color: #ffffff !important; text-decoration: none; padding: 14px 35px; border-radius: 8px; font-weight: bold; font-size: 16px; letter-spacing: 0.5px; box-shadow: 0 4px 6px rgba(0,0,0,0.15); transition: background-color 0.3s; }}
+            .footer {{ background-color: #f1f5f9; padding: 25px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }}
+            .info-box {{ background: #f8fafc; border-left: 4px solid {header_color}; padding: 20px; border-radius: 6px; margin: 25px 0; box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); }}
+            .info-box p {{ margin: 8px 0; }}
+            .info-box ul {{ margin-top: 10px; margin-bottom: 10px; padding-left: 20px; }}
+            strong {{ color: #1e293b; }}
         </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h2>👋 Bienvenido a Nómina Dolormed</h2>
-          </div>
-          <div class="content">
-            <p>Hola <strong>{full_name}</strong>,</p>
-            <p>Se te ha creado un usuario para acceder al Portal de Autogestión de Empleados. Desde allí podrás consultar tus turnos, asistencias y radicar solicitudes de permisos (Novedades).</p>
-            
-            <div class="info-box">
-              <p>Tus credenciales de acceso son:</p>
-              <p><strong>👤 Usuario:</strong> {username}</p>
-              <p><strong>🔑 Contraseña:</strong> {password}</p>
+    </head>
+    <body>
+        <div class="email-wrapper">
+            <div class="container">
+                <div class="header">
+                    <!-- Usamos un icono premium de hospital como logo por defecto -->
+                    <img src="https://img.icons8.com/fluency/96/ffffff/hospital.png" alt="Dolormed Logo">
+                    <h2>{title}</h2>
+                </div>
+                <div class="content">
+                    {body_content}
+                    <div class="btn-container">
+                        <a href="http://localhost:8501" class="btn">Ir al Portal Web</a>
+                    </div>
+                </div>
+                <div class="footer">
+                    <p>Este es un mensaje automático del <strong>Sistema de Gestión Humana Dolormed</strong>.<br>Por favor, no respondas a este correo.</p>
+                </div>
             </div>
-            
-            <p>Te recomendamos cambiar tu contraseña una vez que ingreses al sistema por motivos de seguridad.</p>
-          </div>
-          <div class="footer">
-            <p>Este es un mensaje automático del Sistema de RRHH Dolormed. No respondas a este correo.</p>
-          </div>
         </div>
-      </body>
+    </body>
     </html>
     """
-    text = f"""
-Bienvenido al Portal de Autogestión
-Hola {full_name},
-Tus credenciales de acceso son:
-Usuario: {username}
-Contraseña: {password}
-Te recomendamos cambiar tu contraseña una vez que ingreses.
-"""
+
+def send_welcome_email(to_email, full_name, username, password):
+    subject = "Bienvenido al Portal de Nómina Dolormed"
+    title = "👋 Bienvenido a Dolormed"
+    
+    body = f"""
+    <p>Hola <strong>{full_name}</strong>,</p>
+    <p>Se te ha creado una cuenta segura para acceder al Portal de Autogestión de Empleados. Desde allí podrás consultar tus turnos, asistencias y radicar solicitudes de permisos (Novedades).</p>
+    
+    <div class="info-box">
+      <p style="margin-bottom:15px; font-weight:bold;">Tus credenciales de acceso provisionales son:</p>
+      <p><strong>👤 Usuario (Cédula):</strong> {username}</p>
+      <p><strong>🔑 Contraseña:</strong> {password}</p>
+    </div>
+    
+    <p>Te recomendamos cambiar tu contraseña una vez que ingreses al sistema por motivos de seguridad.</p>
+    """
+    
+    html = _get_base_template(title, body)
+    text = f"Hola {full_name}, Tus credenciales de acceso son: Usuario: {username}, Contraseña: {password}"
     return _send_email(to_email, subject, html, text)
 
 def send_novedad_alert(to_emails, full_name, reason_type, details, total_time, start_date, prev_approver=None):
     subject = f"Nueva Solicitud Radicada: {full_name} ({reason_type})"
+    title = "⚠️ Alerta de Nueva Novedad"
     
-    html = f"""
-    <html>
-      <head>
-        <style>
-          body {{ font-family: Arial, sans-serif; background-color: #f4f7f6; color: #333; }}
-          .container {{ max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
-          .header {{ text-align: center; border-bottom: 2px solid #ffc107; padding-bottom: 10px; margin-bottom: 20px; }}
-          .header h2 {{ color: #ffc107; margin: 0; }}
-          .content {{ line-height: 1.6; }}
-          .info-box {{ background: #f8f9fa; border-left: 4px solid #ffc107; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-          .info-box ul {{ margin: 0; padding-left: 20px; }}
-          .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: #777; }}
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h2>⚠️ Alerta de Nueva Novedad</h2>
-          </div>
-          <div class="content">
-            <p>El empleado <strong>{full_name}</strong> acaba de radicar una nueva solicitud en el portal.</p>
-            
-            <div class="info-box">
-              <ul>
-                <li><strong>Tipo de Solicitud:</strong> {reason_type}</li>
-                <li><strong>Fecha de Inicio:</strong> {start_date}</li>
-                <li><strong>Tiempo Solicitado:</strong> {total_time}</li>
-                <li><strong>Detalles/Justificación:</strong> {details}</li>
-              </ul>
-            </div>
-            
-            {f'<p style="background-color: #e2f0d9; padding: 10px; border-radius: 5px; color: #2e7d32;"><strong>✅ Aprobado previamente por:</strong> {prev_approver}</p>' if prev_approver else ''}
-            
-            <p>Por favor, ingresa al portal administrativo en la sección de <strong>Control de Novedades</strong> para revisar y aprobar/rechazar esta solicitud.</p>
-          </div>
-          <div class="footer">
-            <p>Este es un mensaje automático del Sistema de RRHH Dolormed. No respondas a este correo.</p>
-          </div>
-        </div>
-      </body>
-    </html>
+    prev_appr_html = f'<p style="background-color: #dcfce7; padding: 12px; border-radius: 6px; color: #166534; border: 1px solid #bbf7d0;"><strong>✅ Aprobado previamente por:</strong> {prev_approver}</p>' if prev_approver else ''
+    
+    body = f"""
+    <p>El empleado <strong>{full_name}</strong> acaba de radicar una nueva solicitud en el portal que requiere revisión.</p>
+    
+    <div class="info-box">
+      <ul>
+        <li><strong>Tipo de Solicitud:</strong> {reason_type}</li>
+        <li><strong>Fecha de Inicio:</strong> {start_date}</li>
+        <li><strong>Tiempo Solicitado:</strong> {total_time}</li>
+        <li><strong>Detalles/Justificación:</strong> {details}</li>
+      </ul>
+    </div>
+    
+    {prev_appr_html}
+    
+    <p>Por favor, ingresa al portal administrativo en la sección de <strong>Flujos y Autorizaciones</strong> para revisar y gestionar esta solicitud.</p>
     """
-    text = f"""
-Alerta de Novedad (Permiso Radicado)
-El empleado {full_name} acaba de radicar una nueva solicitud.
-Ingresa al portal para revisarla.
-"""
+    
+    html = _get_base_template(title, body, header_color="#eab308") # Yellow
+    text = f"Alerta de Novedad: El empleado {full_name} acaba de radicar una nueva solicitud."
     return _send_email(to_emails, subject, html, text)
 
 def send_password_reset_pin(to_email: str, full_name: str, pin: str):
-    """Envia el PIN temporal de recuperación de contraseña."""
     subject = f"Código de Recuperación de Contraseña - Dolormed"
+    title = "🔐 Recuperación de Contraseña"
     
-    html = f"""
-    <html>
-      <head>
-        <style>
-          body {{ font-family: Arial, sans-serif; background-color: #f4f7f6; color: #333; }}
-          .container {{ max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
-          .header {{ text-align: center; border-bottom: 2px solid #dc3545; padding-bottom: 10px; margin-bottom: 20px; }}
-          .header h2 {{ color: #dc3545; margin: 0; }}
-          .content {{ line-height: 1.6; text-align: center; }}
-          .pin-box {{ background: #f8f9fa; border-left: 4px solid #dc3545; padding: 20px; border-radius: 5px; margin: 20px auto; font-size: 32px; font-weight: bold; letter-spacing: 5px; width: fit-content; }}
-          .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: #777; }}
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h2>🔐 Recuperación de Contraseña</h2>
-          </div>
-          <div class="content">
-            <p>Hola <strong>{full_name}</strong>,</p>
-            <p>Hemos recibido una solicitud para restablecer tu contraseña en el Portal de Autogestión.</p>
-            <p>Ingresa el siguiente PIN de seguridad en la pantalla. <strong>Este PIN expirará en 5 minutos.</strong></p>
-            
-            <div class="pin-box">
-              {pin}
-            </div>
-            
-            <p style="color: #d9534f; font-size: 14px;">Si no fuiste tú quien solicitó esto, ignora este mensaje y tu contraseña seguirá siendo la misma.</p>
-          </div>
-          <div class="footer">
-            <p>Este es un mensaje automático del Sistema de RRHH Dolormed. No respondas a este correo.</p>
-          </div>
-        </div>
-      </body>
-    </html>
+    body = f"""
+    <p>Hola <strong>{full_name}</strong>,</p>
+    <p>Hemos recibido una solicitud para restablecer tu contraseña en el Portal de Autogestión.</p>
+    <p>Ingresa el siguiente PIN de seguridad de 6 dígitos en la pantalla. <strong>Este PIN expirará en 5 minutos.</strong></p>
+    
+    <div style="text-align: center; margin: 30px 0;">
+        <span style="background: #f1f5f9; border: 2px dashed #94a3b8; padding: 15px 30px; font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #334155; border-radius: 8px;">{pin}</span>
+    </div>
+    
+    <p style="color: #ef4444; font-size: 14px; text-align: center;">Si no fuiste tú quien solicitó esto, ignora este mensaje y tu contraseña seguirá intacta.</p>
     """
+    
+    html = _get_base_template(title, body, header_color="#64748b") # Slate
     text = f"Tu PIN temporal de recuperación es: {pin}"
     return _send_email([to_email], subject, html, text)
 
 def send_password_changed_email(to_email: str, full_name: str, new_password: str):
-    """Envia una confirmación de que la contraseña ha sido cambiada, incluyendo la nueva contraseña."""
     subject = f"Contraseña Actualizada - Dolormed"
+    title = "✅ ¡Contraseña Cambiada!"
     
-    html = f"""
-    <html>
-      <head>
-        <style>
-          body {{ font-family: Arial, sans-serif; background-color: #f4f7f6; color: #333; }}
-          .container {{ max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
-          .header {{ text-align: center; border-bottom: 2px solid #28a745; padding-bottom: 10px; margin-bottom: 20px; }}
-          .header h2 {{ color: #28a745; margin: 0; }}
-          .content {{ line-height: 1.6; text-align: center; }}
-          .info-box {{ background: #f8f9fa; border-left: 4px solid #28a745; padding: 15px; border-radius: 5px; margin: 20px auto; font-size: 20px; font-weight: bold; width: fit-content; }}
-          .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: #777; }}
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h2>✅ ¡Contraseña Cambiada!</h2>
-          </div>
-          <div class="content">
-            <p>Hola <strong>{full_name}</strong>,</p>
-            <p>Te confirmamos que la contraseña de tu cuenta en el Portal de Empleados ha sido actualizada correctamente.</p>
-            <p>Tus nuevas credenciales de acceso son:</p>
-            
-            <div class="info-box">
-              {new_password}
-            </div>
-            
-            <p style="color: #6c757d; font-size: 14px;">Te recomendamos eliminar este correo una vez hayas memorizado tu contraseña por razones de seguridad.</p>
-          </div>
-          <div class="footer">
-            <p>Este es un mensaje automático del Sistema de RRHH Dolormed. No respondas a este correo.</p>
-          </div>
-        </div>
-      </body>
-    </html>
+    body = f"""
+    <p>Hola <strong>{full_name}</strong>,</p>
+    <p>Te confirmamos que la contraseña de tu cuenta en el Portal de Empleados ha sido actualizada correctamente a través del sistema de recuperación.</p>
+    <p>Tus nuevas credenciales de acceso generadas automáticamente son:</p>
+    
+    <div style="text-align: center; margin: 30px 0;">
+        <span style="background: #ecfdf5; border: 2px solid #34d399; padding: 15px 30px; font-size: 24px; font-weight: bold; color: #065f46; border-radius: 8px;">{new_password}</span>
+    </div>
+    
+    <p style="color: #64748b; font-size: 14px; text-align: center;">Te recomendamos eliminar este correo inmediatamente por seguridad.</p>
     """
+    
+    html = _get_base_template(title, body, header_color="#10b981") # Emerald
     text = f"Tu nueva contraseña es: {new_password}"
     return _send_email([to_email], subject, html, text)
 
 def send_status_update_email(to_email: str, full_name: str, req_id: int, reason_type: str, new_status: str, message: str, approver_name: str = None):
-    """
-    Notifica al empleado sobre cambios en el estado de sus solicitudes (Novedades).
-    
-    Genera y envía una plantilla HTML dinámica que ajusta sus colores e íconos 
-    dependiendo de si la solicitud fue aprobada, rechazada o está en trámite.
-    
-    Parámetros:
-    -----------
-    to_email : str
-        Correo electrónico del empleado destino.
-    full_name : str
-        Nombre completo del empleado para personalización del mensaje.
-    req_id : int
-        Identificador único (Radicado) de la solicitud en la base de datos.
-    reason_type : str
-        Tipo de permiso solicitado (Ej. 'Vacaciones', 'Incapacidad Médica').
-    new_status : str
-        El estado actual al que avanzó la solicitud (Ej. 'PRE-APROBADA', 'RECHAZADA').
-    message : str
-        Observación o justificación adicional provista por el aprobador.
-    """
     subject = f"Actualización de Solicitud #{req_id} ({reason_type})"
     
     if "RECHAZA" in new_status.upper():
-        color = "#dc3545"
+        color = "#ef4444" # Red
         icon = "❌"
     elif "FINAL" in new_status.upper() or "APROBAD" in new_status.upper():
-        color = "#198754"
+        color = "#10b981" # Emerald
         icon = "✅"
     else:
-        color = "#0D6EFD"
+        color = "#3b82f6" # Blue
         icon = "⏳"
         
-    html = f"""
-    <html>
-      <head>
-        <style>
-          body {{ font-family: Arial, sans-serif; background-color: #f4f7f6; color: #333; }}
-          .container {{ max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
-          .header {{ text-align: center; border-bottom: 2px solid {color}; padding-bottom: 10px; margin-bottom: 20px; }}
-          .header h2 {{ color: {color}; margin: 0; }}
-          .content {{ line-height: 1.6; }}
-          .status-box {{ background: #f8f9fa; border-left: 4px solid {color}; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-          .footer {{ text-align: center; margin-top: 30px; font-size: 12px; color: #777; }}
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h2>{icon} Actualización de Solicitud</h2>
-          </div>
-          <div class="content">
-            <p>Hola <strong>{full_name}</strong>,</p>
-            <p>Te informamos que tu solicitud de <strong>{reason_type}</strong> (Radicado #{req_id}) ha cambiado de estado.</p>
-            
-            <div class="status-box">
-              <p><strong>Nuevo Estado:</strong> {new_status}</p>
-              <p><strong>Mensaje/Detalle:</strong> {message}</p>
-              {f'<p><strong>Procesado/Aprobado por:</strong> {approver_name}</p>' if approver_name else ''}
-            </div>
-            
-            <p>Puedes verificar los detalles completos ingresando al Portal de Autogestión.</p>
-          </div>
-          <div class="footer">
-            <p>Este es un mensaje automático del Sistema de RRHH Dolormed. No respondas a este correo.</p>
-          </div>
-        </div>
-      </body>
-    </html>
+    title = f"{icon} Actualización de Novedad"
+    
+    body = f"""
+    <p>Hola <strong>{full_name}</strong>,</p>
+    <p>Te informamos que tu solicitud de <strong>{reason_type}</strong> (Radicado #{req_id}) ha cambiado de estado en nuestro sistema.</p>
+    
+    <div class="info-box" style="border-left-color: {color};">
+      <p><strong>Nuevo Estado:</strong> <span style="color: {color}; font-weight: bold;">{new_status}</span></p>
+      <p><strong>Observaciones:</strong> {message}</p>
+      {f'<p><strong>Procesado por:</strong> {approver_name}</p>' if approver_name else ''}
+    </div>
+    
+    <p>Puedes consultar el historial completo o descargar tus comprobantes directamente en el Portal de Empleados.</p>
     """
-    text = f"""
-Actualización de Solicitud #{req_id}
-Hola {full_name},
-Tu solicitud de {reason_type} ha cambiado de estado.
-Nuevo Estado: {new_status}
-Mensaje: {message}
-{f'Procesado/Aprobado por: {approver_name}' if approver_name else ''}
-    """
+    
+    html = _get_base_template(title, body, header_color=color)
+    text = f"Tu solicitud ha cambiado a: {new_status}"
     return _send_email([to_email], subject, html, text)
