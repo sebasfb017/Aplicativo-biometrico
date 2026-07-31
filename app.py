@@ -313,6 +313,78 @@ def main():
     @keyframes spin {
         to { transform: rotate(360deg); }
     }
+    /* === UI/UX 3.0: Sidebar Glassmorphism === */
+    [data-testid="stSidebar"] {
+        background-color: rgba(15, 23, 42, 0.95) !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
+        box-shadow: 5px 0 25px rgba(0,0,0,0.2);
+    }
+    
+    /* Removed custom Tab CSS to prevent layout breaking */
+    
+    /* Animación de entrada de contenido de Pestañas */
+    div[data-testid="stVerticalBlock"] > div > div[data-testid="stVerticalBlock"] {
+        animation: slideUpTab 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    @keyframes slideUpTab {
+        0% { opacity: 0; transform: translateY(15px); }
+        100% { opacity: 1; transform: translateY(0); }
+    }
+    
+    /* === UI/UX 3.0: Tarjetas HTML Personalizadas (Tablas) === */
+    .premium-table-container {
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.1);
+        border: 1px solid var(--glass-border);
+        background: var(--glass-bg);
+        margin-bottom: 20px;
+    }
+    .premium-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: 'Outfit', sans-serif;
+    }
+    .premium-table th {
+        background: var(--glass-bg);
+        color: var(--text-color);
+        opacity: 0.8;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 1px;
+        padding: 15px 20px;
+        text-align: left;
+        border-bottom: 1px solid var(--glass-border);
+    }
+    .premium-table td {
+        padding: 15px 20px;
+        color: var(--text-color);
+        font-size: 0.95rem;
+        border-bottom: 1px solid var(--glass-border);
+        transition: background-color 0.2s ease;
+    }
+    .premium-table tbody tr:hover td {
+        background-color: rgba(99, 102, 241, 0.1);
+    }
+    .premium-table tbody tr:last-child td {
+        border-bottom: none;
+    }
+    .badge-modern {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .badge-blue { background: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); }
+    .badge-emerald { background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2); }
+    .badge-amber { background: rgba(245, 158, 11, 0.1); color: #d97706; border: 1px solid rgba(245, 158, 11, 0.2); }
+    .badge-slate { background: rgba(100, 116, 139, 0.1); color: #475569; border: 1px solid rgba(100, 116, 139, 0.2); }
     </style>
     """, unsafe_allow_html=True)
 
