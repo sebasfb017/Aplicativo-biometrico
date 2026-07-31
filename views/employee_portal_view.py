@@ -152,25 +152,45 @@ def show_leave_request_details(req_id: int):
         st.warning(f"🚫 Solicitud Cancelada por el empleado. Motivo: {req['cancellation_reason']}")
 
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown(f"**Fecha de Solicitud:** {req['request_date']}")
-        st.markdown(f"**Fechas de Ausencia:** {req['leave_date_start']} al {req['leave_date_end']}")
-        st.markdown(f"**Remunerado:** {'✅ Sí' if req['is_paid'] else '❌ No'}")
-    with c2:
-        h_in = req['start_time'] if req['start_time'] else "N/A"
-        h_out = req['end_time'] if req['end_time'] else "N/A"
-        st.markdown(f"**Hora Salida:** {h_in}")
-        st.markdown(f"**Hora Entrada:** {h_out}")
-        st.markdown(f"**Tiempo Total:** {req['total_time']}")
-        
-    st.divider()
+    html_info = f"""
+    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 15px; margin-bottom: 15px;">
+            <div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Fecha de Solicitud</div>
+                <div style="font-weight: 600;">{req['request_date']}</div>
+            </div>
+            <div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Fechas de Ausencia</div>
+                <div style="font-weight: 600;">{req['leave_date_start']} al {req['leave_date_end']}</div>
+            </div>
+            <div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Remunerado</div>
+                <div style="font-weight: 600;">{'✅ Sí' if req['is_paid'] else '❌ No'}</div>
+            </div>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+            <div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Hora Salida</div>
+                <div style="font-weight: 600;">{req['start_time'] if req['start_time'] else 'N/A'}</div>
+            </div>
+            <div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Hora Entrada</div>
+                <div style="font-weight: 600;">{req['end_time'] if req['end_time'] else 'N/A'}</div>
+            </div>
+            <div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Tiempo Total</div>
+                <div style="font-weight: 600; color: #6366f1;">{req['total_time']}</div>
+            </div>
+        </div>
+    </div>
+    """
+    st.markdown(html_info, unsafe_allow_html=True)
     st.write(f"**Motivo General:** {req['reason_type']}")
     
     st.markdown("**Mi Justificación / Detalles:**")
     st.info(req['reason_description'] if req['reason_description'] else "Sin detalles ingresados.")
     
-    if not req['is_paid'] and req['how_to_makeup']:
+    if req['how_to_makeup']:
         st.markdown("**Acuerdo de Reposición Prometido:**")
         st.warning(req['how_to_makeup'])
         
@@ -196,28 +216,32 @@ def show_leave_request_details(req_id: int):
         st.markdown("**Soporte Adjunto (Incapacidad/Certificado):**")
         
         if os.path.exists(file_path):
-            with st.expander("👁️ Previsualizar Soporte Adjunto", expanded=False):
-                ext = os.path.splitext(req['attachment_path'])[1].lower()
-                if ext in [".png", ".jpg", ".jpeg", ".webp"]:
-                    st.image(file_path, use_container_width=True)
-                elif ext == ".pdf":
-                    try:
-                        import shutil
-                        static_dir = os.path.join(os.getcwd(), "static")
-                        os.makedirs(static_dir, exist_ok=True)
-                        static_file_path = os.path.join(static_dir, str(req['attachment_path']))
-                        
-                        if not os.path.exists(static_file_path):
-                            shutil.copy2(file_path, static_file_path)
-                            
-                        pdf_url = f"/app/static/{req['attachment_path']}"
-                        pdf_display = f'<iframe src="{pdf_url}" width="100%" height="600" style="border: none;"></iframe>'
-                        st.markdown(pdf_display, unsafe_allow_html=True)
-                    except Exception as e:
-                        st.error(f"No se pudo cargar el PDF: {e}")
-                else:
-                    st.info("Vista previa no disponible para este tipo de archivo.")
+            st.markdown("""
+            <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; border: 1px dashed rgba(255,255,255,0.2); text-align: center; margin-bottom: 15px;">
+                <span style="color: gray; font-size: 0.9em;">Vista previa del documento adjunto</span>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            ext = os.path.splitext(req['attachment_path'])[1].lower()
+            if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                st.image(file_path, use_container_width=True)
+            elif ext == ".pdf":
+                try:
+                    import shutil
+                    static_dir = os.path.join(os.getcwd(), "static")
+                    os.makedirs(static_dir, exist_ok=True)
+                    static_file_path = os.path.join(static_dir, str(req['attachment_path']))
                     
+                    if not os.path.exists(static_file_path):
+                        shutil.copy2(file_path, static_file_path)
+                        
+                    pdf_url = f"/app/static/{req['attachment_path']}"
+                    pdf_display = f'<iframe src="{pdf_url}" width="100%" height="600" style="border: none; border-radius: 12px;"></iframe>'
+                    st.markdown(pdf_display, unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"No se pudo cargar el PDF: {e}")
+            else:
+                st.info("Vista previa no disponible para este tipo de archivo.")
             with open(file_path, "rb") as f:
                 file_bytes = f.read()
             st.download_button(
@@ -302,13 +326,31 @@ def page_employee_portal():
     """
     st.markdown(mobile_css, unsafe_allow_html=True)
 
-    st.title("🧑‍⚕️ Mi Portal de Autogestión (F-TH-012)")
+    conn_vac = db_conn()
+    cur_vac = conn_vac.cursor()
+    cur_vac.execute("SELECT vacation_balance FROM users_app WHERE username = ?", (user['username'],))
+    row_vac = cur_vac.fetchone()
+    conn_vac.close()
+    saldo_vac = int(row_vac[0]) if row_vac and row_vac[0] is not None else 0
+
+    header_col, vac_col = st.columns([3, 1])
+    with header_col:
+        st.title("🧑‍⚕️ Mi Portal de Autogestión (F-TH-012)")
+        area = user.get('emp_area') or 'Sin Área Definida'
+        subarea = user.get('emp_subarea')
+        area_display = f"{area} - {subarea}" if area != 'Sin Área Definida' and subarea else area
+        st.write(f"Bienvenido/a **{user['full_name']}** | {area_display}")
     
-    area = user.get('emp_area') or 'Sin Área Definida'
-    subarea = user.get('emp_subarea')
-    area_display = f"{area} - {subarea}" if area != 'Sin Área Definida' and subarea else area
-    st.write(f"Bienvenido/a **{user['full_name']}** | {area_display}")
+    with vac_col:
+        st.markdown(f"""
+        <div style="background-color: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.1); text-align: center; height: 100%; display: flex; flex-direction: column; justify-content: center; margin-top: 20px;">
+            <p style="margin:0; font-size: 0.85em; color: #a0aec0; text-transform: uppercase; letter-spacing: 1px;">Vacaciones a Favor</p>
+            <p style="margin:0; font-size: 1.8em; font-weight: bold; color: #e2e8f0;">🏖️ {saldo_vac} <span style="font-size: 0.5em; font-weight: normal; color: #a0aec0;">días</span></p>
+        </div>
+        """, unsafe_allow_html=True)
     
+    st.write("") # Espaciador
+
     t1, t2 = st.tabs(["📝 Radicar Nuevo Permiso", "🗂️ Mis Solicitudes"])
     
     with t1:
@@ -331,70 +373,80 @@ def page_employee_portal():
         with st.container(border=True):
             dias_solicitados = 0
             saldo_vac = 0
-            c1, c2 = st.columns(2)
-            with c1:
-                tipo_fechas = st.radio("Tipo de selección de Fechas", ["Días consecutivos", "Días específicos"], horizontal=True, key=f"tipo_fechas_{fk}")
+            
+            with st.container(border=True):
+                st.subheader("1. Seleccionar Novedad, Fechas y Horas")
+                col_cat, col_det = st.columns(2)
+                with col_cat:
+                    categoria = st.selectbox("Categoría de Novedad", ["Citas", "Permisos", "Licencias", "Vacaciones", "Incapacidad"], key=f"categoria_{fk}")
                 
-                if tipo_fechas == "Días consecutivos":
-                    leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona un día o un rango de días.", format="YYYY-MM-DD", key=f"leave_dates_{fk}")
-                    specific_dates_str = None
-                else:
-                    if f"specific_dates_list_{fk}" not in st.session_state:
-                        st.session_state[f"specific_dates_list_{fk}"] = []
-                    
-                    cc1, cc2 = st.columns([3, 1])
-                    with cc1:
-                        d_input = st.date_input("Seleccionar Día", format="YYYY-MM-DD", key=f"d_input_{fk}")
-                    with cc2:
-                        st.write("") # Spacer
-                        if st.button("➕ Añadir"):
-                            if d_input not in st.session_state[f"specific_dates_list_{fk}"]:
-                                st.session_state[f"specific_dates_list_{fk}"].append(d_input)
-                                st.session_state[f"specific_dates_list_{fk}"].sort()
-                    
-                    if st.session_state[f"specific_dates_list_{fk}"]:
-                        st.markdown("**Días Seleccionados:**")
-                        for d in st.session_state[f"specific_dates_list_{fk}"]:
-                            st.write(f"• {d.strftime('%Y-%m-%d')}")
-                        if st.button("🗑️ Limpiar Días", key=f"btn_clean_{fk}"):
-                            st.session_state[f"specific_dates_list_{fk}"] = []
-                            st.rerun()
-                    
-                    if st.session_state[f"specific_dates_list_{fk}"]:
-                        leave_dates = [st.session_state[f"specific_dates_list_{fk}"][0], st.session_state[f"specific_dates_list_{fk}"][-1]]
-                        specific_dates_str = ",".join([d.strftime('%Y-%m-%d') for d in st.session_state[f"specific_dates_list_{fk}"]])
-                    else:
-                        leave_dates = []
-                        specific_dates_str = None
-                
-                
-                categoria = st.selectbox("Categoría de Novedad", ["Citas", "Permisos", "Licencias", "Vacaciones", "Incapacidad"], key=f"categoria_{fk}")
-                
-                if categoria == "Citas":
-                    reason_type = st.selectbox("Detalle", ["Cita Médica", "Cita Médica con desplazamiento a otra ciudad"], key=f"rt_citas_{fk}")
-                elif categoria == "Permisos":
-                    reason_type = st.selectbox("Detalle", ["Permiso Personal", "Permiso Laboral"], key=f"rt_permisos_{fk}")
-                elif categoria == "Licencias":
-                    reason_type = st.selectbox("Detalle", ["Calamidad Doméstica", "Licencia de Luto", "Licencia de Paternidad", "Licencia por Votación", "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"], key=f"rt_licencias_{fk}")
-                elif categoria == "Incapacidad":
-                    reason_type = "Incapacidad"
-                    st.text_input("Detalle", value="Incapacidad", disabled=True, key=f"rt_incap_{fk}")
-                else: # Vacaciones
-                    reason_type = "Vacaciones"
-                    st.text_input("Detalle", value="Vacaciones", disabled=True, key=f"rt_vac_{fk}")
-                    
-                    conn_vac = db_conn()
-                    cur_vac = conn_vac.cursor()
-                    cur_vac.execute("SELECT vacation_balance FROM users_app WHERE username = ?", (user['username'],))
-                    row_vac = cur_vac.fetchone()
-                    conn_vac.close()
-                    saldo_vac = int(row_vac[0]) if row_vac and row_vac[0] is not None else 0
-                    
-                    st.info(f"🌴 **Tienes {saldo_vac} días de vacaciones a favor.**")
+                with col_det:
+                    if categoria == "Citas":
+                        reason_type = st.selectbox("Detalle", ["Cita Médica", "Cita Médica con desplazamiento a otra ciudad"], key=f"rt_citas_{fk}")
+                    elif categoria == "Permisos":
+                        reason_type = st.selectbox("Detalle", ["Permiso Personal", "Permiso Laboral"], key=f"rt_permisos_{fk}")
+                    elif categoria == "Licencias":
+                        reason_type = st.selectbox("Detalle", ["Calamidad Doméstica", "Licencia de Luto", "Licencia de Paternidad", "Licencia por Votación", "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"], key=f"rt_licencias_{fk}")
+                    elif categoria == "Incapacidad":
+                        reason_type = "Incapacidad"
+                        st.text_input("Detalle", value="Incapacidad", disabled=True, key=f"rt_incap_{fk}")
+                    else: # Vacaciones
+                        reason_type = "Vacaciones"
+                        st.text_input("Detalle", value="Vacaciones", disabled=True, key=f"rt_vac_{fk}")
                 
                 is_paid = st.radio("¿Permiso Remunerado?", ["No", "Sí"], horizontal=True, key=f"is_paid_{fk}")
+                
+                duracion_permiso = st.radio("¿Duración del permiso?", ["Por Horas", "Por Días"], horizontal=True, key=f"duracion_permiso_{fk}")
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    if duracion_permiso == "Por Días":
+                        tipo_fechas = st.radio("Opciones de Días", ["Días consecutivos", "Días específicos"], horizontal=True, key=f"tipo_fechas_{fk}")
+                    else:
+                        tipo_fechas = "Día único"
+                
+                    if tipo_fechas == "Días consecutivos":
+                        leave_dates = st.date_input("Fecha(s) del Permiso", value=[], help="Selecciona un día o un rango de días.", format="YYYY-MM-DD", key=f"leave_dates_{fk}")
+                        specific_dates_str = None
+                    elif tipo_fechas == "Día único":
+                        single_date = st.date_input("Fecha del Permiso", value=date.today(), help="Selecciona el día exacto del permiso.", format="YYYY-MM-DD", key=f"single_date_{fk}")
+                        leave_dates = [single_date, single_date]
+                        specific_dates_str = None
+                    else:
+                        if f"specific_dates_list_{fk}" not in st.session_state:
+                            st.session_state[f"specific_dates_list_{fk}"] = []
+                        
+                        cc1, cc2 = st.columns([3, 1])
+                        with cc1:
+                            d_input = st.date_input("Seleccionar Día", format="YYYY-MM-DD", key=f"d_input_{fk}")
+                        with cc2:
+                            st.write("") # Spacer
+                            if st.button("➕ Añadir"):
+                                if d_input not in st.session_state[f"specific_dates_list_{fk}"]:
+                                    st.session_state[f"specific_dates_list_{fk}"].append(d_input)
+                                    st.session_state[f"specific_dates_list_{fk}"].sort()
+                        
+                        if st.session_state[f"specific_dates_list_{fk}"]:
+                            st.markdown("**Días Seleccionados:**")
+                            for d in st.session_state[f"specific_dates_list_{fk}"]:
+                                st.write(f"• {d.strftime('%Y-%m-%d')}")
+                            if st.button("🗑️ Limpiar Días", key=f"btn_clean_{fk}"):
+                                st.session_state[f"specific_dates_list_{fk}"] = []
+                                st.rerun()
+                        
+                        if st.session_state[f"specific_dates_list_{fk}"]:
+                            leave_dates = [st.session_state[f"specific_dates_list_{fk}"][0], st.session_state[f"specific_dates_list_{fk}"][-1]]
+                            specific_dates_str = ",".join([d.strftime('%Y-%m-%d') for d in st.session_state[f"specific_dates_list_{fk}"]])
+                        else:
+                            leave_dates = []
+                            specific_dates_str = None
+                # (Categoría y tipo de novedad movidos al principio del expander)
             with c2:
-                tipo_tiempo = st.radio("¿Qué tipo de permiso es?", ["Por Días", "Rango de Horas", "Llegada Tarde", "Salida Temprano"], horizontal=True, key=f"tipo_tiempo_{fk}")
+                if duracion_permiso == "Por Días":
+                    tipo_tiempo = "Por Días"
+                    st.radio("Tipo de permiso", ["Días completos (Auto)"], horizontal=True, key=f"tipo_tiempo_dummy_{fk}", disabled=True)
+                else:
+                    tipo_tiempo = st.radio("¿Qué tipo de permiso es?", ["Rango de Horas", "Llegada Tarde", "Salida Temprano"], horizontal=True, key=f"tipo_tiempo_{fk}")
                 
                 time_s = None
                 time_e = None
@@ -466,15 +518,22 @@ def page_employee_portal():
                 # y no se actualizaría visualmente en tiempo real al cambiar las horas arriba.
                 st.text_input("Tiempo Total Calculado (Automático)", value=calculated_time, disabled=True)
                 total_time = calculated_time
-
-            r_desc = st.text_area("Justificación / Detalles del permiso", key=f"r_desc_{fk}")
-            makeup = st.text_input("¿Cómo se repone el tiempo? (Dejar en blanco si es remunerado/laboral)", key=f"makeup_{fk}")
-            
-            st.markdown("---")
-            st.write("📄 **Documento de Soporte (Opcional)**")
-            uploaded_files = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal (puedes subir varios). Tamaño máximo total: 20MB", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True, key=f"upload_{fk}")
-            
-            submitted = st.button("Firmar y Enviar a RRHH", type="primary", use_container_width=True)
+                
+            with st.container(border=True):
+                st.subheader("2. Motivo y Justificación")
+                r_desc = st.text_area("Justificación / Detalles del permiso", key=f"r_desc_{fk}")
+                if categoria in ["Licencias", "Vacaciones", "Incapacidad"] or reason_type == "Permiso Laboral":
+                    makeup = ""
+                else:
+                    makeup = st.text_input("¿Cómo se repone el tiempo? (Opcional)", key=f"makeup_{fk}")
+                
+            with st.container(border=True):
+                st.subheader("3. Soportes y Envío")
+                st.write("📄 **Documento de Soporte (Opcional)**")
+                uploaded_files = st.file_uploader("Adjunta tu incapacidad, certificado médico o soporte legal (puedes subir varios). Tamaño máximo total: 20MB", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True, key=f"upload_{fk}")
+                
+                st.write("")
+                submitted = st.button("✅ Firmar y Enviar a RRHH", type="primary", use_container_width=True)
             
         if submitted:
             # --- Validación de Tamaño del Archivo ---
@@ -567,8 +626,10 @@ def page_employee_portal():
                                 managed_dept = user_app_df.iloc[0]['managed_department'] if not user_app_df.empty else ""
                                 
                                 target_jefe_area = area
-                                if subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
+                                if subarea in ['Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
                                     target_jefe_area = 'Administrativo'
+                                elif subarea == 'Admisiones':
+                                    target_jefe_area = 'Financiera'
                                 
                                 # Enrutamiento especial a Control Interno
                                 special_areas = ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']
