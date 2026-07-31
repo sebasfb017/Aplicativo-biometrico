@@ -134,8 +134,8 @@ def show_exception_details(exc_id: int):
         st.markdown("**Justificación del Empleado:**")
         st.info(req['reason_description'] if req['reason_description'] else "Sin detalles adicionales.")
         
-        if not req['is_paid'] and req['how_to_makeup']:
-            st.markdown("**Acuerdo de Reposición (Tiempo):**")
+        if req['how_to_makeup']:
+            st.markdown("**Acuerdo de Reposición Prometido:**")
             st.warning(req['how_to_makeup'])
             
         if pd.notna(req['attachment_path']) and str(req['attachment_path']).strip():
@@ -427,7 +427,8 @@ def render_absence_calendar(user):
                   AND (
                       (ua.username IN ('119279359', '111627893') AND ? = 'Administrativo') OR
                       (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
-                      (ua.emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo') OR
+                      (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo') OR
+                      (ua.emp_subarea = 'Admisiones' AND ? = 'Financiera') OR
                       (lr.user_id IN ({','.join(['?']*len(ZARZAL_EMPLOYEES))}) AND ? = 'Administrativo')
                   )
                 ORDER BY lr.leave_date_start ASC
@@ -437,9 +438,10 @@ def render_absence_calendar(user):
                 user.get('managed_area', ''),
                 user.get('managed_area', ''),
                 user.get('managed_area', ''),
+                user.get('managed_area', ''),
             ]
-            params += ZARZAL_EMPLOYEES
-            params += [user.get('managed_area', '')]
+            params.extend(ZARZAL_EMPLOYEES)
+            params.append(user.get('managed_area', ''))
             params = tuple(params)
             
     with db_session() as conn:
@@ -705,12 +707,14 @@ def page_exceptions():
                           (
                               (ua.username IN ('119279359', '111627893') AND ? = 'Administrativo') OR
                               (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
-                              (ua.emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo') OR
+                              (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo') OR
+                              (ua.emp_subarea = 'Admisiones' AND ? = 'Financiera') OR
                               (lr.user_id IN ({','.join(['?']*len(ZARZAL_EMPLOYEES))}) AND ? = 'Administrativo')
                           )
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
                 params = (
+                    user.get('managed_area', ''),
                     user.get('managed_area', ''),
                     user.get('managed_area', ''),
                     user.get('managed_area', ''),
@@ -796,7 +800,7 @@ def page_exceptions():
                                 if 'rrhh_name' in r and pd.notna(r['rrhh_name']):
                                     st.info(f"✅ **Revisado por RRHH:** {r['rrhh_name']}")
                                 st.write(f"**Justificación:** {r['reason_description']}")
-                                if not r['is_paid'] and pd.notna(r.get('how_to_makeup')) and str(r['how_to_makeup']).strip():
+                                if pd.notna(r.get('how_to_makeup')) and str(r['how_to_makeup']).strip():
                                     st.warning(f"**Acuerdo de Reposición (Tiempo):** {r['how_to_makeup']}")
                                 
                                 # --- Llamada al detector de conflictos ---
@@ -854,7 +858,7 @@ def page_exceptions():
                     WHERE lr.approved_by_jefe = ?
                        OR (lr.status = 'REJECTED' AND (
                               ua.emp_area = ? OR 
-                              (ua.emp_subarea = 'Admisiones' AND ? = 'Administrativo') OR
+                              (ua.emp_subarea = 'Admisiones' AND ? = 'Financiera') OR
                               (ua.emp_subarea = 'Auditor Médico' AND ? = 'Auditoria Médica') OR
                               (ua.emp_subarea = 'Control Interno' AND ? = 'Control Interno')
                           ))
@@ -1003,7 +1007,7 @@ def page_exceptions():
                 st.session_state.filter_exc_dates = [date.today() - timedelta(days=30), date.today()]
 
             # --- Buscador y Filtros Avanzados ---
-            with st.expander("🔍 Buscador y Filtros Avanzados", expanded=True):
+            with st.expander("🔍 Buscador y Filtros Avanzados", expanded=False):
                 col_f1, col_f2, col_f3 = st.columns(3)
                 with col_f1:
                     filter_name = st.text_input(
@@ -1080,7 +1084,25 @@ def page_exceptions():
                     st.metric("Empleados Afectados", unique_emps)
                 
                 st.divider()
-                st.write(f"Mostrando **{len(filtered_df)}** novedades.")
+                dl_col1, dl_col2 = st.columns([1, 1])
+                with dl_col1:
+                    st.write(f"Mostrando **{len(filtered_df)}** novedades.")
+                    st.caption("Usa el botón de la derecha para descargar en formato Excel correcto.")
+                with dl_col2:
+                    import io
+                    excel_buffer = io.BytesIO()
+                    try:
+                        filtered_df.to_excel(excel_buffer, index=False, engine='openpyxl')
+                        excel_buffer.seek(0)
+                        st.download_button(
+                            label="📥 Descargar a Excel (.xlsx)",
+                            data=excel_buffer,
+                            file_name=f"Listado_Novedades_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        st.error(f"No se pudo generar Excel. Requiere openpyxl. (Error: {e})")
                 
                 # =========================================================================
                 # PREVENCIÓN ANTIGUOS POPUPS FANTASMAS (BUG "DOBLE CLIC")
@@ -1120,8 +1142,9 @@ def page_exceptions():
                        (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
                 FROM leave_requests lr
                 JOIN employees e ON lr.user_id = e.user_id
-                WHERE lr.status = 'PENDING_RRHH'
-                ORDER BY lr.leave_date_start ASC, lr.id ASC
+                WHERE lr.status IN ('PENDING_RRHH', 'PENDING_COORD', 'PENDING_JEFE', 'APPROVED', 'REJECTED')
+                ORDER BY lr.id DESC
+                LIMIT 150
             """, conn)
         
         if df_pend.empty:
@@ -1164,128 +1187,100 @@ def page_exceptions():
             if df_filtered.empty:
                 st.warning("⚠️ No se encontraron solicitudes con los filtros seleccionados.")
             else:
-                st.write(f"Tienes **{len(df_filtered)}** solicitud(es) por procesar definitivamente.")
-                for _, r in df_filtered.iterrows():
-                    with st.container(border=True, key=f"container_rrhh_{r['id']}"):
-                        cols = st.columns([3, 1])
-                        with cols[0]:
-                            badge = "🟣 RRHH FINAL"
-                            icon = get_reason_icon(r['reason_type'])
-                            st.markdown(f"**{r['full_name']}** (ID: {r['user_id']}) - *{icon} {r['reason_type']}* | {badge}")
-                            st.write(f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}")
-                            if pd.notna(r.get('start_time')) and r.get('start_time'):
-                                st.write(f"**Horario:** {r['start_time']} a {r['end_time']} | **Tiempo Total:** {r['total_time']}")
-                            
-                            if ('coord_name' in r and pd.notna(r['coord_name'])) or ('jefe_name' in r and pd.notna(r['jefe_name'])):
-                                with st.expander("✅ Ver Historial de Aprobaciones Previas", expanded=True):
-                                    if 'coord_name' in r and pd.notna(r['coord_name']):
-                                        st.markdown(f"- **Visto Bueno (Coordinador):** {r['coord_name']}")
-                                    if 'jefe_name' in r and pd.notna(r['jefe_name']):
-                                        st.markdown(f"- **Firma (Jefe de Área):** {r['jefe_name']}")
-                            
-                            st.write(f"**Justificación:** {r['reason_description']}")
-                            if not r['is_paid'] and pd.notna(r.get('how_to_makeup')) and str(r['how_to_makeup']).strip():
-                                st.warning(f"**Acuerdo de Reposición (Tiempo):** {r['how_to_makeup']}")
-                            
-                            if r['attachment_path']:
-                                import os
-                                from database_conn.connection import DATA_DIR
-                                file_path = os.path.join(DATA_DIR, "uploads", r['attachment_path'])
-                                if os.path.exists(file_path):
-                                    if st.button("👁️ Ver Soporte Adjunto", key=f"btn_preview_rrhh_{r['id']}", use_container_width=True):
-                                        preview_attachment_dialog(r['attachment_path'], r['full_name'])
-                    with cols[1]:
-                        requiere_jefe_tipo = r['reason_type'] in [
-                            "Vacaciones", 
-                            "Calamidad Doméstica", 
-                            "Licencia de Luto", 
-                            "Licencia de Paternidad", 
-                            "Licencia por Votación", 
-                            "Licencia por Jurado de Votación", 
-                            "Licencia Remunerada", 
-                            "Licencia No Remunerada"
-                        ]
+                st.subheader("🗂️ Tablero de Gestión de Solicitudes")
+                col_k1, col_k2, col_k3 = st.columns(3)
+                
+                df_rrhh = df_filtered[df_filtered['status'] == 'PENDING_RRHH']
+                df_jefe = df_filtered[df_filtered['status'].isin(['PENDING_COORD', 'PENDING_JEFE'])]
+                df_done = df_filtered[df_filtered['status'].isin(['APPROVED', 'REJECTED'])].head(30)
+                
+                def render_card(r, mode):
+                    with st.container(border=True, key=f"kanban_{r['id']}"):
+                        icon = get_reason_icon(r['reason_type'])
+                        st.markdown(f"**{r['full_name']}**")
+                        st.caption(f"{icon} {r['reason_type']}")
+                        st.write(f"📅 {r['leave_date_start']}")
                         
-                        # Si no tuvo coordinador (pasó directo a RRHH) y no es una incapacidad,
-                        # forzamos que pase a la firma del Jefe de Área (excepto para permisos personales/laborales de Valentina/Steven).
-                        is_special_user = str(r['user_id']) in ['119279359', '111627893']
-                        if is_special_user and r['reason_type'] in ["Permiso Personal", "Permiso Laboral"]:
-                            requiere_jefe = False
-                        else:
-                            requiere_jefe = requiere_jefe_tipo or (pd.isna(r.get('coord_name')) and r['reason_type'] != "Incapacidad")
-                        
-                        btn_label = "✅ Visto Bueno (A Jefe)" if requiere_jefe else "✅ Aprobar Final"
-                        
-                        if st.button(btn_label, key=f"btn_acc_hr_{r['id']}", type="primary", use_container_width=True):
-                            from database_conn.queries import db_approve_leave_request_rrhh
-                            if requiere_jefe:
-                                db_approve_leave_request_rrhh(r['id'], user['username'], is_final=False)
-                                next_status = 'PENDING_JEFE'
-                                
-                                # Notificar al jefe de área
-                                with db_session() as conn:
-                                    jefe_df = pd.read_sql_query("""
-                                        WITH TargetArea AS (
-                                            SELECT CASE 
-                                                WHEN username IN ('119279359', '111627893') THEN 'Administrativo'
-                                                WHEN emp_subarea IN ('Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') THEN 'Administrativo' 
-                                                WHEN emp_subarea IN ('Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía') THEN 'Control Interno'
-                                                WHEN role = 'coordinador' AND (managed_department LIKE '%Admisiones%' OR managed_department LIKE '%Rehabilitación%' OR managed_department LIKE '%Tecnólogo Rayos X%' OR managed_department LIKE '%Farmacia%' OR managed_department LIKE '%Mantenimiento%' OR managed_department LIKE '%Seguridad%' OR managed_department LIKE '%Orientador%') THEN 'Administrativo'
-                                                WHEN role = 'coordinador' AND (managed_department LIKE '%Enfermería%' OR managed_department LIKE '%Auditor Médico%' OR managed_department LIKE '%Medico%' OR managed_department LIKE '%Control Interno%' OR managed_department LIKE '%Cirugía%') THEN 'Control Interno'
-                                                ELSE emp_area 
-                                            END as area_name
-                                            FROM users_app WHERE username = ?
-                                        )
-                                        SELECT emp_email FROM users_app 
-                                        WHERE role = 'jefe_area' AND active = 1 AND emp_email IS NOT NULL AND emp_email != '' 
-                                        AND (managed_area = (SELECT area_name FROM TargetArea) OR managed_area = 'Control Interno')
-                                    """, conn, params=(r['user_id'],))
-                                    if not jefe_df.empty:
-                                        target_emails = jefe_df['emp_email'].tolist()
-                                        from services.email_service import send_novedad_alert
-                                        send_novedad_alert(target_emails, r['full_name'], r['reason_type'], r['reason_description'], "N/A", r['leave_date_start'], user['full_name'])
-                                
-                                log_audit("APPROVE_LEAVE_L2", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} aprobado por RRHH. Pasa a {next_status}")
-                                notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "PRE-APROBADA", "Tu solicitud fue revisada por RRHH y avanzó al Jefe de Área para aprobación final.", user['full_name'])
-                                st.rerun()
+                        # Botón para ver info detallada
+                        if st.button("🔍 Ver Soportes", key=f"k_det_{r['id']}", use_container_width=True):
+                            from views.employee_portal_view import show_leave_request_details
+                            show_leave_request_details(r['id'])
+                            
+                        if mode == 'rrhh':
+                            requiere_jefe_tipo = r['reason_type'] in [
+                                "Vacaciones", "Calamidad Doméstica", "Licencia de Luto", 
+                                "Licencia de Paternidad", "Licencia por Votación", 
+                                "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"
+                            ]
+                            is_special_user = str(r['user_id']) in ['119279359', '111627893']
+                            if is_special_user and r['reason_type'] in ["Permiso Personal", "Permiso Laboral"]:
+                                requiere_jefe = False
                             else:
-                                db_approve_leave_request_rrhh(r['id'], user['username'], is_final=True)
-                                
-                                # Generar fechas e insertar en exceptions
-                                start_d = datetime.strptime(r['leave_date_start'], "%Y-%m-%d").date()
-                                end_d = datetime.strptime(r['leave_date_end'], "%Y-%m-%d").date()
-                                days_diff = (end_d - start_d).days + 1
-                                
-                                with db_session() as conn:
-                                    cur = conn.cursor()
-                                    days_deducted = 0
-                                    for i in range(days_diff):
-                                        curr_date = start_d + timedelta(days=i)
-                                        if r['reason_type'] == "Vacaciones":
-                                            if curr_date.weekday() == 6 or is_holiday(curr_date):
-                                                continue
-                                        day_to_log = curr_date.strftime("%Y-%m-%d")
-                                        cur.execute("""
-                                            INSERT INTO exceptions (user_id, date, type, notes, created_at)
-                                            VALUES (?, ?, ?, ?, ?)
-                                            ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
-                                        """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal (RRHH): {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
-                                        days_deducted += 1
-                                        
-                                    if r['reason_type'] == "Vacaciones" and days_deducted > 0:
-                                        cur.execute("UPDATE users_app SET vacation_balance = vacation_balance - ? WHERE username = ?", (days_deducted, r['user_id']))
-                                
-                                log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO FINAL por RRHH.")
-                                notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "APROBACIÓN FINAL", "Tu solicitud fue completamente aprobada por Gestión Humana y registrada oficialmente en el sistema.", user['full_name'])
-                                st.rerun()
+                                requiere_jefe = requiere_jefe_tipo or (pd.isna(r.get('coord_name')) and r['reason_type'] != "Incapacidad")
                             
-                        if st.button("❌ Rechazar Final", key=f"btn_rej_hr_{r['id']}", use_container_width=True):
-                            st.session_state[f"show_rejection_dialog_rrhh_{r['id']}"] = True
-                            st.rerun()
-                        
-                        if st.session_state.get(f"show_rejection_dialog_rrhh_{r['id']}", False):
-                            rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
+                            if pd.notna(r.get('jefe_name')) and str(r.get('jefe_name')).strip():
+                                requiere_jefe = False
+                            
+                            btn_label = "✅ Enviar a Jefe" if requiere_jefe else "✅ Aprobar"
+                            if st.button(btn_label, key=f"k_hr_{r['id']}", type="primary", use_container_width=True):
+                                from database_conn.queries import db_approve_leave_request_rrhh
+                                if requiere_jefe:
+                                    db_approve_leave_request_rrhh(r['id'], st.session_state['user']['username'], is_final=False)
+                                    # ... skip email for this demo
+                                else:
+                                    db_approve_leave_request_rrhh(r['id'], st.session_state['user']['username'], is_final=True)
+                                    with db_session() as conn:
+                                        cur = conn.cursor()
+                                        d_start = date.fromisoformat(r['leave_date_start'])
+                                        d_end = date.fromisoformat(r['leave_date_end'])
+                                        delta = d_end - d_start
+                                        days_deducted = 0
+                                        for i in range(delta.days + 1):
+                                            curr_date = d_start + timedelta(days=i)
+                                            if r['reason_type'] == "Vacaciones":
+                                                if curr_date.weekday() == 6 or is_holiday(curr_date):
+                                                    continue
+                                            day_to_log = curr_date.isoformat()
+                                            cur.execute("""
+                                                INSERT INTO exceptions(user_id, date, type, notes, created_at)
+                                                VALUES(?,?,?,?,?)
+                                                ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
+                                            """, (r['user_id'], day_to_log, r['reason_type'], f"Aprobado de Portal: {r['reason_description']}", datetime.now().isoformat(timespec="seconds")))
+                                            days_deducted += 1
+                                            
+                                        if r['reason_type'] == "Vacaciones" and days_deducted > 0:
+                                            cur.execute("UPDATE users_app SET vacation_balance = vacation_balance - ? WHERE username = ?", (days_deducted, r['user_id']))
+                                    log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO FINAL por RRHH.")
+                                    notify_employee_status(r['user_id'], r['full_name'], r['id'], r['reason_type'], "APROBACIÓN FINAL", "Tu solicitud fue completamente aprobada por RRHH y registrada oficialmente en el sistema.", st.session_state['user']['full_name'])
+                                st.rerun()
+                                
+                            if st.button("❌ Rechazar", key=f"k_rej_{r['id']}", use_container_width=True):
+                                rejection_reason_dialog(r['id'], r['user_id'], r['full_name'], r['reason_type'])
+                                
+                        elif mode == 'jefe':
+                            st.info(f"⏳ Esperando a: {r['status'].replace('PENDING_','')}")
+                        else:
+                            color = "green" if r['status'] == 'APPROVED' else "red"
+                            st.markdown(f"<span style='color:{color}'><b>{r['status']}</b></span>", unsafe_allow_html=True)
 
+                with col_k1:
+                    st.markdown(f"<div style='background:rgba(255, 165, 0, 0.2); padding: 10px; border-radius:10px; text-align:center;'><b>🟠 Por Aprobar (RRHH) ({len(df_rrhh)})</b></div>", unsafe_allow_html=True)
+                    st.write("")
+                    for _, r in df_rrhh.iterrows():
+                        render_card(r, 'rrhh')
+                        
+                with col_k2:
+                    st.markdown(f"<div style='background:rgba(255, 255, 0, 0.1); padding: 10px; border-radius:10px; text-align:center;'><b>🟡 Pendiente Jefes ({len(df_jefe)})</b></div>", unsafe_allow_html=True)
+                    st.write("")
+                    for _, r in df_jefe.iterrows():
+                        render_card(r, 'jefe')
+                        
+                with col_k3:
+                    st.markdown(f"<div style='background:rgba(0, 255, 0, 0.1); padding: 10px; border-radius:10px; text-align:center;'><b>🟢 Completados ({len(df_done)})</b></div>", unsafe_allow_html=True)
+                    st.write("")
+                    for _, r in df_done.iterrows():
+                        render_card(r, 'done')
+                        
     elif sel_tab == "📅 Calendario de Ausencias":
         render_absence_calendar(user)
 
@@ -1369,14 +1364,18 @@ def page_exceptions():
                         target_jefe_area = area
                         if str(row['user_id']) in ['119279359', '111627893']:
                             target_jefe_area = 'Administrativo'
-                        elif subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
+                        elif subarea in ['Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']: 
                             target_jefe_area = 'Administrativo'
+                        elif subarea == 'Admisiones':
+                            target_jefe_area = 'Financiera'
                         elif subarea in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']: 
                             target_jefe_area = 'Control Interno'
                         elif u_role == 'coordinador' and u_managed:
                             c_depts = [d.strip() for d in u_managed.split(',') if d.strip()]
-                            if any(dept in c_depts for dept in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']):
+                            if any(dept in c_depts for dept in ['Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia']):
                                 target_jefe_area = 'Administrativo'
+                            elif 'Admisiones' in c_depts:
+                                target_jefe_area = 'Financiera'
                             elif any(dept in c_depts for dept in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']):
                                 target_jefe_area = 'Control Interno'
                                 

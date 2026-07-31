@@ -245,8 +245,8 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
         # Si radica RRHH, también debería registrarse formalmente o saltar a Jefe
         target_status = "PENDING_JEFE"
     elif role == "jefe_area":
-        # Si radica el Jefe, se auto-aprueba (es la última instancia)
-        target_status = "APPROVED"
+        # Si radica el Jefe, se auto-aprueba por él mismo, pero DEBE pasar por RRHH
+        target_status = "PENDING_RRHH"
     elif role == "empleado":
         if str(user_id) in ['119279359', '111627893']:
             target_status = "PENDING_RRHH"
@@ -278,11 +278,11 @@ def db_create_leave_request(user_id, leave_start, leave_end, t_start, t_end, tot
         cur.execute("""
             INSERT INTO leave_requests (
                 user_id, request_date, leave_date_start, leave_date_end, start_time, end_time, 
-                total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status, attachment_path, specific_dates
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status, attachment_path, specific_dates, approved_by_jefe
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (user_id, datetime.now().date().isoformat(), leave_start.isoformat(), leave_end.isoformat(),
               t_start, t_end, total_time, r_type, r_desc, makeup, 1 if is_paid else 0,
-              datetime.now().isoformat(timespec="seconds"), target_status, attachment_path, specific_dates))
+              datetime.now().isoformat(timespec="seconds"), target_status, attachment_path, specific_dates, user_id if role == "jefe_area" else None))
         
         req_id = cur.lastrowid
     
@@ -373,9 +373,10 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             # Resolvemos qué Jefatura debe aprobar la solicitud basándonos en la sub-área.
             target_jefe_area = req_area
             
-            # 1. Estas sub-áreas siempre son aprobadas por la jefatura Administrativa.
-            if req_subarea in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador']: 
+            if req_subarea in ['Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador']: 
                 target_jefe_area = 'Administrativo'
+            elif req_subarea == 'Admisiones':
+                target_jefe_area = 'Financiera'
                 
             # 2. Estas sub-áreas (incluyendo Cirugía) saltan la jerarquía normal y pasan
             # de forma estricta por el escrutinio de Control Interno.
@@ -383,8 +384,10 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                 target_jefe_area = 'Control Interno'
             elif req_role == 'coordinador' and req_managed:
                 c_depts = [d.strip() for d in req_managed.split(',') if d.strip()]
-                if any(dept in c_depts for dept in ['Admisiones', 'Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador']):
+                if any(dept in c_depts for dept in ['Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador']):
                     target_jefe_area = 'Administrativo'
+                elif 'Admisiones' in c_depts:
+                    target_jefe_area = 'Financiera'
                 elif any(dept in c_depts for dept in ['Enfermería', 'Auditor Médico', 'Medico', 'Control Interno', 'Cirugía']):
                     target_jefe_area = 'Control Interno'
                     
