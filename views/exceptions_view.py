@@ -6,7 +6,7 @@ from streamlit_option_menu import option_menu
 from database_conn.connection import db_session, db_conn
 from database_conn.queries import (upsert_exception, get_exceptions_df, 
                                    db_approve_leave_request_coord, db_approve_leave_request_jefe, 
-                                   db_reject_leave_request, is_holiday)
+                                   db_reject_leave_request, db_revert_leave_request, is_holiday)
 from services.notifications import log_audit, notify_employee_status
 from utils.auth import require_role
 from utils.constants import ZARZAL_EMPLOYEES
@@ -1150,17 +1150,17 @@ def page_exceptions():
         if df_pend.empty:
             st.success("No hay solicitudes pendientes de revisión final.")
         else:
-            # --- Filtros Interactivos para Gestión Humana ---
-            with st.expander("🔍 Buscar y Filtrar Pendientes", expanded=False):
-                f_col1, f_col2, f_col3 = st.columns(3)
-                with f_col1:
-                    f_name_rrhh = st.text_input("Buscar Empleado (Nombre o ID)", key="f_pend_name_rrhh")
-                with f_col2:
-                    f_types_rrhh = sorted(df_pend["reason_type"].dropna().unique().tolist())
-                    f_sel_types_rrhh = st.multiselect("Filtrar por Tipo", options=f_types_rrhh, key="f_pend_types_rrhh")
-                with f_col3:
-                    # Rango de fechas
-                    f_date_range_rrhh = st.date_input("Rango de Fechas (Inicio y Fin)", value=[], key="f_pend_dates_rrhh")
+            # --- Buscador Inteligente Siempre Visible ---
+            st.markdown("<h4 style='color: #4f46e5; margin-bottom: 5px;'>Buscador Inteligente</h4>", unsafe_allow_html=True)
+            f_col1, f_col2, f_col3 = st.columns([1.5, 1, 1])
+            with f_col1:
+                f_name_rrhh = st.text_input("🔍 Buscar por Nombre o Cédula", placeholder="Escribe aquí...", key="f_pend_name_rrhh")
+            with f_col2:
+                f_types_rrhh = sorted(df_pend["reason_type"].dropna().unique().tolist())
+                f_sel_types_rrhh = st.multiselect("🏷️ Filtrar por Tipo", options=f_types_rrhh, key="f_pend_types_rrhh")
+            with f_col3:
+                f_date_range_rrhh = st.date_input("📅 Rango de Fechas (Inicio y Fin)", value=[], key="f_pend_dates_rrhh")
+            st.markdown("<hr style='margin-top: 10px; margin-bottom: 20px; border-color: rgba(255,255,255,0.1);'>", unsafe_allow_html=True)
             
             # Aplicar filtros dinámicos
             df_filtered = df_pend.copy()
@@ -1197,9 +1197,26 @@ def page_exceptions():
                 def render_card(r, mode):
                     with st.container(border=True, key=f"kanban_{r['id']}"):
                         icon = get_reason_icon(r['reason_type'])
-                        st.markdown(f"**{r['full_name']}**")
-                        st.caption(f"{icon} {r['reason_type']}")
-                        st.write(f"📅 {r['leave_date_start']}")
+                        
+                        # Definir colores de los badges
+                        color_map = {
+                            "Vacaciones": "background-color: rgba(13, 110, 253, 0.15); color: #60a5fa; border: 1px solid rgba(13, 110, 253, 0.3);",
+                            "Incapacidad": "background-color: rgba(220, 53, 69, 0.15); color: #f87171; border: 1px solid rgba(220, 53, 69, 0.3);",
+                        }
+                        badge_style = color_map.get(r['reason_type'], "background-color: rgba(25, 135, 84, 0.15); color: #4ade80; border: 1px solid rgba(25, 135, 84, 0.3);")
+                        
+                        st.markdown(f"""
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                            <strong style="font-size: 1.1rem; line-height: 1.2;">{r['full_name']}</strong>
+                            <span style="font-size: 0.75rem; padding: 3px 8px; border-radius: 12px; font-weight: 600; white-space: nowrap; margin-left: 10px; {badge_style}">
+                                {icon} {r['reason_type']}
+                            </span>
+                        </div>
+                        <div style="color: #94a3b8; font-size: 0.85rem; margin-bottom: 12px;">
+                            <span style="margin-right: 15px;">📅 <b>Inicio:</b> {r['leave_date_start']}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
                         
                         # Botón para ver info detallada
                         if st.button("🔍 Ver Soportes", key=f"k_det_{r['id']}", use_container_width=True):
@@ -1262,6 +1279,14 @@ def page_exceptions():
                         else:
                             color = "green" if r['status'] == 'APPROVED' else "red"
                             st.markdown(f"<span style='color:{color}'><b>{r['status']}</b></span>", unsafe_allow_html=True)
+                            
+                            if st.session_state['user']['role'] in ['admin', 'nomina'] or (st.session_state['user']['role'] == 'empleado' and st.session_state['user'].get('emp_subarea') in ['Nomina', 'Talento humano']):
+                                if st.button("↩️ Revertir a Pendiente", key=f"rev_hr_{r['id']}", use_container_width=True):
+                                    from database_conn.queries import db_revert_leave_request
+                                    success = db_revert_leave_request(r['id'], st.session_state['user']['username'])
+                                    if success:
+                                        st.success(f"Permiso #{r['id']} devuelto a estado Pendiente.")
+                                        st.rerun()
 
                 with col_k1:
                     st.markdown(f"<div style='background:rgba(255, 165, 0, 0.2); padding: 10px; border-radius:10px; text-align:center;'><b>🟠 Por Aprobar (RRHH) ({len(df_rrhh)})</b></div>", unsafe_allow_html=True)
