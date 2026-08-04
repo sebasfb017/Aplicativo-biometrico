@@ -1,23 +1,26 @@
 import os
+from datetime import datetime, timedelta
+
 import streamlit as st
 from streamlit_option_menu import option_menu
 
 # --- Fin de la inicialización del Tema ---
-
-from database_conn.connection import db_conn
 from database_conn.setup import init_db
-from utils.auth import require_role
+from views.attendance_view import page_view_attendance
 from views.auth_view import page_login
 from views.dashboard_view import page_dashboard
-from views.employees_view import page_employees
-from views.sync_zkteco_view import page_sync
-from views.employee_portal_view import page_employee_portal
-from views.schedules_view import page_shifts, page_assign_shifts, page_bulk_assign_shifts
-from views.exceptions_view import page_exceptions
-from views.attendance_view import page_view_attendance
-from views.month_report_view import page_lateness_report
-from views.users_admin_view import page_users_admin
 from views.employee_360_view import page_employee_360
+from views.employee_portal_view import page_employee_portal
+from views.employees_view import page_employees
+from views.exceptions_view import page_exceptions
+from views.month_report_view import page_lateness_report
+from views.schedules_view import (
+    page_assign_shifts,
+    page_bulk_assign_shifts,
+    page_shifts,
+)
+from views.sync_zkteco_view import page_sync
+from views.users_admin_view import page_users_admin
 
 
 def main():
@@ -26,7 +29,9 @@ def main():
 
     # --- INYECCIÓN PWA ---
     import streamlit.components.v1 as components
-    components.html("""
+
+    components.html(
+        """
     <script>
         const parent = window.parent.document;
         if (!parent.querySelector('link[rel="manifest"]')) {
@@ -60,13 +65,17 @@ def main():
             }
         }
     </script>
-    """, height=0, width=0)
+    """,
+        height=0,
+        width=0,
+    )
 
     # --- CSS GLOBAL (ESTÉTICA PREMIUM Y FLUIDEZ) ---
     # Inyectamos estilos CSS personalizados para darle a la aplicación un aspecto moderno.
-    # Evitamos usar el archivo de configuración global config.toml para no bloquear 
+    # Evitamos usar el archivo de configuración global config.toml para no bloquear
     # el botón nativo de Modo Oscuro/Claro del navegador de Streamlit.
-    st.markdown("""
+    st.markdown(
+        """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
     
@@ -386,26 +395,30 @@ def main():
     .badge-amber { background: rgba(245, 158, 11, 0.1); color: #d97706; border: 1px solid rgba(245, 158, 11, 0.2); }
     .badge-slate { background: rgba(100, 116, 139, 0.1); color: #475569; border: 1px solid rgba(100, 116, 139, 0.2); }
     </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     # --- INICIO BACKGROUND SCHEDULER ---
     @st.cache_resource
     def init_scheduler():
         try:
             from apscheduler.schedulers.background import BackgroundScheduler
+
             from services.zk_service import automated_daily_sync
+
             scheduler = BackgroundScheduler()
             # Sincronizar todos los días a las 23:59
-            scheduler.add_job(automated_daily_sync, 'cron', hour=23, minute=59)
+            scheduler.add_job(automated_daily_sync, "cron", hour=23, minute=59)
             scheduler.start()
             return scheduler
         except ImportError:
             return None
-            
+
     _ = init_scheduler()
     # --- FIN BACKGROUND SCHEDULER ---
 
-    from database_conn.queries import db_validate_session, db_delete_session
+    from database_conn.queries import db_delete_session, db_validate_session
 
     # --- PERSISTENCIA DE SESIÓN POR TOKEN (QUERY PARAMS) ---
     if not st.session_state.get("user") and "session_token" in st.query_params:
@@ -424,17 +437,19 @@ def main():
 
     # Obtener el rol real del usuario
     user_role = user["role"]
-    
+
     # Asignación de rol efectivo: si el rol es auxiliar ('empleado') y su sub-área es Nómina o Talento Humano,
-    # le asignamos dinámicamente los permisos y la interfaz del rol administrativo 'nomina' para que 
+    # le asignamos dinámicamente los permisos y la interfaz del rol administrativo 'nomina' para que
     # puedan acceder al panel de RRHH sin ser administradores globales.
-    if user_role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]:
+    if user_role == "empleado" and user.get("emp_subarea") in [
+        "Nomina",
+        "Talento humano",
+    ]:
         user_role = "nomina"
 
     # --- INACTIVITY TIMEOUT (10 min) ---
-    # Sistema de seguridad que cierra la sesión automáticamente si el usuario 
+    # Sistema de seguridad que cierra la sesión automáticamente si el usuario
     # no interactúa con la aplicación durante 10 minutos seguidos.
-    from datetime import datetime, timedelta
     last_activity = st.session_state.get("last_activity")
     now = datetime.now()
     if last_activity:
@@ -447,7 +462,9 @@ def main():
                     pass
             st.query_params.clear()
             st.session_state.clear()
-            st.error("Sesión cerrada automáticamente por 10 minutos de inactividad por seguridad.")
+            st.error(
+                "Sesión cerrada automáticamente por 10 minutos de inactividad por seguridad."
+            )
             st.rerun()
     st.session_state["last_activity"] = now
     # ------------------------------------
@@ -455,14 +472,15 @@ def main():
     # --- NOTIFICACIONES EN PANTALLA (TOASTS) ---
     if not st.session_state.get("notified"):
         st.session_state["notified"] = True
-        
+
         if user_role == "empleado":
-            st.toast(f"¡Hola {user['full_name'].split()[0]}! Bienvenido a tu Portal de Autogestión.", icon="👋")
+            st.toast(
+                f"¡Hola {user['full_name'].split()[0]}! Bienvenido a tu Portal de Autogestión.",
+                icon="👋",
+            )
         # Ocultar o eliminar el mensaje emergente de pendientes a petición del usuario.
-        pass
     # -------------------------------------------
 
-    from datetime import datetime
     current_hour = datetime.now().hour
     if current_hour < 12:
         greeting_msg = "☕ Buenos días"
@@ -471,43 +489,125 @@ def main():
     else:
         greeting_msg = "🌙 Buenas noches"
 
-    st.sidebar.markdown(f"<h2 style='text-align: center; color: #0066cc;'>Dolormed RRHH</h2>", unsafe_allow_html=True)
-    st.sidebar.markdown(f"<div style='text-align: center; color: gray; margin-bottom: 20px;'>{greeting_msg}, <b>{user['full_name'].split()[0]}</b><br><small>({user['role'].upper()})</small></div>", unsafe_allow_html=True)
+    st.sidebar.markdown(
+        "<h2 style='text-align: center; color: #0066cc;'>Dolormed RRHH</h2>",
+        unsafe_allow_html=True,
+    )
+    st.sidebar.markdown(
+        f"<div style='text-align: center; color: gray; margin-bottom: 20px;'>{greeting_msg}, <b>{user['full_name'].split()[0]}</b><br><small>({user['role'].upper()})</small></div>",
+        unsafe_allow_html=True,
+    )
 
     ROLES_MENU = {
-        "admin": (["Dashboard", "Mi Portal de Autogestión", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"],
-                  ["house", "person-vcard", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"]),
+        "admin": (
+            [
+                "Dashboard",
+                "Mi Portal de Autogestión",
+                "Reportes Mensuales",
+                "Expediente 360",
+                "Novedades y Excepciones",
+                "Sincronizar Relojes",
+                "Visualizar Data",
+                "---",
+                "Empleados",
+                "Turnos y Asignación",
+                "Usuarios",
+            ],
+            [
+                "house",
+                "person-vcard",
+                "bar-chart-line",
+                "person-badge-fill",
+                "journal-medical",
+                "arrow-repeat",
+                "table",
+                "",
+                "people",
+                "calendar-check",
+                "person-badge",
+            ],
+        ),
         "empleado": (["Mi Portal de Autogestión"], ["person-vcard"]),
-        "coordinador": (["Mi Portal de Autogestión", "Autorización de Permisos", "Carga Masiva de Turnos"], ["person-vcard", "check2-square", "file-earmark-excel"]),
-        "jefe_area": (["Mi Portal de Autogestión", "Autorización de Permisos"], ["person-vcard", "check2-square"]),
-        "nomina": (["Dashboard", "Mi Portal de Autogestión", "Reportes Mensuales", "Expediente 360", "Novedades y Excepciones", "Sincronizar Relojes", "Visualizar Data", "---", "Empleados", "Turnos y Asignación", "Usuarios"], 
-                   ["house", "person-vcard", "bar-chart-line", "person-badge-fill", "journal-medical", "arrow-repeat", "table", "", "people", "calendar-check", "person-badge"])
+        "coordinador": (
+            [
+                "Mi Portal de Autogestión",
+                "Autorización de Permisos",
+                "Carga Masiva de Turnos",
+            ],
+            ["person-vcard", "check2-square", "file-earmark-excel"],
+        ),
+        "jefe_area": (
+            ["Mi Portal de Autogestión", "Autorización de Permisos"],
+            ["person-vcard", "check2-square"],
+        ),
+        "nomina": (
+            [
+                "Dashboard",
+                "Mi Portal de Autogestión",
+                "Reportes Mensuales",
+                "Expediente 360",
+                "Novedades y Excepciones",
+                "Sincronizar Relojes",
+                "Visualizar Data",
+                "---",
+                "Empleados",
+                "Turnos y Asignación",
+                "Usuarios",
+            ],
+            [
+                "house",
+                "person-vcard",
+                "bar-chart-line",
+                "person-badge-fill",
+                "journal-medical",
+                "arrow-repeat",
+                "table",
+                "",
+                "people",
+                "calendar-check",
+                "person-badge",
+            ],
+        ),
     }
     menu_options, menu_icons = ROLES_MENU.get(user_role, ROLES_MENU["nomina"])
 
     with st.sidebar:
         # --- CAMPANA DE NOTIFICACIONES ---
         from database_conn.queries import (
-            db_get_unread_notifications_count,
             db_get_recent_notifications,
-            db_mark_all_notifications_read
+            db_get_unread_notifications_count,
+            db_mark_all_notifications_read,
         )
-        unread_count = db_get_unread_notifications_count(user['username'])
-        bell_label = f"🔔 Notificaciones ({unread_count})" if unread_count > 0 else "🔔 Notificaciones"
-        
+
+        unread_count = db_get_unread_notifications_count(user["username"])
+        bell_label = (
+            f"🔔 Notificaciones ({unread_count})"
+            if unread_count > 0
+            else "🔔 Notificaciones"
+        )
+
         with st.popover(bell_label, use_container_width=True):
-            st.markdown("<h4 style='margin:0;'>Mis Notificaciones</h4>", unsafe_allow_html=True)
+            st.markdown(
+                "<h4 style='margin:0;'>Mis Notificaciones</h4>", unsafe_allow_html=True
+            )
             st.markdown("---")
-            notifs = db_get_recent_notifications(user['username'])
+            notifs = db_get_recent_notifications(user["username"])
             if not notifs:
                 st.write("No tienes notificaciones recientes.")
             else:
                 for n in notifs:
-                    icon = "🟢" if not n['is_read'] else "⚪"
-                    st.markdown(f"**{icon} {n['title']}**\n<small>{n['message']}</small>\n<small style='color:gray; font-size: 0.75rem; display: block; margin-top: 2px;'>{n['created_at']}</small>", unsafe_allow_html=True)
+                    icon = "🟢" if not n["is_read"] else "⚪"
+                    st.markdown(
+                        f"**{icon} {n['title']}**\n<small>{n['message']}</small>\n<small style='color:gray; font-size: 0.75rem; display: block; margin-top: 2px;'>{n['created_at']}</small>",
+                        unsafe_allow_html=True,
+                    )
                     st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
-                if st.button("Marcar todas como leídas", key="mark_all_read_top_btn", use_container_width=True):
-                    db_mark_all_notifications_read(user['username'])
+                if st.button(
+                    "Marcar todas como leídas",
+                    key="mark_all_read_top_btn",
+                    use_container_width=True,
+                ):
+                    db_mark_all_notifications_read(user["username"])
                     st.rerun()
         # --- PERSISTENCIA DEL MENÚ ACTIVO ---
         if "menu_sel" in st.query_params:
@@ -515,7 +615,7 @@ def main():
             if stored_sel in menu_options:
                 st.session_state["menu_selection"] = stored_sel
             st.query_params.pop("menu_sel", None)
-            
+
         default_idx = 0
         if "menu_selection" in st.session_state:
             stored_sel = st.session_state["menu_selection"]
@@ -530,15 +630,27 @@ def main():
             default_index=default_idx,
             key="sidebar_menu",
             styles={
-                "container": {"padding": "0!important", "background-color": "transparent"},
+                "container": {
+                    "padding": "0!important",
+                    "background-color": "transparent",
+                },
                 "icon": {"color": "#0066cc", "font-size": "18px"},
-                "nav-link": {"font-size": "15px", "text-align": "left", "margin":"0px", "--hover-color": "rgba(128,128,128,0.15)"},
-                "nav-link-selected": {"background-color": "#0066cc", "color": "white", "icon-color":"white"},
-            }
+                "nav-link": {
+                    "font-size": "15px",
+                    "text-align": "left",
+                    "margin": "0px",
+                    "--hover-color": "rgba(128,128,128,0.15)",
+                },
+                "nav-link-selected": {
+                    "background-color": "#0066cc",
+                    "color": "white",
+                    "icon-color": "white",
+                },
+            },
         )
         st.session_state["menu_selection"] = sel
         st.markdown("<br><br>", unsafe_allow_html=True)
-        
+
         if st.button("Cerrar Sesión", type="primary", use_container_width=True):
             token = st.session_state.get("session_token")
             if token:
@@ -551,7 +663,7 @@ def main():
             st.rerun()
 
     # --- ENRUTADOR DE VISTAS (ROUTER) ---
-    # Diccionario que mapea los nombres de las pestañas en el menú lateral 
+    # Diccionario que mapea los nombres de las pestañas en el menú lateral
     # a las funciones correspondientes que renderizan las páginas.
     router = {
         "Dashboard": page_dashboard,
@@ -563,13 +675,15 @@ def main():
         "Autorización de Permisos": page_exceptions,
         "Empleados": page_employees,
         "Usuarios": page_users_admin,
-        "Mi Portal de Autogestión": page_employee_portal
+        "Mi Portal de Autogestión": page_employee_portal,
     }
 
     # El enrutador maneja la navegación a las diferentes páginas
 
     if sel == "Turnos y Asignación":
-        tab1, tab2, tab3 = st.tabs(["🏗️ Crear Turnos", "📝 Asignar a Empleados", "📥 Carga Masiva (Excel)"])
+        tab1, tab2, tab3 = st.tabs(
+            ["🏗️ Crear Turnos", "📝 Asignar a Empleados", "📥 Carga Masiva (Excel)"]
+        )
         with tab1:
             page_shifts()
         with tab2:
@@ -581,78 +695,87 @@ def main():
     elif sel in router:
         router[sel]()
 
+
 if __name__ == "__main__":
     main()
 
 # --- EXPOSICIÓN DE ATRIBUTOS Y FUNCIONES PARA PRUEBAS (TESTS BACKWARD COMPATIBILITY) ---
-import bcrypt # noqa: E402, F401
-from datetime import datetime # noqa: E402, F401
-import types
 import sys
+import types
+from datetime import datetime
 
-from database_conn.connection import DATA_DIR as _DATA_DIR, DB_PATH as _DB_PATH # noqa: E402, F401
-from database_conn.setup import init_db # noqa: E402, F401
-from utils.auth import get_user, verify_login # noqa: E402, F401
-from views.schedules_view import ( # noqa: E402, F401
-    ensure_schedules_columns,
-    maybe_load_default_schedules,
-    upsert_schedule_df,
-    resolve_shift_from_code,
-    upsert_shifts_from_code_csv,
-    generate_rotating_schedule,
-    auto_assign_shifts_from_schedules
-)
-from services.analytics import ( # noqa: E402, F401
-    schedule_for_date,
-    compute_month_lateness,
-    to_excel_bytes,
-    get_shift_for_user_date,
-    schedule_for_user_date,
-    get_late_punch_ids
-)
-from services.zk_service import upsert_attendance, load_devices # noqa: E402, F401
-from database_conn.queries import ( # noqa: E402, F401
+import bcrypt  # noqa: F401
+
+from database_conn.connection import DATA_DIR as _DATA_DIR, DB_PATH as _DB_PATH, db_conn  # noqa: F401
+from database_conn.setup import init_db # noqa: F401
+from database_conn.queries import (  # noqa: F401
+    assign_shift,
+    calculate_overnight_surcharge,
+    get_profile_by_name,
+    get_shifts_df,
+    is_holiday,
     upsert_employees_df,
     upsert_shift,
-    get_shifts_df,
-    assign_shift,
-    is_holiday,
-    get_profile_by_name,
-    calculate_overnight_surcharge
 )
+from services.analytics import (  # noqa: F401
+    compute_month_lateness,
+    get_late_punch_ids,
+    get_shift_for_user_date,
+    schedule_for_date,
+    schedule_for_user_date,
+    to_excel_bytes,
+)
+from services.zk_service import load_devices, upsert_attendance  # noqa: F401
+from utils.auth import get_user, verify_login, require_role  # noqa: F401
+from views.schedules_view import (  # noqa: F401
+    auto_assign_shifts_from_schedules,
+    ensure_schedules_columns,
+    generate_rotating_schedule,
+    maybe_load_default_schedules,
+    resolve_shift_from_code,
+    upsert_schedule_df,
+    upsert_shifts_from_code_csv,
+)
+
 
 # Contenedor de espacio de nombres personalizado para permitir enrutamiento dinámico y parches durante las pruebas
 class AppNamespace(types.ModuleType):
     @property
     def DATA_DIR(self):
         import database_conn.connection
+
         return database_conn.connection.DATA_DIR
 
     @DATA_DIR.setter
     def DATA_DIR(self, value):
         import database_conn.connection
+
         database_conn.connection.DATA_DIR = value
 
     @property
     def DB_PATH(self):
         import database_conn.connection
+
         return database_conn.connection.DB_PATH
 
     @DB_PATH.setter
     def DB_PATH(self, value):
         import database_conn.connection
+
         database_conn.connection.DB_PATH = value
         database_conn.connection.DATA_DIR = os.path.dirname(value)
 
     @property
     def DEVICES_YAML(self):
         import services.zk_service
+
         return services.zk_service.DEVICES_YAML
 
     @DEVICES_YAML.setter
     def DEVICES_YAML(self, value):
         import services.zk_service
+
         services.zk_service.DEVICES_YAML = value
 
+
 sys.modules[__name__].__class__ = AppNamespace
-
