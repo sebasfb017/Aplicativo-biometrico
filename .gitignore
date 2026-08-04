@@ -13,3 +13,6 @@ test_zk.py
 scratch/
 *.db
 static/*.pdf
+
+.streamlit/secrets.toml
+.streamlit/

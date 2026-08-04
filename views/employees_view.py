@@ -1,37 +1,49 @@
-import streamlit as st
 import pandas as pd
+import streamlit as st
+
 from database_conn.connection import db_session
-from database_conn.queries import upsert_employees_df, get_all_employees
+from database_conn.queries import get_all_employees, upsert_employees_df
 from utils.auth import require_role
 from utils.constants import AREA_MAPPING
+
 
 @st.dialog("✏️ Editar Empleado", width="large")
 def edit_employee_dialog(user_id):
     with db_session() as conn:
-        emp_df = pd.read_sql_query("SELECT full_name, department, profile_id FROM employees WHERE user_id = ?", conn, params=(user_id,))
-        profiles_df = pd.read_sql_query("SELECT profile_id, name FROM profiles ORDER BY name", conn)
-    
+        emp_df = pd.read_sql_query(
+            "SELECT full_name, department, profile_id FROM employees WHERE user_id = ?",
+            conn,
+            params=(user_id,),
+        )
+        profiles_df = pd.read_sql_query(
+            "SELECT profile_id, name FROM profiles ORDER BY name", conn
+        )
+
     if emp_df.empty:
         st.error("No se encontró el empleado.")
         return
-        
+
     e = emp_df.iloc[0]
-    
+
     profile_opts = profiles_df["name"].tolist()
-    
+
     current_prof_id = e.get("profile_id")
     current_prof_name = ""
     if pd.notna(current_prof_id):
-        prof_row = profiles_df[profiles_df['profile_id'] == current_prof_id]
+        prof_row = profiles_df[profiles_df["profile_id"] == current_prof_id]
         if not prof_row.empty:
             current_prof_name = prof_row.iloc[0]["name"]
-            
-    prof_index = profile_opts.index(current_prof_name) if current_prof_name in profile_opts else 0
-    
-    current_dept = str(e['department']) if pd.notna(e['department']) else ""
+
+    prof_index = (
+        profile_opts.index(current_prof_name)
+        if current_prof_name in profile_opts
+        else 0
+    )
+
+    current_dept = str(e["department"]) if pd.notna(e["department"]) else ""
     def_area = list(AREA_MAPPING.keys())[0]
     def_subarea = ""
-    
+
     if " - " in current_dept:
         parts = current_dept.split(" - ", 1)
         if parts[0] in AREA_MAPPING:
@@ -46,74 +58,94 @@ def edit_employee_dialog(user_id):
         else:
             if current_dept in AREA_MAPPING:
                 def_area = current_dept
-                
+
     st.write(f"**DNI / ID Biométrico:** {user_id}")
-    new_name = st.text_input("Nombre Completo*", value=e['full_name'])
-    
+    new_name = st.text_input("Nombre Completo*", value=e["full_name"])
+
     area_opts = list(AREA_MAPPING.keys())
     area_idx = area_opts.index(def_area) if def_area in area_opts else 0
     new_area = st.selectbox("Área Principal*", options=area_opts, index=area_idx)
-    
+
     subarea_opts = AREA_MAPPING[new_area]
     subarea_idx = subarea_opts.index(def_subarea) if def_subarea in subarea_opts else 0
-    new_subarea = st.selectbox("Sub-área / Departamento*", options=subarea_opts, index=subarea_idx)
-    
-    new_prof_name = st.selectbox("Perfil Asignado*", options=profile_opts, index=prof_index)
-    
+    new_subarea = st.selectbox(
+        "Sub-área / Departamento*", options=subarea_opts, index=subarea_idx
+    )
+
+    new_prof_name = st.selectbox(
+        "Perfil Asignado*", options=profile_opts, index=prof_index
+    )
+
     st.markdown("---")
     submitted = st.button("Guardar Cambios", type="primary")
-    
+
     if submitted:
         if not new_name.strip() or not new_area or not new_subarea:
             st.error("Nombre, Área y Sub-área son obligatorios.")
             return
-            
+
         new_prof_id = None
-        prof_row = profiles_df[profiles_df['name'] == new_prof_name]
+        prof_row = profiles_df[profiles_df["name"] == new_prof_name]
         if not prof_row.empty:
             new_prof_id = int(prof_row.iloc[0]["profile_id"])
-            
+
         final_dept = f"{new_area} - {new_subarea}"
-        
+
         try:
             with db_session() as conn:
                 cur = conn.cursor()
-                cur.execute("""
+                cur.execute(
+                    """
                     UPDATE employees 
                     SET full_name = ?, department = ?, profile_id = ?
                     WHERE user_id = ?
-                """, (new_name.strip(), final_dept, new_prof_id, str(user_id)))
-            
+                """,
+                    (new_name.strip(), final_dept, new_prof_id, str(user_id)),
+                )
+
             get_all_employees.clear()
             st.success("✅ Cambios guardados correctamente.")
             st.rerun()
         except Exception as exc:
             st.error(f"Error al guardar los cambios: {exc}")
-            
+
     with st.expander("🚨 Zona de Peligro - Eliminar Empleado"):
-        st.warning("Esta acción es irreversible y eliminará el registro de empleado y sus accesos si existen.")
-        confirm_del = st.checkbox("Entiendo que esta acción es permanente.", key=f"del_emp_{user_id}")
-        
-        if st.button("🗑️ Eliminar Definitivamente", type="primary", disabled=not confirm_del):
+        st.warning(
+            "Esta acción es irreversible y eliminará el registro de empleado y sus accesos si existen."
+        )
+        confirm_del = st.checkbox(
+            "Entiendo que esta acción es permanente.", key=f"del_emp_{user_id}"
+        )
+
+        if st.button(
+            "🗑️ Eliminar Definitivamente", type="primary", disabled=not confirm_del
+        ):
             try:
                 with db_session() as conn:
                     cur = conn.cursor()
-                    cur.execute("DELETE FROM employees WHERE user_id = ?", (str(user_id),))
-                    cur.execute("DELETE FROM users_app WHERE username = ?", (str(user_id),))
-                
+                    cur.execute(
+                        "DELETE FROM employees WHERE user_id = ?", (str(user_id),)
+                    )
+                    cur.execute(
+                        "DELETE FROM users_app WHERE username = ?", (str(user_id),)
+                    )
+
                 get_all_employees.clear()
                 from database_conn.queries import get_users_by_role
+
                 get_users_by_role.clear()
-                
+
                 if "employees_table" in st.session_state:
                     del st.session_state["employees_table"]
-                
+
                 st.success("🗑️ Empleado eliminado. Cerrando...")
                 import time
+
                 time.sleep(0.75)
                 st.rerun()
             except Exception as exc:
                 st.error(f"Error al eliminar: {exc}")
+
 
 def page_employees():
     require_role("admin", "nomina")
@@ -122,75 +154,142 @@ def page_employees():
 
     # Mostrar perfiles disponibles
     with db_session() as conn:
-        profiles_df = pd.read_sql_query("SELECT profile_id, name, description, works_holidays FROM profiles ORDER BY name", conn)
-    
+        profiles_df = pd.read_sql_query(
+            "SELECT profile_id, name, description, works_holidays FROM profiles ORDER BY name",
+            conn,
+        )
+
     with st.expander("ℹ️ Ver Perfiles y Reglas Base Creados en el Sistema"):
         if not profiles_df.empty:
-            profiles_df['works_holidays'] = profiles_df['works_holidays'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
-            profiles_df.columns = ["ID", "Nombre Perfil", "Descripción", "¿Trabaja Festivos?"]
+            profiles_df["works_holidays"] = profiles_df["works_holidays"].apply(
+                lambda x: "✅ Sí" if x == 1 else "❌ No"
+            )
+            profiles_df.columns = [
+                "ID",
+                "Nombre Perfil",
+                "Descripción",
+                "¿Trabaja Festivos?",
+            ]
             st.dataframe(profiles_df, use_container_width=True, hide_index=True)
         else:
             st.info("No hay perfiles configurados.")
 
     st.markdown("---")
-    tab1, tab2, tab3 = st.tabs(["👥 Plantilla Activa", "➕ Crear Empleado Manual", "📥 Importar CSV masivo"])
+    tab1, tab2, tab3 = st.tabs(
+        ["👥 Plantilla Activa", "➕ Crear Empleado Manual", "📥 Importar CSV masivo"]
+    )
 
     with tab1:
         st.subheader("Directorio Actual")
         st.write("Selecciona una fila para editar la información del empleado.")
         with db_session() as conn:
-            emp = pd.read_sql_query("""
+            emp = pd.read_sql_query(
+                """
                 SELECT e.user_id, e.full_name, e.department, COALESCE(p.name, 'Sin asignar') as profile, e.created_at
                 FROM employees e
                 LEFT JOIN profiles p ON e.profile_id = p.profile_id
-                ORDER BY e.user_id
-            """, conn)
-        
+                ORDER BY e.full_name ASC
+            """,
+                conn,
+            )
+
         if emp.empty:
             st.warning("El directorio está vacío.")
         else:
-            emp.columns = ["DNI / ID Biométrico", "Nombre Completo", "Área / Departamento", "Perfil Asignado", "Fecha Registro"]
-            
+            emp.columns = [
+                "DNI / ID Biométrico",
+                "Nombre Completo",
+                "Área / Departamento",
+                "Perfil Asignado",
+                "Fecha Registro",
+            ]
+
             # Filtro rápido
             deptss = ["Todos"] + list(emp["Área / Departamento"].dropna().unique())
             filtro_dep = st.selectbox("Filtrar por Departamento:", deptss)
-            
-            df_show = emp if filtro_dep == "Todos" else emp[emp["Área / Departamento"] == filtro_dep]
-            
+
+            df_show = (
+                emp
+                if filtro_dep == "Todos"
+                else emp[emp["Área / Departamento"] == filtro_dep]
+            )
+
             st.metric("Total en vista", len(df_show))
-            
-            if 'last_processed_employee' not in st.session_state:
-                st.session_state.last_processed_employee = None
-                
-            event = st.dataframe(df_show, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="employees_table")
-            
-            selected_rows = event.selection.rows
-            if selected_rows:
-                idx = selected_rows[0]
-                if idx < len(df_show):
-                    selected_user_id = str(df_show.iloc[idx]["DNI / ID Biométrico"])
-                    
-                    if selected_user_id != st.session_state.last_processed_employee:
-                        st.session_state.last_processed_employee = selected_user_id
-                        edit_employee_dialog(selected_user_id)
-                else:
-                    st.session_state.last_processed_employee = None
-            else:
-                st.session_state.last_processed_employee = None
+
+            # --- Galería de Empleados (Tarjetas 3D) ---
+            st.markdown("<br>", unsafe_allow_html=True)
+            cols_per_row = 4
+
+            # Paginación o mostrar todos (Mostramos todos por simplicidad, Streamlit lo maneja bien)
+            for i in range(0, len(df_show), cols_per_row):
+                cols = st.columns(cols_per_row)
+                chunk = df_show.iloc[i : i + cols_per_row]
+                for idx, (_, r) in enumerate(chunk.iterrows()):
+                    with cols[idx]:
+                        with st.container(border=True):
+                            # Avatar dinámico según departamento
+                            dept = str(r["Área / Departamento"])
+                            if "Asistencial" in dept:
+                                avatar = "🧑‍⚕️"
+                            elif "Financiera" in dept or "Administrativo" in dept:
+                                avatar = "👨‍💼"
+                            elif "Operativo" in dept:
+                                avatar = "👷‍♂️"
+                            else:
+                                avatar = "👤"
+
+                            st.markdown(
+                                f"""
+                            <div style="text-align: center; padding: 5px 0;">
+                                <div style="font-size: 3.5rem; margin-bottom: 5px; line-height: 1;">{avatar}</div>
+                                <h4 style="margin: 0; font-size: 1.1rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{r["Nombre Completo"]}">{r["Nombre Completo"]}</h4>
+                                <p style="color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; font-weight: 600; margin: 8px 0;">{dept}</p>
+                                <span class="badge-modern badge-slate" style="font-size: 0.7rem;">{r["Perfil Asignado"]}</span>
+                            </div>
+                            """,
+                                unsafe_allow_html=True,
+                            )
+
+                            st.markdown(
+                                "<div style='margin-top: 15px;'></div>",
+                                unsafe_allow_html=True,
+                            )
+                            # Botón de edición que abre el modal
+                            if st.button(
+                                "✏️ Editar",
+                                key=f"edit_emp_{r['DNI / ID Biométrico']}",
+                                use_container_width=True,
+                            ):
+                                edit_employee_dialog(str(r["DNI / ID Biométrico"]))
 
     with tab2:
         st.subheader("Registrar Empleado Manualmente")
-        st.info("Utiliza este formulario para crear un registro individual en la base de datos de manera inmediata.")
+        st.info(
+            "Utiliza este formulario para crear un registro individual en la base de datos de manera inmediata."
+        )
         c1, c2 = st.columns(2)
         with c1:
-            e_id = st.text_input("Número de Documento (DNI)*", placeholder="Ej: 100123456")
-            e_name = st.text_input("Nombre Completo*", placeholder="Apellidos y Nombres")
-            e_email = st.text_input("Correo Electrónico (Opcional)", placeholder="usuario@dolormed.com")
+            e_id = st.text_input(
+                "Número de Documento (DNI)*", placeholder="Ej: 100123456"
+            )
+            e_name = st.text_input(
+                "Nombre Completo*", placeholder="Apellidos y Nombres"
+            )
+            e_email = st.text_input(
+                "Correo Electrónico (Opcional)", placeholder="usuario@dolormed.com"
+            )
         with c2:
-            e_area_main = st.selectbox("Área Principal*", options=list(AREA_MAPPING.keys()))
-            e_subarea = st.selectbox("Sub-área / Departamento*", options=AREA_MAPPING[e_area_main])
-            e_prof = st.selectbox("Perfil Asignado*", options=[p for p in profiles_df["Nombre Perfil"].tolist()])
-            
+            e_area_main = st.selectbox(
+                "Área Principal*", options=list(AREA_MAPPING.keys())
+            )
+            e_subarea = st.selectbox(
+                "Sub-área / Departamento*", options=AREA_MAPPING[e_area_main]
+            )
+            e_prof = st.selectbox(
+                "Perfil Asignado*",
+                options=[p for p in profiles_df["Nombre Perfil"].tolist()],
+            )
+
         submitted = st.button("Crear Empleado", type="primary")
 
         if submitted:
@@ -199,13 +298,17 @@ def page_employees():
                 st.error("Por favor completa los campos obligatorios (*).")
             else:
                 try:
-                    df_new = pd.DataFrame([{
-                        "user_id": e_id.strip(),
-                        "full_name": e_name.strip(),
-                        "email": e_email.strip(),
-                        "department": e_dept.strip(),
-                        "profile_id": e_prof
-                    }])
+                    df_new = pd.DataFrame(
+                        [
+                            {
+                                "user_id": e_id.strip(),
+                                "full_name": e_name.strip(),
+                                "email": e_email.strip(),
+                                "department": e_dept.strip(),
+                                "profile_id": e_prof,
+                            }
+                        ]
+                    )
                     upsert_employees_df(df_new)
                     get_all_employees.clear()
                     st.success(f"✅ Empleado {e_name} creado exitosamente.")
@@ -214,13 +317,19 @@ def page_employees():
 
     with tab3:
         st.subheader("📥 Cargar Plantilla Masiva CSV")
-        st.info("Sube un archivo CSV con las columnas: `user_id, full_name, email, department` (Opcional: `profile_id` o el nombre del perfil exacto).")
-        csv_file = st.file_uploader("Arrastra tu documento CSV aquí", type=["csv"], key="emp_csv")
+        st.info(
+            "Sube un archivo CSV con las columnas: `user_id, full_name, email, department` (Opcional: `profile_id` o el nombre del perfil exacto)."
+        )
+        csv_file = st.file_uploader(
+            "Arrastra tu documento CSV aquí", type=["csv"], key="emp_csv"
+        )
         if csv_file is not None:
             df = pd.read_csv(csv_file)
             try:
                 upsert_employees_df(df)
                 get_all_employees.clear()
-                st.success("✅ Base de datos de empleados actualizada satisfactoriamente.")
+                st.success(
+                    "✅ Base de datos de empleados actualizada satisfactoriamente."
+                )
             except Exception as e:
                 st.error(f"Fallo al procesar el documento: {e}")

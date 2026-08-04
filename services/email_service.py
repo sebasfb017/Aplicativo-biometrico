@@ -1,11 +1,14 @@
 import os
 import smtplib
-import yaml
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+import yaml
+
 from database_conn.connection import BASE_DIR
 
 SMTP_YAML = os.path.join(BASE_DIR, "smtp_config.yaml")
+
 
 def load_smtp_config():
     if not os.path.exists(SMTP_YAML):
@@ -14,7 +17,7 @@ def load_smtp_config():
             "smtp_port": 587,
             "smtp_user": "",
             "smtp_password": "",
-            "sender_name": "Nómina Dolormed"
+            "sender_name": "Nómina Dolormed",
         }
     try:
         with open(SMTP_YAML, "r", encoding="utf-8") as f:
@@ -26,8 +29,9 @@ def load_smtp_config():
             "smtp_port": 587,
             "smtp_user": "",
             "smtp_password": "",
-            "sender_name": "Nómina Dolormed"
+            "sender_name": "Nómina Dolormed",
         }
+
 
 def save_smtp_config(config: dict):
     try:
@@ -38,30 +42,36 @@ def save_smtp_config(config: dict):
         print(f"Error guardando smtp_config.yaml: {e}")
         return False
 
+
 def _send_email_sync(to_email, subject, html_content, text_content=""):
     config = load_smtp_config()
-    
+
     sender_email = config.get("smtp_user", "")
     sender_password = config.get("smtp_password", "")
     smtp_server = config.get("smtp_server", "smtp.gmail.com")
     smtp_port = config.get("smtp_port", 587)
     sender_name = config.get("sender_name", "Nómina Dolormed")
-    
+
     if not sender_email or not sender_password:
         return False, "Las credenciales SMTP no están configuradas."
-        
+
     try:
         import email.utils
         from email.header import Header
+
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        
+
         # Codificar correctamente el nombre si tiene tildes (RFC 5322)
-        formatted_from = email.utils.formataddr((str(Header(sender_name, 'utf-8')), sender_email))
+        formatted_from = email.utils.formataddr(
+            (str(Header(sender_name, "utf-8")), sender_email)
+        )
         msg["From"] = formatted_from
         msg["Date"] = email.utils.formatdate(localtime=True)
-        msg["Message-ID"] = email.utils.make_msgid(domain=sender_email.split('@')[-1] if '@' in sender_email else 'dolormed.co')
-        
+        msg["Message-ID"] = email.utils.make_msgid(
+            domain=sender_email.split("@")[-1] if "@" in sender_email else "dolormed.co"
+        )
+
         # Si to_email es una lista de destinatarios, lo convertimos en un string separado por comas
         if isinstance(to_email, list):
             # Filtrar correos vacíos
@@ -75,39 +85,43 @@ def _send_email_sync(to_email, subject, html_content, text_content=""):
                 return False, "Correo de destinatario inválido."
             msg["To"] = to_email
             recipient = [to_email]
-            
+
         if text_content:
             part1 = MIMEText(text_content, "plain")
             msg.attach(part1)
-            
+
         part2 = MIMEText(html_content, "html")
         msg.attach(part2)
-        
+
         import ssl
+
         context = ssl._create_unverified_context()
         timeout_seconds = 15
-        
+
         if int(smtp_port) == 465:
-            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port), context=context, timeout=timeout_seconds)
+            server = smtplib.SMTP_SSL(
+                smtp_server, int(smtp_port), context=context, timeout=timeout_seconds
+            )
         else:
             server = smtplib.SMTP(smtp_server, int(smtp_port), timeout=timeout_seconds)
             server.starttls(context=context)
-            
+
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, recipient, msg.as_string())
         server.quit()
-        
+
         return True, "Correo enviado correctamente."
     except Exception as e:
         return False, str(e)
 
+
 def _send_email(to_email, subject, html_content, text_content=""):
     """
     Despacha el envío de correos electrónicos en un hilo en segundo plano (Asíncrono).
-    
+
     Esta envoltura evita que la interfaz gráfica de Streamlit se bloquee o experimente
     retrasos mientras se establece la conexión con el servidor SMTP.
-    
+
     Parámetros:
     -----------
     to_email : str | list
@@ -118,19 +132,19 @@ def _send_email(to_email, subject, html_content, text_content=""):
         Cuerpo del mensaje en formato HTML para clientes modernos.
     text_content : str, opcional
         Cuerpo del mensaje en texto plano como respaldo.
-        
+
     Retorna:
     --------
     tuple(bool, str)
         Estado de la operación inicial y un mensaje de confirmación.
     """
     import threading
-    
+
     def background_task():
         success, msg = _send_email_sync(to_email, subject, html_content, text_content)
         if not success:
             print(f"Error asíncrono enviando correo a {to_email}: {msg}")
-            
+
     thread = threading.Thread(target=background_task)
     thread.daemon = True
     thread.start()
@@ -183,10 +197,11 @@ def _get_base_template(title, body_content, header_color="#0D6EFD"):
     </html>
     """
 
+
 def send_welcome_email(to_email, full_name, username, password):
     subject = "Bienvenido al Portal de Nómina Dolormed"
     title = "👋 Bienvenido a Dolormed"
-    
+
     body = f"""
     <p>Hola <strong>{full_name}</strong>,</p>
     <p>Se te ha creado una cuenta segura para acceder al Portal de Autogestión de Empleados. Desde allí podrás consultar tus turnos, asistencias y radicar solicitudes de permisos (Novedades).</p>
@@ -199,17 +214,30 @@ def send_welcome_email(to_email, full_name, username, password):
     
     <p>Te recomendamos cambiar tu contraseña una vez que ingreses al sistema por motivos de seguridad.</p>
     """
-    
+
     html = _get_base_template(title, body)
     text = f"Hola {full_name}, Tus credenciales de acceso son: Usuario: {username}, Contraseña: {password}"
     return _send_email(to_email, subject, html, text)
 
-def send_novedad_alert(to_emails, full_name, reason_type, details, total_time, start_date, prev_approver=None):
+
+def send_novedad_alert(
+    to_emails,
+    full_name,
+    reason_type,
+    details,
+    total_time,
+    start_date,
+    prev_approver=None,
+):
     subject = f"Nueva Solicitud Radicada: {full_name} ({reason_type})"
     title = "⚠️ Alerta de Nueva Novedad"
-    
-    prev_appr_html = f'<p style="background-color: #dcfce7; padding: 12px; border-radius: 6px; color: #166534; border: 1px solid #bbf7d0;"><strong>✅ Aprobado previamente por:</strong> {prev_approver}</p>' if prev_approver else ''
-    
+
+    prev_appr_html = (
+        f'<p style="background-color: #dcfce7; padding: 12px; border-radius: 6px; color: #166534; border: 1px solid #bbf7d0;"><strong>✅ Aprobado previamente por:</strong> {prev_approver}</p>'
+        if prev_approver
+        else ""
+    )
+
     body = f"""
     <p>El empleado <strong>{full_name}</strong> acaba de radicar una nueva solicitud en el portal que requiere revisión.</p>
     
@@ -226,15 +254,16 @@ def send_novedad_alert(to_emails, full_name, reason_type, details, total_time, s
     
     <p>Por favor, ingresa al portal administrativo en la sección de <strong>Flujos y Autorizaciones</strong> para revisar y gestionar esta solicitud.</p>
     """
-    
-    html = _get_base_template(title, body, header_color="#eab308") # Yellow
+
+    html = _get_base_template(title, body, header_color="#eab308")  # Yellow
     text = f"Alerta de Novedad: El empleado {full_name} acaba de radicar una nueva solicitud."
     return _send_email(to_emails, subject, html, text)
 
+
 def send_password_reset_pin(to_email: str, full_name: str, pin: str):
-    subject = f"Código de Recuperación de Contraseña - Dolormed"
+    subject = "Código de Recuperación de Contraseña - Dolormed"
     title = "🔐 Recuperación de Contraseña"
-    
+
     body = f"""
     <p>Hola <strong>{full_name}</strong>,</p>
     <p>Hemos recibido una solicitud para restablecer tu contraseña en el Portal de Autogestión.</p>
@@ -246,15 +275,16 @@ def send_password_reset_pin(to_email: str, full_name: str, pin: str):
     
     <p style="color: #ef4444; font-size: 14px; text-align: center;">Si no fuiste tú quien solicitó esto, ignora este mensaje y tu contraseña seguirá intacta.</p>
     """
-    
-    html = _get_base_template(title, body, header_color="#64748b") # Slate
+
+    html = _get_base_template(title, body, header_color="#64748b")  # Slate
     text = f"Tu PIN temporal de recuperación es: {pin}"
     return _send_email([to_email], subject, html, text)
 
+
 def send_password_changed_email(to_email: str, full_name: str, new_password: str):
-    subject = f"Contraseña Actualizada - Dolormed"
+    subject = "Contraseña Actualizada - Dolormed"
     title = "✅ ¡Contraseña Cambiada!"
-    
+
     body = f"""
     <p>Hola <strong>{full_name}</strong>,</p>
     <p>Te confirmamos que la contraseña de tu cuenta en el Portal de Empleados ha sido actualizada correctamente a través del sistema de recuperación.</p>
@@ -266,26 +296,35 @@ def send_password_changed_email(to_email: str, full_name: str, new_password: str
     
     <p style="color: #64748b; font-size: 14px; text-align: center;">Te recomendamos eliminar este correo inmediatamente por seguridad.</p>
     """
-    
-    html = _get_base_template(title, body, header_color="#10b981") # Emerald
+
+    html = _get_base_template(title, body, header_color="#10b981")  # Emerald
     text = f"Tu nueva contraseña es: {new_password}"
     return _send_email([to_email], subject, html, text)
 
-def send_status_update_email(to_email: str, full_name: str, req_id: int, reason_type: str, new_status: str, message: str, approver_name: str = None):
+
+def send_status_update_email(
+    to_email: str,
+    full_name: str,
+    req_id: int,
+    reason_type: str,
+    new_status: str,
+    message: str,
+    approver_name: str = None,
+):
     subject = f"Actualización de Solicitud #{req_id} ({reason_type})"
-    
+
     if "RECHAZA" in new_status.upper():
-        color = "#ef4444" # Red
+        color = "#ef4444"  # Red
         icon = "❌"
     elif "FINAL" in new_status.upper() or "APROBAD" in new_status.upper():
-        color = "#10b981" # Emerald
+        color = "#10b981"  # Emerald
         icon = "✅"
     else:
-        color = "#3b82f6" # Blue
+        color = "#3b82f6"  # Blue
         icon = "⏳"
-        
+
     title = f"{icon} Actualización de Novedad"
-    
+
     body = f"""
     <p>Hola <strong>{full_name}</strong>,</p>
     <p>Te informamos que tu solicitud de <strong>{reason_type}</strong> (Radicado #{req_id}) ha cambiado de estado en nuestro sistema.</p>
@@ -293,12 +332,12 @@ def send_status_update_email(to_email: str, full_name: str, req_id: int, reason_
     <div class="info-box" style="border-left-color: {color};">
       <p><strong>Nuevo Estado:</strong> <span style="color: {color}; font-weight: bold;">{new_status}</span></p>
       <p><strong>Observaciones:</strong> {message}</p>
-      {f'<p><strong>Procesado por:</strong> {approver_name}</p>' if approver_name else ''}
+      {f"<p><strong>Procesado por:</strong> {approver_name}</p>" if approver_name else ""}
     </div>
     
     <p>Puedes consultar el historial completo o descargar tus comprobantes directamente en el Portal de Empleados.</p>
     """
-    
+
     html = _get_base_template(title, body, header_color=color)
     text = f"Tu solicitud ha cambiado a: {new_status}"
     return _send_email([to_email], subject, html, text)
