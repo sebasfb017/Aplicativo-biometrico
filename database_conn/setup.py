@@ -1,7 +1,10 @@
-import bcrypt
 from datetime import datetime
+
+import bcrypt
 import holidays
+
 from database_conn.connection import db_conn
+
 
 def init_db():
     conn = db_conn()
@@ -207,27 +210,49 @@ def init_db():
     """)
 
     # Crear índices para optimizar consultas de marcaciones y permisos
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_attendance_user_ts ON attendance_raw (user_id, ts);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_dates ON leave_requests (user_id, leave_date_start, leave_date_end);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_exceptions_user_id ON exceptions(user_id);")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_attendance_user_ts ON attendance_raw (user_id, ts);"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_leave_requests_dates ON leave_requests (user_id, leave_date_start, leave_date_end);"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_exceptions_user_id ON exceptions(user_id);"
+    )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_exceptions_date ON exceptions(date);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_leave_requests_user_id ON leave_requests(user_id);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);")
-
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status);"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_leave_requests_user_id ON leave_requests(user_id);"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);"
+    )
 
     # Crear administrador por defecto si no existen usuarios
     cur.execute("SELECT COUNT(*) FROM users_app;")
     n = cur.fetchone()[0]
     if n == 0:
         default_user = "admin"
-        default_pass = "Cambiar123!" 
+        default_pass = "Cambiar123!"
         pw_hash = bcrypt.hashpw(default_pass.encode("utf-8"), bcrypt.gensalt())
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO users_app(username, full_name, role, password_hash, active, created_at)
             VALUES(?,?,?,?,1,?)
-        """, (default_user, "Administrador", "admin", pw_hash, datetime.now().isoformat(timespec="seconds")))
+        """,
+            (
+                default_user,
+                "Administrador",
+                "admin",
+                pw_hash,
+                datetime.now().isoformat(timespec="seconds"),
+            ),
+        )
         conn.commit()
 
     cur.execute("SELECT COUNT(*) FROM profiles;")
@@ -239,10 +264,18 @@ def init_db():
             ("Administrativo", "Personal administrativo y servicios", 0),
         ]
         for profile_name, desc, works_holidays in profiles_data:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO profiles(name, description, works_holidays, created_at)
                 VALUES(?,?,?,?)
-            """, (profile_name, desc, works_holidays, datetime.now().isoformat(timespec="seconds")))
+            """,
+                (
+                    profile_name,
+                    desc,
+                    works_holidays,
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
         conn.commit()
 
     initialize_colombian_holidays(cur)
@@ -251,7 +284,11 @@ def init_db():
 
     conn.close()
 
-    from views.schedules_view import ensure_schedules_columns, maybe_load_default_schedules
+    from views.schedules_view import (
+        ensure_schedules_columns,
+        maybe_load_default_schedules,
+    )
+
     ensure_schedules_columns()
     migrate_schema_attendance_flags()
     migrate_schema_for_profiles()
@@ -259,10 +296,11 @@ def init_db():
     migrate_schema_multilevel()
     maybe_load_default_schedules()
     migrate_schema_cancellation()
-    migrate_schema_rejection_reason() # Nueva migración
+    migrate_schema_rejection_reason()  # Nueva migración
     migrate_schema_lockouts()
     migrate_schema_hidden_requests()
     migrate_schema_notifications()
+
 
 def migrate_schema_notifications():
     """Añade la tabla notifications si no existe en la base de datos."""
@@ -285,6 +323,7 @@ def migrate_schema_notifications():
     finally:
         conn.close()
 
+
 def migrate_schema_hidden_requests():
     """Añade la columna para ocultar permisos por parte del empleado."""
     conn = db_conn()
@@ -293,12 +332,15 @@ def migrate_schema_hidden_requests():
         cur.execute("PRAGMA table_info(leave_requests)")
         columns = [row[1] for row in cur.fetchall()]
         if "hidden_by_employee" not in columns:
-            cur.execute("ALTER TABLE leave_requests ADD COLUMN hidden_by_employee INTEGER DEFAULT 0")
+            cur.execute(
+                "ALTER TABLE leave_requests ADD COLUMN hidden_by_employee INTEGER DEFAULT 0"
+            )
             conn.commit()
     except Exception as e:
         print(f"Error en migrate_schema_hidden_requests: {e}")
     finally:
         conn.close()
+
 
 def migrate_schema_cancellation():
     """Añade la columna para la razón de cancelación si no existe."""
@@ -308,12 +350,15 @@ def migrate_schema_cancellation():
         cur.execute("PRAGMA table_info(leave_requests)")
         columns = [row[1] for row in cur.fetchall()]
         if "cancellation_reason" not in columns:
-            cur.execute("ALTER TABLE leave_requests ADD COLUMN cancellation_reason TEXT")
+            cur.execute(
+                "ALTER TABLE leave_requests ADD COLUMN cancellation_reason TEXT"
+            )
             conn.commit()
     except Exception as e:
         print(f"Error en migrate_schema_cancellation: {e}")
     finally:
         conn.close()
+
 
 def migrate_schema_rejection_reason():
     """Añade la columna para la razón de rechazo si no existe."""
@@ -330,6 +375,7 @@ def migrate_schema_rejection_reason():
     finally:
         conn.close()
 
+
 def migrate_schema_lockouts():
     """Añade columnas para el bloqueo por intentos fallidos."""
     conn = db_conn()
@@ -338,7 +384,9 @@ def migrate_schema_lockouts():
         cur.execute("PRAGMA table_info(users_app)")
         columns = [row[1] for row in cur.fetchall()]
         if "failed_attempts" not in columns:
-            cur.execute("ALTER TABLE users_app ADD COLUMN failed_attempts INTEGER DEFAULT 0")
+            cur.execute(
+                "ALTER TABLE users_app ADD COLUMN failed_attempts INTEGER DEFAULT 0"
+            )
             conn.commit()
         if "locked_until" not in columns:
             cur.execute("ALTER TABLE users_app ADD COLUMN locked_until TEXT")
@@ -348,6 +396,7 @@ def migrate_schema_lockouts():
     finally:
         conn.close()
 
+
 def migrate_schema_attendance_flags():
     conn = db_conn()
     cur = conn.cursor()
@@ -355,14 +404,19 @@ def migrate_schema_attendance_flags():
         cur.execute("PRAGMA table_info(attendance_raw)")
         columns = [row[1] for row in cur.fetchall()]
         if "is_ignored" not in columns:
-            cur.execute("ALTER TABLE attendance_raw ADD COLUMN is_ignored INTEGER NOT NULL DEFAULT 0")
+            cur.execute(
+                "ALTER TABLE attendance_raw ADD COLUMN is_ignored INTEGER NOT NULL DEFAULT 0"
+            )
         if "is_manual" not in columns:
-            cur.execute("ALTER TABLE attendance_raw ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0")
+            cur.execute(
+                "ALTER TABLE attendance_raw ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0"
+            )
         conn.commit()
     except Exception as e:
         print(f"Error en migrate_schema_attendance_flags: {e}")
     finally:
         conn.close()
+
 
 def migrate_schema_multilevel():
     conn = db_conn()
@@ -378,6 +432,7 @@ def migrate_schema_multilevel():
     finally:
         conn.close()
 
+
 def migrate_schema_coordinators():
     conn = db_conn()
     cur = conn.cursor()
@@ -385,30 +440,32 @@ def migrate_schema_coordinators():
         cur.execute("PRAGMA table_info(users_app)")
         columns = [row[1] for row in cur.fetchall()]
         if "managed_department" not in columns:
-            cur.execute("ALTER TABLE users_app ADD COLUMN managed_department TEXT DEFAULT ''")
+            cur.execute(
+                "ALTER TABLE users_app ADD COLUMN managed_department TEXT DEFAULT ''"
+            )
             conn.commit()
-            
+
         if "emp_area" not in columns:
             cur.execute("ALTER TABLE users_app ADD COLUMN emp_area TEXT DEFAULT ''")
             conn.commit()
-            
+
         if "emp_subarea" not in columns:
             cur.execute("ALTER TABLE users_app ADD COLUMN emp_subarea TEXT DEFAULT ''")
             conn.commit()
-            
+
         if "emp_phone" not in columns:
             cur.execute("ALTER TABLE users_app ADD COLUMN emp_phone TEXT DEFAULT ''")
             conn.commit()
-            
+
         if "emp_email" not in columns:
             cur.execute("ALTER TABLE users_app ADD COLUMN emp_email TEXT DEFAULT ''")
             conn.commit()
-
 
     except Exception:
         pass
     finally:
         conn.close()
+
 
 def migrate_schema_for_profiles():
     conn = db_conn()
@@ -444,19 +501,23 @@ def migrate_schema_for_profiles():
         pass
     conn.close()
 
+
 def initialize_colombian_holidays(cur):
     start_year = datetime.now().year - 2
     end_year = datetime.now().year + 2
-    
+
     co_holidays = holidays.Colombia(years=range(start_year, end_year + 1))
-    
+
     for dt, name in sorted(co_holidays.items()):
         date_str = dt.strftime("%Y-%m-%d")
         try:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT OR IGNORE INTO holidays(date, description, created_at)
                 VALUES(?, ?, ?)
-            """, (date_str, name, datetime.now().isoformat(timespec="seconds")))
+            """,
+                (date_str, name, datetime.now().isoformat(timespec="seconds")),
+            )
         except Exception:
             pass
 
@@ -466,12 +527,16 @@ def initialize_colombian_holidays(cur):
     ]
     for date_str, name in custom_holidays:
         try:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT OR IGNORE INTO holidays(date, description, created_at)
                 VALUES(?, ?, ?)
-            """, (date_str, name, datetime.now().isoformat(timespec="seconds")))
+            """,
+                (date_str, name, datetime.now().isoformat(timespec="seconds")),
+            )
         except Exception:
             pass
+
 
 def initialize_predefined_shifts(cur):
     shifts = [
@@ -483,16 +548,50 @@ def initialize_predefined_shifts(cur):
         ("T - Tarde (Adm)", "15:00", "23:00", 0, 0, "", "", 0, "T"),
         ("RX1 - Día", "07:00", "19:00", 0, 0, "", "", 0, "RX1"),
         ("RX2 - Noche", "19:00", "07:00", 0, 0, "", "", 1, "RX2"),
-        ("OFICINA - Horario Partido", "08:00", "17:00", 0, 1, "12:00", "14:00", 0, "OFICINA"),
+        (
+            "OFICINA - Horario Partido",
+            "08:00",
+            "17:00",
+            0,
+            1,
+            "12:00",
+            "14:00",
+            0,
+            "OFICINA",
+        ),
         ("C - Corrido", "08:00", "16:00", 0, 0, "", "", 0, "C"),
-        ("L - Día Libre", "00:00", "00:00", 0, 0, "", "", 0, "L")
+        ("L - Día Libre", "00:00", "00:00", 0, 0, "", "", 0, "L"),
     ]
-    
-    for name, start, end, grace, has_break, break_start, break_end, is_overnight, code in shifts:
+
+    for (
+        name,
+        start,
+        end,
+        grace,
+        has_break,
+        break_start,
+        break_end,
+        is_overnight,
+        code,
+    ) in shifts:
         try:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT OR IGNORE INTO shifts(name, start_time, end_time, grace_minutes, has_break, break_start, break_end, is_overnight, shift_code, created_at)
                 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (name, start, end, grace, has_break, break_start, break_end, is_overnight, code, datetime.now().isoformat(timespec="seconds")))
+            """,
+                (
+                    name,
+                    start,
+                    end,
+                    grace,
+                    has_break,
+                    break_start,
+                    break_end,
+                    is_overnight,
+                    code,
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
         except Exception:
             pass

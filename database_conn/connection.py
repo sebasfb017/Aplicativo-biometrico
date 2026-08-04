@@ -14,6 +14,7 @@ else:
 
 DATA_DIR = os.path.dirname(DB_PATH)
 
+
 def db_conn():
     """Establece y retorna la conexión a la base de datos SQLite."""
     if not os.path.exists(DATA_DIR):
@@ -21,6 +22,7 @@ def db_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
     conn.execute("PRAGMA journal_mode=WAL;")
     return conn
+
 
 @contextmanager
 def db_session():
