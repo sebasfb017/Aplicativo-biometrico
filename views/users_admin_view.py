@@ -1,134 +1,209 @@
+from datetime import datetime
+
 import bcrypt
 import pandas as pd
 import streamlit as st
-from datetime import datetime
 
 from database_conn.connection import db_conn
+from database_conn.queries import get_all_employees, get_users_by_role
+from services.email_service import (
+    load_smtp_config,
+    save_smtp_config,
+    send_welcome_email,
+)
 from services.notifications import log_audit
-from database_conn.queries import get_users_by_role, get_all_employees
 from utils.auth import require_role, validate_password
 from utils.constants import AREA_MAPPING
-from services.email_service import load_smtp_config, save_smtp_config, send_welcome_email
+
 
 @st.dialog("✏️ Editar Usuario", width="large")
 def edit_user_dialog(username: str, emp_df: pd.DataFrame):
     conn = db_conn()
-    df_u = pd.read_sql_query("SELECT * FROM users_app WHERE username = ?", conn, params=(username,))
+    df_u = pd.read_sql_query(
+        "SELECT * FROM users_app WHERE username = ?", conn, params=(username,)
+    )
     conn.close()
-    
+
     if df_u.empty:
         st.error("Usuario no encontrado.")
         return
-        
+
     u = df_u.iloc[0]
-    
+
     st.markdown(f"### Editando ID/DNI: `{u['username']}`")
     st.markdown(f"**Nombre:** {u['full_name']}")
-    
+
     roles_list = ["admin", "nomina", "jefe_area", "coordinador", "empleado"]
-    rol_names = {"admin": "Administrador", "nomina": "Nómina/RRHH", "jefe_area": "Jefe de Área", "coordinador": "Coordinador", "empleado": "Auxiliar"}
-    role_idx = roles_list.index(u['role']) if u['role'] in roles_list else len(roles_list)-1
-    new_role = st.selectbox("Rol", roles_list, index=role_idx, format_func=lambda x: rol_names[x])
-    
+    rol_names = {
+        "admin": "Administrador",
+        "nomina": "Nómina/RRHH",
+        "jefe_area": "Jefe de Área",
+        "coordinador": "Coordinador",
+        "empleado": "Auxiliar",
+    }
+    role_idx = (
+        roles_list.index(u["role"]) if u["role"] in roles_list else len(roles_list) - 1
+    )
+    new_role = st.selectbox(
+        "Rol", roles_list, index=role_idx, format_func=lambda x: rol_names[x]
+    )
+
     all_subareas = []
     for subs in AREA_MAPPING.values():
         all_subareas.extend(subs)
     depts = sorted(list(set(all_subareas)))
-    
+
     # Recuperar las áreas actualmente a cargo del coordinador desde la base de datos
     # Como pueden ser múltiples, se separan por comas y se eliminan espacios extras
     current_managed_depts = []
-    if u.get('managed_department'):
-        current_managed_depts = [d.strip() for d in u['managed_department'].split(',') if d.strip()]
-        
+    if u.get("managed_department"):
+        current_managed_depts = [
+            d.strip() for d in u["managed_department"].split(",") if d.strip()
+        ]
+
     # Renderizar un componente de selección múltiple (multiselect) con todos los departamentos/sub-áreas
     new_managed_depts = st.multiselect(
-        "Departamento a Cargo (Aplica para Coordinadores)", 
-        options=depts, 
-        default=[d for d in current_managed_depts if d in depts]
+        "Departamento a Cargo (Aplica para Coordinadores)",
+        options=depts,
+        default=[d for d in current_managed_depts if d in depts],
     )
     # Volver a unir las áreas seleccionadas con comas para guardarlas como un solo string en la base de datos
     new_managed_dept = ", ".join(new_managed_depts)
-    
+
     areas_list = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
     area_idx = 0
-    if u.get('managed_area') in areas_list:
-        area_idx = areas_list.index(u['managed_area']) + 1
-        
-    new_managed_area = st.selectbox("Área a Cargo (Aplica para Jefes de Área)", options=[""] + areas_list, index=area_idx)
+    if u.get("managed_area") in areas_list:
+        area_idx = areas_list.index(u["managed_area"]) + 1
+
+    new_managed_area = st.selectbox(
+        "Área a Cargo (Aplica para Jefes de Área)",
+        options=[""] + areas_list,
+        index=area_idx,
+    )
 
     st.markdown("---")
     st.write("**Área y Sub-área del Empleado (Para el Portal)**")
-    
+
     current_area = u.get("emp_area")
-    if current_area not in AREA_MAPPING: current_area = "Administrativo"
-        
-    new_emp_area = st.selectbox("Área", list(AREA_MAPPING.keys()), index=list(AREA_MAPPING.keys()).index(current_area))
-    
+    if current_area not in AREA_MAPPING:
+        current_area = "Administrativo"
+
+    new_emp_area = st.selectbox(
+        "Área",
+        list(AREA_MAPPING.keys()),
+        index=list(AREA_MAPPING.keys()).index(current_area),
+    )
+
     current_subarea = u.get("emp_subarea")
-    if current_subarea not in AREA_MAPPING[new_emp_area]: current_subarea = AREA_MAPPING[new_emp_area][0]
-    
-    new_emp_subarea = st.selectbox("Sub-área / Cargo", AREA_MAPPING[new_emp_area], index=AREA_MAPPING[new_emp_area].index(current_subarea))
-    
+    if current_subarea not in AREA_MAPPING[new_emp_area]:
+        current_subarea = AREA_MAPPING[new_emp_area][0]
+
+    new_emp_subarea = st.selectbox(
+        "Sub-área / Cargo",
+        AREA_MAPPING[new_emp_area],
+        index=AREA_MAPPING[new_emp_area].index(current_subarea),
+    )
+
     st.markdown("---")
     st.write("**Datos de Contacto**")
     c3, c4 = st.columns(2)
     with c3:
         new_emp_phone = st.text_input("Teléfono Móvil", value=u.get("emp_phone", ""))
     with c4:
-        new_emp_email = st.text_input("Correo Electrónico", value=u.get("emp_email", ""))
-        
+        new_emp_email = st.text_input(
+            "Correo Electrónico", value=u.get("emp_email", "")
+        )
+
     st.markdown("---")
-    
+
     c1, c2 = st.columns(2)
     with c1:
-        new_active = st.checkbox("Activo (Puede iniciar sesión)", value=bool(u['active']))
+        new_active = st.checkbox(
+            "Activo (Puede iniciar sesión)", value=bool(u["active"])
+        )
     with c2:
-        new_pw = st.text_input("Nueva Contraseña (Dejar en blanco para no cambiar)", type="password")
-        
+        new_pw = st.text_input(
+            "Nueva Contraseña (Dejar en blanco para no cambiar)", type="password"
+        )
+
     submit_edit = st.button("Guardar Cambios", type="primary")
-        
+
     st.markdown("---")
     with st.expander("⚠️ Zona de Peligro"):
-        st.warning("Eliminar a este usuario revocará su acceso al sistema de forma permanente.")
-        confirm_delete = st.checkbox("Entiendo que esta acción es irreversible y quiero eliminar este usuario.")
-        submit_delete = st.button("🗑️ Eliminar Usuario", type="primary", disabled=not confirm_delete)
-        
+        st.warning(
+            "Eliminar a este usuario revocará su acceso al sistema de forma permanente."
+        )
+        confirm_delete = st.checkbox(
+            "Entiendo que esta acción es irreversible y quiero eliminar este usuario."
+        )
+        submit_delete = st.button(
+            "🗑️ Eliminar Usuario", type="primary", disabled=not confirm_delete
+        )
+
     if submit_edit:
         if new_role != "coordinador":
             new_managed_dept = ""
         if new_role != "jefe_area":
             new_managed_area = ""
-            
+
         conn = db_conn()
         cur = conn.cursor()
-        
+
         try:
             if new_pw:
                 is_valid, err_msg = validate_password(new_pw)
                 if not is_valid:
                     st.error(err_msg)
                     return
-                
+
                 pw_hash = bcrypt.hashpw(new_pw.encode("utf-8"), bcrypt.gensalt())
-                cur.execute("""
+                cur.execute(
+                    """
                     UPDATE users_app 
                     SET role = ?, managed_department = ?, active = ?, password_hash = ?, emp_area = ?, emp_subarea = ?, emp_phone = ?, emp_email = ?, managed_area = ?
                     WHERE username = ?
-                """, (new_role, new_managed_dept, 1 if new_active else 0, pw_hash, new_emp_area, new_emp_subarea, new_emp_phone, new_emp_email, new_managed_area, username))
+                """,
+                    (
+                        new_role,
+                        new_managed_dept,
+                        1 if new_active else 0,
+                        pw_hash,
+                        new_emp_area,
+                        new_emp_subarea,
+                        new_emp_phone,
+                        new_emp_email,
+                        new_managed_area,
+                        username,
+                    ),
+                )
             else:
-                cur.execute("""
+                cur.execute(
+                    """
                     UPDATE users_app 
                     SET role = ?, managed_department = ?, active = ?, emp_area = ?, emp_subarea = ?, emp_phone = ?, emp_email = ?, managed_area = ?
                     WHERE username = ?
-                """, (new_role, new_managed_dept, 1 if new_active else 0, new_emp_area, new_emp_subarea, new_emp_phone, new_emp_email, new_managed_area, username))
-                
+                """,
+                    (
+                        new_role,
+                        new_managed_dept,
+                        1 if new_active else 0,
+                        new_emp_area,
+                        new_emp_subarea,
+                        new_emp_phone,
+                        new_emp_email,
+                        new_managed_area,
+                        username,
+                    ),
+                )
+
             conn.commit()
             log_audit("EDIT_USER", f"Usuario actualizado: {username} (Rol: {new_role})")
             st.success("✅ Cambios guardados correctamente.")
-            get_users_by_role.clear() # Evitamos que el caché retenga data vieja
-            if "admin_users_table" in st.session_state: del st.session_state["admin_users_table"]
-            if "emp_users_table" in st.session_state: del st.session_state["emp_users_table"]
+            get_users_by_role.clear()  # Evitamos que el caché retenga data vieja
+            if "admin_users_table" in st.session_state:
+                del st.session_state["admin_users_table"]
+            if "emp_users_table" in st.session_state:
+                del st.session_state["emp_users_table"]
             st.rerun()
         except Exception as e:
             st.error(f"Error actualizando usuario: {e}")
@@ -143,64 +218,99 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
         conn.close()
         log_audit("DELETE_USER", f"Usuario eliminado del sistema: {username}")
         st.success(f"🗑️ Usuario {username} eliminado del sistema.")
-        get_users_by_role.clear() # Limpiamos el caché inmediatamente de la base de datos
-        if "admin_users_table" in st.session_state: del st.session_state["admin_users_table"]
-        if "emp_users_table" in st.session_state: del st.session_state["emp_users_table"]
+        get_users_by_role.clear()  # Limpiamos el caché inmediatamente de la base de datos
+        if "admin_users_table" in st.session_state:
+            del st.session_state["admin_users_table"]
+        if "emp_users_table" in st.session_state:
+            del st.session_state["emp_users_table"]
         st.rerun()
+
 
 def page_users_admin():
     require_role("admin", "nomina")
     st.title("👥 Gestión de Usuarios")
     st.write("Administra los accesos al portal de Nómina Dolormed.")
-    
+
     user_to_edit = None
-    
+
     is_admin = st.session_state.get("user", {}).get("role") == "admin"
     if is_admin:
-        tab1, tab2, tab3, tab_vac, tab4 = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados", "🏖️ Vacaciones", "⚙️ Servidor de Correos"])
+        tab1, tab2, tab3, tab_vac, tab4 = st.tabs(
+            [
+                "📝 Registrar Nuevo",
+                "👔 Portal Administrativo",
+                "🛠️ Portal Empleados",
+                "🏖️ Vacaciones",
+                "⚙️ Servidor de Correos",
+            ]
+        )
     else:
-        tab1, tab2, tab3, tab_vac = st.tabs(["📝 Registrar Nuevo", "👔 Portal Administrativo", "🛠️ Portal Empleados", "🏖️ Vacaciones"])
+        tab1, tab2, tab3, tab_vac = st.tabs(
+            [
+                "📝 Registrar Nuevo",
+                "👔 Portal Administrativo",
+                "🛠️ Portal Empleados",
+                "🏖️ Vacaciones",
+            ]
+        )
 
     with tab1:
         st.subheader("Datos del Nuevo Usuario")
         from database_conn.queries import get_cached_employees
+
         emp_df = get_cached_employees()
-        
+
         if emp_df.empty:
-            st.warning("No hay empleados en el directorio. Importa empleados primero antes de crear usuarios.")
+            st.warning(
+                "No hay empleados en el directorio. Importa empleados primero antes de crear usuarios."
+            )
         else:
             selected_emp = st.selectbox(
                 "Empleado (A quien se le creará el usuario)",
-                options=emp_df['user_id'].tolist(),
-                format_func=lambda uid: f"{uid} - {emp_df[emp_df['user_id']==uid]['full_name'].values[0]}"
+                options=emp_df["user_id"].tolist(),
+                format_func=lambda uid: (
+                    f"{uid} - {emp_df[emp_df['user_id'] == uid]['full_name'].values[0]}"
+                ),
             )
             roles_list = ["admin", "nomina", "jefe_area", "coordinador", "empleado"]
-            rol_names = {"admin": "Administrador", "nomina": "Nómina/RRHH", "jefe_area": "Jefe de Área", "coordinador": "Coordinador", "empleado": "Auxiliar"}
-            role = st.selectbox("Rol", roles_list, format_func=lambda x: rol_names.get(x, x))
-            
+            rol_names = {
+                "admin": "Administrador",
+                "nomina": "Nómina/RRHH",
+                "jefe_area": "Jefe de Área",
+                "coordinador": "Coordinador",
+                "empleado": "Auxiliar",
+            }
+            role = st.selectbox(
+                "Rol", roles_list, format_func=lambda x: rol_names.get(x, x)
+            )
+
             all_subareas = []
             for subs in AREA_MAPPING.values():
                 all_subareas.extend(subs)
             depts = sorted(list(set(all_subareas)))
-            managed_depts = st.multiselect("Departamento a Cargo (Solo aplica para Coordinadores)", options=depts)
+            managed_depts = st.multiselect(
+                "Departamento a Cargo (Solo aplica para Coordinadores)", options=depts
+            )
             managed_dept = ", ".join(managed_depts)
-            
+
             areas = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
-            managed_area = st.selectbox("Área a Cargo (Solo aplica para Jefes de Área)", options=[""] + areas)
-            
+            managed_area = st.selectbox(
+                "Área a Cargo (Solo aplica para Jefes de Área)", options=[""] + areas
+            )
+
             st.markdown("---")
             sel_area = st.selectbox("Área", list(AREA_MAPPING.keys()))
             sel_subarea = st.selectbox("Sub-área / Cargo", AREA_MAPPING[sel_area])
             st.markdown("---")
-            
+
             c_p1, c_p2 = st.columns(2)
             with c_p1:
                 new_phone = st.text_input("Teléfono Móvil (Opcional)")
             with c_p2:
                 new_email = st.text_input("Correo Electrónico (Opcional)")
-                
+
             st.markdown("---")
-            
+
             pw = st.text_input("Contraseña inicial", type="password")
             active = st.checkbox("Activo", value=True)
             submit = st.button("Crear / Actualizar Usuario", type="primary")
@@ -214,8 +324,10 @@ def page_users_admin():
                         st.error(err_msg)
                     else:
                         u = str(selected_emp).strip()
-                        full = emp_df[emp_df['user_id']==selected_emp]['full_name'].values[0]
-                    
+                        full = emp_df[emp_df["user_id"] == selected_emp][
+                            "full_name"
+                        ].values[0]
+
                     if role != "coordinador":
                         managed_dept = ""
                     if role != "jefe_area":
@@ -224,7 +336,8 @@ def page_users_admin():
                     pw_hash = bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt())
                     conn = db_conn()
                     cur = conn.cursor()
-                    cur.execute("""
+                    cur.execute(
+                        """
                         INSERT INTO users_app(username, full_name, role, password_hash, active, created_at, managed_department, emp_area, emp_subarea, emp_phone, emp_email, managed_area)
                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                         ON CONFLICT(username) DO UPDATE SET
@@ -238,78 +351,129 @@ def page_users_admin():
                             emp_phone=excluded.emp_phone,
                             emp_email=excluded.emp_email,
                             managed_area=excluded.managed_area
-                    """, (u, full, role, pw_hash, 1 if active else 0, datetime.now().isoformat(timespec="seconds"), managed_dept, sel_area, sel_subarea, new_phone, new_email, managed_area))
+                    """,
+                        (
+                            u,
+                            full,
+                            role,
+                            pw_hash,
+                            1 if active else 0,
+                            datetime.now().isoformat(timespec="seconds"),
+                            managed_dept,
+                            sel_area,
+                            sel_subarea,
+                            new_phone,
+                            new_email,
+                            managed_area,
+                        ),
+                    )
                     conn.commit()
                     conn.close()
-                    
-                    log_audit("CREATE_USER", f"Usuario creado/actualizado: {u} ({full}) con rol {role}")
-                    st.success(f"Usuario {u} ({full}) creado/actualizado correctamente.")
-                    
+
+                    log_audit(
+                        "CREATE_USER",
+                        f"Usuario creado/actualizado: {u} ({full}) con rol {role}",
+                    )
+                    st.success(
+                        f"Usuario {u} ({full}) creado/actualizado correctamente."
+                    )
+
                     if new_email and active:
                         st.info("Intentando enviar correo de bienvenida...")
                         ok, msg = send_welcome_email(new_email, full, u, pw)
                         if ok:
                             st.success("📧 Correo de bienvenida enviado exitosamente.")
                         else:
-                            st.warning(f"⚠️ El usuario fue creado, pero falló el envío del correo: {msg}")
-                            
+                            st.warning(
+                                f"⚠️ El usuario fue creado, pero falló el envío del correo: {msg}"
+                            )
+
                     get_users_by_role.clear()
 
     with tab2:
-        admin_df = get_users_by_role(['admin', 'nomina', 'jefe_area', 'coordinador'])
-    
+        admin_df = get_users_by_role(["admin", "nomina", "jefe_area", "coordinador"])
+
         if not admin_df.empty:
             admin_df_view = admin_df.copy()
-            admin_df_view['active'] = admin_df_view['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
-            
+            admin_df_view["active"] = admin_df_view["active"].apply(
+                lambda x: "✅ Sí" if x == 1 else "❌ No"
+            )
+
             def get_managed_entity(row):
                 # Retornar una lista de departamentos si es coordinador
-                if row['role'] == 'coordinador': 
-                    return [d.strip() for d in str(row['managed_department']).split(',') if d.strip()]
+                if row["role"] == "coordinador":
+                    return [
+                        d.strip()
+                        for d in str(row["managed_department"]).split(",")
+                        if d.strip()
+                    ]
                 # Retornar una lista con el área a cargo si es jefe de área
-                if row['role'] == 'jefe_area': 
-                    return [row['managed_area']] if row['managed_area'] else []
+                if row["role"] == "jefe_area":
+                    return [row["managed_area"]] if row["managed_area"] else []
                 return []
-                
-            admin_df_view['Depto. / Área a Cargo'] = admin_df_view.apply(get_managed_entity, axis=1)
-            
+
+            admin_df_view["Depto. / Área a Cargo"] = admin_df_view.apply(
+                get_managed_entity, axis=1
+            )
+
             # Convertir el rol a su nombre amigable y envolverlo en una lista para mostrarlo como chip
             rol_names = {
                 "admin": "Administrador",
                 "nomina": "Nómina/RRHH",
                 "jefe_area": "Jefe de Área",
                 "coordinador": "Coordinador",
-                "empleado": "Auxiliar"
+                "empleado": "Auxiliar",
             }
-            admin_df_view['role'] = admin_df_view['role'].apply(lambda r: [rol_names.get(r, r)] if r else [])
-            admin_df_view = admin_df_view[["username", "full_name", "role", "Depto. / Área a Cargo", "active", "created_at"]]
-            admin_df_view.columns = ["Usuario (DNI)", "Nombre Completo", "Rol", "Depto. / Área a Cargo", "Activo", "Creado el"]
-        
+            admin_df_view["role"] = admin_df_view["role"].apply(
+                lambda r: [rol_names.get(r, r)] if r else []
+            )
+            admin_df_view = admin_df_view[
+                [
+                    "username",
+                    "full_name",
+                    "role",
+                    "Depto. / Área a Cargo",
+                    "active",
+                    "created_at",
+                ]
+            ]
+            admin_df_view.columns = [
+                "Usuario (DNI)",
+                "Nombre Completo",
+                "Rol",
+                "Depto. / Área a Cargo",
+                "Activo",
+                "Creado el",
+            ]
+
             st.info("💡 Haz clic en una fila para editar o eliminar.")
-            
-            if 'last_processed_admin_user' not in st.session_state:
+
+            if "last_processed_admin_user" not in st.session_state:
                 st.session_state.last_processed_admin_user = None
-                
+
             event_admin = st.dataframe(
-                admin_df_view, use_container_width=True, hide_index=True, 
-                on_select="rerun", selection_mode="single-row", key="admin_users_table",
+                admin_df_view,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="admin_users_table",
                 column_config={
                     "Rol": st.column_config.ListColumn(
-                        "Rol",
-                        help="Rol del usuario en la plataforma"
+                        "Rol", help="Rol del usuario en la plataforma"
                     ),
                     "Depto. / Área a Cargo": st.column_config.ListColumn(
                         "Depto. / Área a Cargo",
-                        help="Departamentos o Áreas asignadas a cargo del usuario"
-                    )
-                }
+                        help="Departamentos o Áreas asignadas a cargo del usuario",
+                    ),
+                },
             )
-        
+
             if len(event_admin.selection.rows) > 0:
                 row_idx = event_admin.selection.rows[0]
                 if row_idx < len(admin_df):
-                    selected_username = str(admin_df.iloc[row_idx]["username"]) 
-                    
+                    selected_username = str(admin_df.iloc[row_idx]["username"])
+
                     if selected_username != st.session_state.last_processed_admin_user:
                         st.session_state.last_processed_admin_user = selected_username
                         user_to_edit = selected_username
@@ -317,41 +481,56 @@ def page_users_admin():
                 st.session_state.last_processed_admin_user = None
 
     with tab3:
-        emp_users_df = get_users_by_role(['empleado'])
-    
+        emp_users_df = get_users_by_role(["empleado"])
+
         if not emp_users_df.empty:
             emp_users_df_view = emp_users_df.copy()
-            emp_users_df_view['active'] = emp_users_df_view['active'].apply(lambda x: '✅ Sí' if x == 1 else '❌ No')
-            
+            emp_users_df_view["active"] = emp_users_df_view["active"].apply(
+                lambda x: "✅ Sí" if x == 1 else "❌ No"
+            )
+
             # Convertir las cadenas de Área y Sub-área a listas de un único elemento para que se rendericen como chips/etiquetas
-            emp_users_df_view['emp_area'] = emp_users_df_view['emp_area'].apply(lambda x: [x] if x else [])
-            emp_users_df_view['emp_subarea'] = emp_users_df_view['emp_subarea'].apply(lambda x: [x] if x else [])
-            
-            emp_users_df_view.columns = ["Usuario (DNI)", "Nombre Completo", "Área", "Sub-área", "Activo", "Creado el"]
-        
-            if 'last_processed_emp_user' not in st.session_state:
+            emp_users_df_view["emp_area"] = emp_users_df_view["emp_area"].apply(
+                lambda x: [x] if x else []
+            )
+            emp_users_df_view["emp_subarea"] = emp_users_df_view["emp_subarea"].apply(
+                lambda x: [x] if x else []
+            )
+
+            emp_users_df_view.columns = [
+                "Usuario (DNI)",
+                "Nombre Completo",
+                "Área",
+                "Sub-área",
+                "Activo",
+                "Creado el",
+            ]
+
+            if "last_processed_emp_user" not in st.session_state:
                 st.session_state.last_processed_emp_user = None
-                
+
             event_emp = st.dataframe(
-                emp_users_df_view, use_container_width=True, hide_index=True, 
-                on_select="rerun", selection_mode="single-row", key="emp_users_table",
+                emp_users_df_view,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="emp_users_table",
                 column_config={
                     "Área": st.column_config.ListColumn(
-                        "Área",
-                        help="Área principal del empleado"
+                        "Área", help="Área principal del empleado"
                     ),
                     "Sub-área": st.column_config.ListColumn(
-                        "Sub-área",
-                        help="Sub-área o cargo específico del empleado"
-                    )
-                }
+                        "Sub-área", help="Sub-área o cargo específico del empleado"
+                    ),
+                },
             )
-        
+
             if len(event_emp.selection.rows) > 0:
                 row_idx = event_emp.selection.rows[0]
                 if row_idx < len(emp_users_df):
                     selected_username = str(emp_users_df.iloc[row_idx]["username"])
-                    
+
                     if selected_username != st.session_state.last_processed_emp_user:
                         st.session_state.last_processed_emp_user = selected_username
                         if not user_to_edit:
@@ -362,152 +541,235 @@ def page_users_admin():
     if is_admin:
         with tab4:
             st.subheader("Configuración del Servidor de Correo (SMTP)")
-            st.write("Configura la cuenta de correo desde donde el sistema enviará las alertas y credenciales.")
-            
+            st.write(
+                "Configura la cuenta de correo desde donde el sistema enviará las alertas y credenciales."
+            )
+
             cfg = load_smtp_config()
             with st.form("smtp_form"):
-                s_host = st.text_input("Servidor SMTP (Ej. smtp.gmail.com)", value=cfg.get("smtp_server", "smtp.gmail.com"))
-                s_port = st.number_input("Puerto (Ej. 587 para TLS o 465 para SSL)", value=int(cfg.get("smtp_port", 587)), min_value=1)
+                s_host = st.text_input(
+                    "Servidor SMTP (Ej. smtp.gmail.com)",
+                    value=cfg.get("smtp_server", "smtp.gmail.com"),
+                )
+                s_port = st.number_input(
+                    "Puerto (Ej. 587 para TLS o 465 para SSL)",
+                    value=int(cfg.get("smtp_port", 587)),
+                    min_value=1,
+                )
                 s_user = st.text_input("Correo Emisor", value=cfg.get("smtp_user", ""))
-                s_pass = st.text_input("Contraseña del Correo (o Contraseña de Aplicación)", value=cfg.get("smtp_password", ""), type="password")
-                s_name = st.text_input("Nombre del Remitente", value=cfg.get("sender_name", "Nómina Dolormed"))
-                
-                st.info("Nota: Si usas un correo corporativo, ingresa tu contraseña normal. Si usas Gmail/Outlook, recuerda habilitar la Verificación en 2 Pasos y generar una 'Contraseña de Aplicación'.")
-                sub_smtp = st.form_submit_button("💾 Guardar Configuración", type="primary")
+                s_pass = st.text_input(
+                    "Contraseña del Correo (o Contraseña de Aplicación)",
+                    value=cfg.get("smtp_password", ""),
+                    type="password",
+                )
+                s_name = st.text_input(
+                    "Nombre del Remitente",
+                    value=cfg.get("sender_name", "Nómina Dolormed"),
+                )
+
+                st.info(
+                    "Nota: Si usas un correo corporativo, ingresa tu contraseña normal. Si usas Gmail/Outlook, recuerda habilitar la Verificación en 2 Pasos y generar una 'Contraseña de Aplicación'."
+                )
+                sub_smtp = st.form_submit_button(
+                    "💾 Guardar Configuración", type="primary"
+                )
                 if sub_smtp:
                     new_cfg = {
                         "smtp_server": s_host.strip(),
                         "smtp_port": s_port,
                         "smtp_user": s_user.strip(),
                         "smtp_password": s_pass.strip(),
-                        "sender_name": s_name.strip()
+                        "sender_name": s_name.strip(),
                     }
                     if save_smtp_config(new_cfg):
                         st.success("✅ Configuración SMTP guardada correctamente.")
                     else:
                         st.error("❌ Error al guardar la configuración.")
-                
+
             st.markdown("---")
             st.subheader("Herramientas de Diagnóstico")
             if st.button("🧪 Enviar Correo de Prueba"):
                 with st.spinner("Conectando al servidor SMTP..."):
                     from services.email_service import _send_email
+
                     test_email = cfg.get("smtp_user", "")
                     if not test_email:
                         st.warning("Debes guardar un correo emisor primero.")
                     else:
                         ok, msg = _send_email(
-                            test_email, 
-                            "Prueba de Conexión SMTP - Dolormed", 
-                            "<h1>¡Conexión Exitosa!</h1><p>Si recibes este correo, el servidor SMTP está configurado correctamente y enviando correos sin problemas.</p>"
+                            test_email,
+                            "Prueba de Conexión SMTP - Dolormed",
+                            "<h1>¡Conexión Exitosa!</h1><p>Si recibes este correo, el servidor SMTP está configurado correctamente y enviando correos sin problemas.</p>",
                         )
                         if ok:
-                            st.success(f"✅ ¡Éxito! El servidor se conectó y el correo de prueba fue enviado a {test_email}.")
+                            st.success(
+                                f"✅ ¡Éxito! El servidor se conectó y el correo de prueba fue enviado a {test_email}."
+                            )
                         else:
-                            st.error(f"❌ Falló el envío. El servidor arrojó el siguiente error:\n\n`{msg}`")
-                            
+                            st.error(
+                                f"❌ Falló el envío. El servidor arrojó el siguiente error:\n\n`{msg}`"
+                            )
+
     if user_to_edit:
         emp_df = get_all_employees()
         edit_user_dialog(user_to_edit, emp_df)
     with tab_vac:
         render_vacations_tab()
 
+
 def render_vacations_tab():
     st.subheader("🏖️ Control de Vacaciones")
     st.write("Gestiona el saldo de vacaciones y fechas de ingreso del personal.")
-    
+
     # Run accruals when they open this tab so it's always fresh!
     from database_conn.queries import db_run_vacation_accruals
+
     db_run_vacation_accruals()
-    
+
     conn = db_conn()
-    df_vac = pd.read_sql_query("SELECT username, full_name, role, hire_date, vacation_balance FROM users_app WHERE active = 1 ORDER BY full_name", conn)
+    df_vac = pd.read_sql_query(
+        "SELECT username, full_name, role, hire_date, vacation_balance FROM users_app WHERE active = 1 ORDER BY full_name",
+        conn,
+    )
     conn.close()
-    
+
     st.dataframe(df_vac, use_container_width=True, hide_index=True)
-    
+
     st.markdown("---")
     c1, c2 = st.columns(2)
     with c1:
         st.write("**Cargar Histórico desde Excel**")
-        st.write("Sube un archivo Excel con las columnas `Cédula`, `Fecha Ingreso` (YYYY-MM-DD) y `Días a Favor`.")
-        uploaded_file = st.file_uploader("Subir Archivo Excel", type=["xlsx", "xls"], key="vacation_excel")
+        st.write(
+            "Sube un archivo Excel con las columnas `Cédula`, `Fecha Ingreso` (YYYY-MM-DD) y `Días a Favor`."
+        )
+        uploaded_file = st.file_uploader(
+            "Subir Archivo Excel", type=["xlsx", "xls"], key="vacation_excel"
+        )
         if uploaded_file is not None:
             if st.button("Procesar Excel de Vacaciones"):
                 try:
                     df_upload = pd.read_excel(uploaded_file)
-                    df_upload.columns = [str(c).strip().lower() for c in df_upload.columns]
-                    
+                    df_upload.columns = [
+                        str(c).strip().lower() for c in df_upload.columns
+                    ]
+
                     conn = db_conn()
                     cur = conn.cursor()
                     success_count = 0
                     not_found = []
                     for _, row in df_upload.iterrows():
-                        cedula_col = [c for c in df_upload.columns if 'cédula' in c or 'cedula' in c or 'identificaci' in c]
-                        fecha_col = [c for c in df_upload.columns if 'fecha' in c and 'ingreso' in c]
-                        dias_col = [c for c in df_upload.columns if 'favor' in c or 'saldo' in c]
+                        cedula_col = [
+                            c
+                            for c in df_upload.columns
+                            if "cédula" in c or "cedula" in c or "identificaci" in c
+                        ]
+                        fecha_col = [
+                            c
+                            for c in df_upload.columns
+                            if "fecha" in c and "ingreso" in c
+                        ]
+                        dias_col = [
+                            c for c in df_upload.columns if "favor" in c or "saldo" in c
+                        ]
                         if not dias_col:
-                            dias_col = [c for c in df_upload.columns if 'días' in c or 'dias' in c]
-                        
+                            dias_col = [
+                                c
+                                for c in df_upload.columns
+                                if "días" in c or "dias" in c
+                            ]
+
                         if not cedula_col or not dias_col:
                             continue
-                            
+
                         cedula = str(row[cedula_col[0]]).strip()
-                        if not cedula or cedula == 'nan': continue
-                        if cedula.endswith('.0'):
-                            cedula = cedula[:-2]
-                        
-                        hire_date = row[fecha_col[0]] if fecha_col else ''
-                        if pd.isna(hire_date): hire_date = ''
+                        if not cedula or cedula == "nan":
+                            continue
+                        cedula = cedula.removesuffix(".0")
+
+                        hire_date = row[fecha_col[0]] if fecha_col else ""
+                        if pd.isna(hire_date):
+                            hire_date = ""
                         else:
                             try:
                                 from datetime import datetime
+
                                 if isinstance(hire_date, datetime):
                                     hire_date = hire_date.strftime("%Y-%m-%d")
                                 else:
                                     hire_date = str(hire_date)[:10]
-                            except:
-                                hire_date = ''
-                                
+                            except Exception:
+                                hire_date = ""
+
                         dias = row[dias_col[0]]
-                        if pd.isna(dias): dias = 0
-                        else: dias = int(dias)
-                        
+                        if pd.isna(dias):
+                            dias = 0
+                        else:
+                            dias = int(dias)
+
                         from datetime import datetime
-                        cur.execute("UPDATE users_app SET hire_date = ?, vacation_balance = ?, last_anniversary_year = ? WHERE username = ?", (hire_date, dias, datetime.now().year, cedula))
+
+                        cur.execute(
+                            "UPDATE users_app SET hire_date = ?, vacation_balance = ?, last_anniversary_year = ? WHERE username = ?",
+                            (hire_date, dias, datetime.now().year, cedula),
+                        )
                         if cur.rowcount > 0:
                             success_count += 1
                         else:
                             not_found.append(cedula)
-                            
+
                     conn.commit()
                     conn.close()
-                    st.success(f"✅ Se actualizaron los datos de {success_count} empleados.")
+                    st.success(
+                        f"✅ Se actualizaron los datos de {success_count} empleados."
+                    )
                     if not_found:
-                        st.warning(f"⚠️ Las siguientes {len(not_found)} cédulas están en el Excel pero no se encontraron en la base de datos o el sistema:\n\n" + ", ".join(not_found))
+                        st.warning(
+                            f"⚠️ Las siguientes {len(not_found)} cédulas están en el Excel pero no se encontraron en la base de datos o el sistema:\n\n"
+                            + ", ".join(not_found)
+                        )
                     import time
+
                     time.sleep(1.5)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error procesando el archivo: {e}")
-                    
+
     with c2:
         st.write("**Edición Manual Individual**")
-        selected_user = st.selectbox("Seleccionar Empleado", options=df_vac['username'].tolist(), format_func=lambda x: f"{x} - {df_vac[df_vac['username']==x]['full_name'].values[0]}")
-        
+        selected_user = st.selectbox(
+            "Seleccionar Empleado",
+            options=df_vac["username"].tolist(),
+            format_func=lambda x: (
+                f"{x} - {df_vac[df_vac['username'] == x]['full_name'].values[0]}"
+            ),
+        )
+
         if selected_user:
-            u_data = df_vac[df_vac['username'] == selected_user].iloc[0]
-            m_hire_date = st.text_input("Fecha de Ingreso (YYYY-MM-DD)", value=u_data['hire_date'] if pd.notna(u_data['hire_date']) else "")
-            m_balance = st.number_input("Días a Favor", value=int(u_data['vacation_balance']) if pd.notna(u_data['vacation_balance']) else 0)
-            
+            u_data = df_vac[df_vac["username"] == selected_user].iloc[0]
+            m_hire_date = st.text_input(
+                "Fecha de Ingreso (YYYY-MM-DD)",
+                value=u_data["hire_date"] if pd.notna(u_data["hire_date"]) else "",
+            )
+            m_balance = st.number_input(
+                "Días a Favor",
+                value=int(u_data["vacation_balance"])
+                if pd.notna(u_data["vacation_balance"])
+                else 0,
+            )
+
             if st.button("Guardar Cambios Manuales"):
                 conn = db_conn()
                 cur = conn.cursor()
                 from datetime import datetime
-                cur.execute("UPDATE users_app SET hire_date = ?, vacation_balance = ?, last_anniversary_year = ? WHERE username = ?", (m_hire_date, m_balance, datetime.now().year, selected_user))
+
+                cur.execute(
+                    "UPDATE users_app SET hire_date = ?, vacation_balance = ?, last_anniversary_year = ? WHERE username = ?",
+                    (m_hire_date, m_balance, datetime.now().year, selected_user),
+                )
                 conn.commit()
                 conn.close()
                 st.success("Cambios guardados exitosamente.")
                 import time
+
                 time.sleep(1)
                 st.rerun()

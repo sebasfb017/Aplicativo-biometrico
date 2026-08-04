@@ -1,15 +1,19 @@
 import os
+from datetime import date, datetime, timedelta
+
 import pandas as pd
 import streamlit as st
-from datetime import datetime, date, timedelta
 
 from database_conn.connection import db_session
-from database_conn.queries import is_holiday, get_shifts_df, upsert_shift, assign_shift
+from database_conn.queries import assign_shift, get_shifts_df, is_holiday, upsert_shift
 from utils.auth import require_role
+
 
 def default_schedules_path():
     from database_conn.connection import DATA_DIR
+
     return os.path.join(DATA_DIR, "default_schedules.csv")
+
 
 def ensure_schedules_columns():
     with db_session() as conn:
@@ -33,6 +37,7 @@ def ensure_schedules_columns():
                 except Exception:
                     pass
 
+
 def maybe_load_default_schedules():
     path = default_schedules_path()
     if not os.path.exists(path):
@@ -42,6 +47,7 @@ def maybe_load_default_schedules():
         upsert_schedule_df(df)
     except Exception:
         pass
+
 
 def upsert_schedule_df(df: pd.DataFrame):
     required = {"week_start", "dow", "start_time", "grace_minutes"}
@@ -56,9 +62,9 @@ def upsert_schedule_df(df: pd.DataFrame):
         raise ValueError("La columna 'dow' sólo puede tener valores entre 0 y 6")
 
     df["start_time"] = df["start_time"].astype(str).str.slice(0, 5)
-    for col in ["end_time","start_time_2","end_time_2"]:
+    for col in ["end_time", "start_time_2", "end_time_2"]:
         if col in df.columns:
-            df[col] = df[col].astype(str).str.slice(0,5)
+            df[col] = df[col].astype(str).str.slice(0, 5)
         else:
             df[col] = ""
     df["grace_minutes"] = df["grace_minutes"].fillna(0).astype(int)
@@ -68,9 +74,20 @@ def upsert_schedule_df(df: pd.DataFrame):
 
         # --- INSERCIÓN EN BLOQUE OPTIMIZADA (BULK INSERT) ---
         # Convertimos el DataFrame directly en unas tuplas
-        records = df[["week_start", "dow", "start_time", "end_time", "start_time_2", "end_time_2", "grace_minutes"]].itertuples(index=False, name=None)
+        records = df[
+            [
+                "week_start",
+                "dow",
+                "start_time",
+                "end_time",
+                "start_time_2",
+                "end_time_2",
+                "grace_minutes",
+            ]
+        ].itertuples(index=False, name=None)
 
-        cur.executemany("""
+        cur.executemany(
+            """
             INSERT INTO schedules(week_start, dow, start_time, end_time, start_time_2, end_time_2, grace_minutes)
             VALUES(?,?,?,?,?,?,?)
             ON CONFLICT(week_start, dow) DO UPDATE SET
@@ -79,93 +96,122 @@ def upsert_schedule_df(df: pd.DataFrame):
                 start_time_2=excluded.start_time_2,
                 end_time_2=excluded.end_time_2,
                 grace_minutes=excluded.grace_minutes
-        """, records)
+        """,
+            records,
+        )
+
 
 def resolve_shift_from_code(user_id: str, shift_code: str, week_start: str, dow: int):
     with db_session() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT profile_id FROM employees WHERE user_id = ?", (str(user_id),))
+        cur.execute(
+            "SELECT profile_id FROM employees WHERE user_id = ?", (str(user_id),)
+        )
         row = cur.fetchone()
-        
+
         if not row or not row[0]:
             return None
-        
+
         profile_id = row[0]
-        
+
         mapping = {
-            (1, "M"): "M - Mañana (Enf)", (1, "T"): "T - Tarde (Enf)", (1, "N"): "N - Noche (Enf)",
-            (2, "M"): "M - Mañana (Adm)", (2, "T"): "T - Tarde (Adm)",
-            (3, "RX1"): "RX1 - Día", (3, "RX2"): "RX2 - Noche",
-            (4, "OFICINA"): "OFICINA - Horario Partido", (4, "C"): "C - Corrido",
-            (1, "L"): "L - Día Libre", (2, "L"): "L - Día Libre", (3, "L"): "L - Día Libre", (4, "L"): "L - Día Libre",
+            (1, "M"): "M - Mañana (Enf)",
+            (1, "T"): "T - Tarde (Enf)",
+            (1, "N"): "N - Noche (Enf)",
+            (2, "M"): "M - Mañana (Adm)",
+            (2, "T"): "T - Tarde (Adm)",
+            (3, "RX1"): "RX1 - Día",
+            (3, "RX2"): "RX2 - Noche",
+            (4, "OFICINA"): "OFICINA - Horario Partido",
+            (4, "C"): "C - Corrido",
+            (1, "L"): "L - Día Libre",
+            (2, "L"): "L - Día Libre",
+            (3, "L"): "L - Día Libre",
+            (4, "L"): "L - Día Libre",
         }
-        
+
         shift_name = mapping.get((profile_id, shift_code))
         if not shift_name:
             return None
-        
+
         cur.execute("SELECT id FROM shifts WHERE name = ?", (shift_name,))
         row = cur.fetchone()
         return row[0] if row else None
-    
+
     return row[0] if row else None
+
 
 def upsert_shifts_from_code_csv(df: pd.DataFrame) -> dict:
     required = {"user_id", "week_start", "dow", "shift_code"}
     if not required.issubset(set(df.columns)):
         missing = required - set(df.columns)
         raise ValueError(f"Faltan columnas requeridas: {missing}")
-    
+
     df = df.copy()
     df["user_id"] = df["user_id"].astype(str)
     df["week_start"] = df["week_start"].astype(str)
     df["dow"] = df["dow"].astype(int)
     df["shift_code"] = df["shift_code"].astype(str).str.strip()
-    
+
     assigned = 0
     errors = []
     skipped_holidays = 0
-    
+
     for idx, r in df.iterrows():
         user_id = r["user_id"]
         week_start = r["week_start"]
         dow = int(r["dow"])
         shift_code = r["shift_code"]
-        
+
         if dow < 0 or dow > 6:
             errors.append(f"Fila {idx}: dow={dow} inválido (0-6)")
             continue
-        
+
         try:
             week_date = datetime.fromisoformat(week_start)
             target_date = (week_date + timedelta(days=dow)).date()
             if is_holiday(target_date):
                 with db_session() as conn:
                     cur = conn.cursor()
-                    cur.execute("SELECT profile_id FROM employees WHERE user_id = ?", (user_id,))
+                    cur.execute(
+                        "SELECT profile_id FROM employees WHERE user_id = ?", (user_id,)
+                    )
                     emp_row = cur.fetchone()
                     if emp_row and emp_row[0]:
-                        cur.execute("SELECT works_holidays FROM profiles WHERE profile_id = ?", (emp_row[0],))
+                        cur.execute(
+                            "SELECT works_holidays FROM profiles WHERE profile_id = ?",
+                            (emp_row[0],),
+                        )
                         prof_row = cur.fetchone()
-                        if prof_row and not prof_row[0]:  
+                        if prof_row and not prof_row[0]:
                             skipped_holidays += 1
                             continue
         except Exception:
             pass
-        
+
         shift_id = resolve_shift_from_code(user_id, shift_code, week_start, dow)
         if not shift_id:
-            errors.append(f"Fila {idx}: No se resolvió turno para {user_id} con código '{shift_code}'")
+            errors.append(
+                f"Fila {idx}: No se resolvió turno para {user_id} con código '{shift_code}'"
+            )
             continue
-        
+
         try:
             assign_shift(user_id, week_start, dow, shift_id)
             assigned += 1
         except Exception as e:
-            errors.append(f"Fila {idx}: Error asignando turno: {str(e)}")
-    return {"assigned": assigned, "skipped_holidays": skipped_holidays, "errors": errors, "success": len(errors) == 0}
+            errors.append(f"Fila {idx}: Error asignando turno: {e!s}")
+    return {
+        "assigned": assigned,
+        "skipped_holidays": skipped_holidays,
+        "errors": errors,
+        "success": len(errors) == 0,
+    }
 
-def generate_rotating_schedule(year: int, month: int, pattern: list[str], grace_minutes: int = 0) -> pd.DataFrame:
+
+def generate_rotating_schedule(
+    year: int, month: int, pattern: list[str], grace_minutes: int = 0
+) -> pd.DataFrame:
     first = date(year, month, 1)
     current = first
     if current.weekday() != 0:
@@ -183,26 +229,31 @@ def generate_rotating_schedule(year: int, month: int, pattern: list[str], grace_
             parts = second_part.split("-")
             start2 = parts[0]
             end2 = parts[1] if len(parts) > 1 else ""
-        for dow in range(0, 5): 
+        for dow in range(5):
             d = current + timedelta(days=dow)
             if d.month != month:
                 continue
-            rows.append({
-                "week_start": current.isoformat(),
-                "dow": dow,
-                "start_time": start1,
-                "end_time": end1,
-                "start_time_2": start2,
-                "end_time_2": end2,
-                "grace_minutes": grace_minutes,
-            })
+            rows.append(
+                {
+                    "week_start": current.isoformat(),
+                    "dow": dow,
+                    "start_time": start1,
+                    "end_time": end1,
+                    "start_time_2": start2,
+                    "end_time_2": end2,
+                    "grace_minutes": grace_minutes,
+                }
+            )
         idx += 1
         current += timedelta(days=7)
     return pd.DataFrame(rows)
 
+
 def auto_assign_shifts_from_schedules():
     with db_session() as conn:
-        sched_df = pd.read_sql_query("SELECT week_start,dow,start_time,grace_minutes FROM schedules", conn)
+        sched_df = pd.read_sql_query(
+            "SELECT week_start,dow,start_time,grace_minutes FROM schedules", conn
+        )
         emp_df = pd.read_sql_query("SELECT user_id FROM employees", conn)
     if sched_df.empty or emp_df.empty:
         return 0
@@ -216,16 +267,28 @@ def auto_assign_shifts_from_schedules():
             count += 1
     return count
 
+
 def page_schedules():
     require_role("admin", "nomina")
     st.title("🕒 Maestro de Horarios")
-    st.write("Configura y administra las rejillas horarias base para los empleados de Dolormed.")
+    st.write(
+        "Configura y administra las rejillas horarias base para los empleados de Dolormed."
+    )
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Horarios Actuales", "Carga por Códigos (CSV)", "Carga Detallada (CSV)", "Generador Automático"])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "Horarios Actuales",
+            "Carga por Códigos (CSV)",
+            "Carga Detallada (CSV)",
+            "Generador Automático",
+        ]
+    )
 
     with tab1:
         st.subheader("Matriz de Horarios")
-        st.info("Por defecto se muestran las últimas 52 semanas para evitar lentitud. Activa la opción para ver el historial completo.")
+        st.info(
+            "Por defecto se muestran las últimas 52 semanas para evitar lentitud. Activa la opción para ver el historial completo."
+        )
         load_all = st.checkbox("Cargar todos los registros históricos", value=False)
 
         with db_session() as conn:
@@ -233,12 +296,13 @@ def page_schedules():
                 cutoff = (date.today() - timedelta(weeks=52)).isoformat()
                 sch = pd.read_sql_query(
                     "SELECT week_start,dow,start_time,end_time,start_time_2,end_time_2,grace_minutes FROM schedules WHERE week_start >= ? ORDER BY week_start,dow",
-                    conn, params=(cutoff,)
+                    conn,
+                    params=(cutoff,),
                 )
             else:
                 sch = pd.read_sql_query(
                     "SELECT week_start,dow,start_time,end_time,start_time_2,end_time_2,grace_minutes FROM schedules ORDER BY week_start,dow",
-                    conn
+                    conn,
                 )
 
         if sch.empty:
@@ -246,12 +310,23 @@ def page_schedules():
         else:
             max_edit_rows = 1000
             if len(sch) > max_edit_rows:
-                st.warning(f"Mostrando preview de {max_edit_rows} filas debido al tamaño ({len(sch)} total). Descarga el CSV para editar masivamente.")
-                st.dataframe(sch.head(max_edit_rows), use_container_width=True, hide_index=True)
+                st.warning(
+                    f"Mostrando preview de {max_edit_rows} filas debido al tamaño ({len(sch)} total). Descarga el CSV para editar masivamente."
+                )
+                st.dataframe(
+                    sch.head(max_edit_rows), use_container_width=True, hide_index=True
+                )
                 csv_bytes = sch.to_csv(index=False).encode("utf-8")
-                st.download_button("📥 Descargar Tabla Completa (CSV)", data=csv_bytes, file_name="horarios_completos.csv", mime="application/octet-stream")
+                st.download_button(
+                    "📥 Descargar Tabla Completa (CSV)",
+                    data=csv_bytes,
+                    file_name="horarios_completos.csv",
+                    mime="application/octet-stream",
+                )
             else:
-                edited = st.data_editor(sch, num_rows="dynamic", use_container_width=True)
+                edited = st.data_editor(
+                    sch, num_rows="dynamic", use_container_width=True
+                )
                 if st.button("Guardar Cambios en Pantalla", type="primary"):
                     try:
                         upsert_schedule_df(edited)
@@ -262,24 +337,32 @@ def page_schedules():
             st.write("---")
             if st.button("Asincronizar (Auto-asignar) Turnos base"):
                 count = auto_assign_shifts_from_schedules()
-                st.success(f"Proceso concluido. {count} turnos re-asignados a perfiles.")
+                st.success(
+                    f"Proceso concluido. {count} turnos re-asignados a perfiles."
+                )
 
     with tab2:
         st.subheader("Carga Rápida por Códigos")
-        st.write("Sube tu plantilla de programación usando códigos simples (`M, T, N, OFICINA, L, etc.`).")
+        st.write(
+            "Sube tu plantilla de programación usando códigos simples (`M, T, N, OFICINA, L, etc.`)."
+        )
         st.markdown("**Columnas requeridas:** `user_id, week_start, dow, shift_code`")
-        
-        csv_shifts = st.file_uploader("Arrastra tu archivo CSV aquí...", type=["csv"], key="shifts_code")
+
+        csv_shifts = st.file_uploader(
+            "Arrastra tu archivo CSV aquí...", type=["csv"], key="shifts_code"
+        )
         if csv_shifts is not None:
             df_shifts = pd.read_csv(csv_shifts)
             try:
                 result = upsert_shifts_from_code_csv(df_shifts)
                 st.success(f"✅ Se han procesado {result['assigned']} asignaciones.")
-                if result['skipped_holidays']:
-                    st.info(f"⏭️ {result['skipped_holidays']} turnos ignorados por reglas de festivos del perfil.")
-                if result['errors']:
+                if result["skipped_holidays"]:
+                    st.info(
+                        f"⏭️ {result['skipped_holidays']} turnos ignorados por reglas de festivos del perfil."
+                    )
+                if result["errors"]:
                     with st.expander("⚠️ Ver lista de errores encontrados"):
-                        for err in result['errors']:
+                        for err in result["errors"]:
                             st.write(f"- {err}")
             except Exception as e:
                 st.error(f"El archivo tiene un formato inválido: {e}")
@@ -288,7 +371,7 @@ def page_schedules():
         st.subheader("Carga y Predeterminados")
         path = default_schedules_path()
         if os.path.exists(path):
-            st.success(f"Platilla por defecto activa en el sistema.")
+            st.success("Platilla por defecto activa en el sistema.")
             if st.button("Forzar Restauración de Plantilla"):
                 try:
                     df_def = pd.read_csv(path)
@@ -299,8 +382,12 @@ def page_schedules():
         else:
             st.info("Sin plantilla base configurada.")
 
-        st.markdown("**Sube una actualización manual:** Columnas: `week_start,dow,start_time,end_time...`")
-        csv_file = st.file_uploader("Archivo de horarios absolutos", type=["csv"], key="sched_abs")
+        st.markdown(
+            "**Sube una actualización manual:** Columnas: `week_start,dow,start_time,end_time...`"
+        )
+        csv_file = st.file_uploader(
+            "Archivo de horarios absolutos", type=["csv"], key="sched_abs"
+        )
         if csv_file is not None:
             df = pd.read_csv(csv_file)
             try:
@@ -308,6 +395,7 @@ def page_schedules():
                 st.success("Registros procesados.")
                 if st.button("Establecer como Plantilla Definitiva"):
                     from database_conn.connection import DATA_DIR
+
                     os.makedirs(DATA_DIR, exist_ok=True)
                     df.to_csv(default_schedules_path(), index=False)
                     st.success("Guardado como plantilla por defecto.")
@@ -318,16 +406,24 @@ def page_schedules():
         st.subheader("Asistente Rotativo Semanal")
         colA, colB = st.columns(2)
         with colA:
-            gen_year = st.number_input("Año", min_value=2020, max_value=2100, value=date.today().year)
-            pattern_str = st.text_input("Patrón Horario (ej. 08:00,07:30)", value="08:00,07:30")
+            gen_year = st.number_input(
+                "Año", min_value=2020, max_value=2100, value=date.today().year
+            )
+            pattern_str = st.text_input(
+                "Patrón Horario (ej. 08:00,07:30)", value="08:00,07:30"
+            )
         with colB:
-            gen_month = st.number_input("Mes", min_value=1, max_value=12, value=date.today().month)
+            gen_month = st.number_input(
+                "Mes", min_value=1, max_value=12, value=date.today().month
+            )
             grace = st.number_input("Tolerancia (Mins)", min_value=0, value=10)
 
         if st.button("Procesar Mes Completo"):
             try:
                 pattern = [s.strip() for s in pattern_str.split(",") if s.strip()]
-                df = generate_rotating_schedule(int(gen_year), int(gen_month), pattern, int(grace))
+                df = generate_rotating_schedule(
+                    int(gen_year), int(gen_month), pattern, int(grace)
+                )
                 if df.empty:
                     st.warning("Verifica los parámetros. No se generó data.")
                 else:
@@ -338,10 +434,13 @@ def page_schedules():
 
     ensure_schedules_columns()
 
+
 def page_shifts():
     require_role("admin", "nomina")
     st.title("🏭 Catálogo de Turnos Dolormed")
-    st.write("Crea bloques horarios reutilizables (ej: Mañana Enfermería, Tarde, Noche, etc).")
+    st.write(
+        "Crea bloques horarios reutilizables (ej: Mañana Enfermería, Tarde, Noche, etc)."
+    )
 
     with st.form("create_shift"):
         sname = st.text_input("Nombre del turno")
@@ -387,13 +486,16 @@ def page_shifts():
         st.markdown("### Turnos existentes")
         st.dataframe(shifts_df, use_container_width=True)
 
+
 def page_assign_shifts():
     require_role("admin", "nomina")
     st.title("📝 Asignación Manual de Turnos")
-    st.write("Configura y fuerza horarios específicos para tus empleados de forma visual.")
+    st.write(
+        "Configura y fuerza horarios específicos para tus empleados de forma visual."
+    )
 
     today = date.today()
-    default_week_start = (today - timedelta(days=today.weekday()))
+    default_week_start = today - timedelta(days=today.weekday())
 
     # Cargar catálogo de turnos
     shifts_df = get_shifts_df()
@@ -402,20 +504,26 @@ def page_assign_shifts():
         return
 
     # Filtrar solo los turnos solicitados por el usuario
-    manual_names = {'semana 1', 'semana 2', 'sabado', 'semana 1_l', 'semana 2_v'}
-    shifts_df = shifts_df[shifts_df['name'].str.lower().str.strip().isin(manual_names)]
+    manual_names = {"semana 1", "semana 2", "sabado", "semana 1_l", "semana 2_v"}
+    shifts_df = shifts_df[shifts_df["name"].str.lower().str.strip().isin(manual_names)]
 
     if shifts_df.empty:
-        st.warning("No se encontraron los turnos manuales requeridos (Semana 1, Semana 2, Sabado, Semana 1_L, Semana 2_V).")
+        st.warning(
+            "No se encontraron los turnos manuales requeridos (Semana 1, Semana 2, Sabado, Semana 1_L, Semana 2_V)."
+        )
         return
 
     # Inicializar selección de turno en session_state
-    if "selected_shift_id" not in st.session_state or st.session_state.selected_shift_id not in shifts_df['id'].values:
-        st.session_state.selected_shift_id = int(shifts_df.iloc[0]['id'])
-        st.session_state.selected_shift_name = shifts_df.iloc[0]['name']
+    if (
+        "selected_shift_id" not in st.session_state
+        or st.session_state.selected_shift_id not in shifts_df["id"].values
+    ):
+        st.session_state.selected_shift_id = int(shifts_df.iloc[0]["id"])
+        st.session_state.selected_shift_name = shifts_df.iloc[0]["name"]
 
     # Estilos CSS para las tarjetas del catálogo
-    st.markdown("""
+    st.markdown(
+        """
     <style>
     .shift-card {
         border: 1px solid rgba(128,128,128,0.2);
@@ -449,128 +557,170 @@ def page_assign_shifts():
     .badge-grace { background: rgba(13,110,253,0.12); color: #0d6efd; border: 1px solid rgba(13,110,253,0.25); }
     .badge-night { background: rgba(220,53,69,0.12); color: #dc3545; border: 1px solid rgba(220,53,69,0.25); }
     </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     col_setup, col_catalog = st.columns([1.1, 0.9])
 
     with col_setup:
         st.subheader("1. Destinatarios y Fechas")
-        
+
         # Cargar empleados
         from database_conn.queries import get_cached_employees
+
         emp_df = get_cached_employees()
-        
+
         if emp_df.empty:
             st.warning("No hay empleados en el directorio.")
             return
 
-        depts = sorted([d for d in emp_df['department'].unique() if d])
-        dept_sel = st.selectbox("Filtrar por Área/Departamento", options=["Todos los Departamentos"] + depts)
+        depts = sorted([d for d in emp_df["department"].unique() if d])
+        dept_sel = st.selectbox(
+            "Filtrar por Área/Departamento", options=["Todos los Departamentos"] + depts
+        )
 
         if dept_sel != "Todos los Departamentos":
-            emp_df_filtered = emp_df[emp_df['department'] == dept_sel]
+            emp_df_filtered = emp_df[emp_df["department"] == dept_sel]
         else:
             emp_df_filtered = emp_df
 
-        apply_all = st.checkbox("Asignar masivamente a todos los filtrados", value=False)
+        apply_all = st.checkbox(
+            "Asignar masivamente a todos los filtrados", value=False
+        )
         if apply_all:
-            selected_emps = emp_df_filtered['user_id'].tolist()
-            st.success(f"✅ {len(selected_emps)} empleados seleccionados automáticamente.")
+            selected_emps = emp_df_filtered["user_id"].tolist()
+            st.success(
+                f"✅ {len(selected_emps)} empleados seleccionados automáticamente."
+            )
         else:
             selected_emps = st.multiselect(
                 "Seleccionar Empleados:",
-                options=emp_df_filtered['user_id'].tolist(),
-                format_func=lambda uid: f"{uid} - {emp_df_filtered[emp_df_filtered['user_id']==uid]['full_name'].values[0]}"
+                options=emp_df_filtered["user_id"].tolist(),
+                format_func=lambda uid: (
+                    f"{uid} - {emp_df_filtered[emp_df_filtered['user_id'] == uid]['full_name'].values[0]}"
+                ),
             )
 
         st.markdown("---")
-        
+
         # Modo de Selección de Fechas
         date_mode = st.radio(
             "Modo de Selección de Fechas:",
-            ["📅 Rango de Fechas (Calendario)", "📆 Semanas Específicas (Multiselección)"],
-            horizontal=True
+            [
+                "📅 Rango de Fechas (Calendario)",
+                "📆 Semanas Específicas (Multiselección)",
+            ],
+            horizontal=True,
         )
-        
+
         if date_mode == "📅 Rango de Fechas (Calendario)":
             default_range = (today, today + timedelta(days=4))
             date_range = st.date_input(
                 "Seleccionar Rango de Fechas en el Calendario",
                 value=default_range,
-                help="Selecciona el día de inicio y el día de fin del rango."
+                help="Selecciona el día de inicio y el día de fin del rango.",
             )
             selected_weeks = None
         else:
-            available_weeks = [(default_week_start + timedelta(weeks=i)) for i in range(-4, 13)]
+            available_weeks = [
+                (default_week_start + timedelta(weeks=i)) for i in range(-4, 13)
+            ]
             selected_weeks = st.multiselect(
                 "Seleccionar Semanas a Asignar",
                 options=available_weeks,
                 default=[default_week_start],
-                format_func=lambda d: f"Semana del Lunes {d.strftime('%d/%m/%Y')}"
+                format_func=lambda d: f"Semana del Lunes {d.strftime('%d/%m/%Y')}",
             )
             date_range = None
-        
+
         dow_sel = st.multiselect(
             "Días de la Semana a aplicar",
-            options=[0,1,2,3,4,5,6],
-            default=[0,1,2,3,4],
-            format_func=lambda x: ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"][x]
+            options=[0, 1, 2, 3, 4, 5, 6],
+            default=[0, 1, 2, 3, 4],
+            format_func=lambda x: [
+                "Lunes",
+                "Martes",
+                "Miércoles",
+                "Jueves",
+                "Viernes",
+                "Sábado",
+                "Domingo",
+            ][x],
         )
 
     with col_catalog:
         st.subheader("2. Seleccionar Turno")
-        st.write(f"Turno actual seleccionado: **{st.session_state.selected_shift_name}**")
-        
+        st.write(
+            f"Turno actual seleccionado: **{st.session_state.selected_shift_name}**"
+        )
+
         # Renderizado en Grid de Tarjetas (Cards)
         cols_cards = st.columns(2)
         for idx, row in shifts_df.reset_index(drop=True).iterrows():
             c_idx = idx % 2
             with cols_cards[c_idx]:
-                s_id = int(row['id'])
+                s_id = int(row["id"])
                 is_selected = s_id == st.session_state.selected_shift_id
                 selected_class = "selected" if is_selected else ""
-                
+
                 # Crear badges HTML
                 badges_html = ""
-                if row['has_break']:
+                if row["has_break"]:
                     badges_html += f'<span class="shift-badge badge-break">☕ Break: {row["break_start"]} - {row["break_end"]}</span>'
-                if row['grace_minutes'] > 0:
+                if row["grace_minutes"] > 0:
                     badges_html += f'<span class="shift-badge badge-grace">⏱️ Gracia: {row["grace_minutes"]}m</span>'
-                if row['is_overnight']:
-                    badges_html += f'<span class="shift-badge badge-night">🌙 Nocturno</span>'
-                
+                if row["is_overnight"]:
+                    badges_html += (
+                        '<span class="shift-badge badge-night">🌙 Nocturno</span>'
+                    )
+
                 card_html = f"""
                 <div class="shift-card {selected_class}">
-                    <div class="shift-card-title">{row['name']}</div>
-                    <div style="font-size:0.85rem; font-weight:500; opacity:0.8;">🕒 Horario: {row['start_time']} - {row['end_time'] if row['end_time'] else 'Indefinido'}</div>
+                    <div class="shift-card-title">{row["name"]}</div>
+                    <div style="font-size:0.85rem; font-weight:500; opacity:0.8;">🕒 Horario: {row["start_time"]} - {row["end_time"] if row["end_time"] else "Indefinido"}</div>
                     <div style="margin-top: 5px; height: 45px; overflow: hidden;">{badges_html}</div>
                 </div>
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
-                
+
                 btn_label = "✅ Seleccionado" if is_selected else "Seleccionar"
                 btn_type = "primary" if is_selected else "secondary"
-                if st.button(btn_label, key=f"btn_sel_s_{s_id}", type=btn_type, use_container_width=True):
+                if st.button(
+                    btn_label,
+                    key=f"btn_sel_s_{s_id}",
+                    type=btn_type,
+                    use_container_width=True,
+                ):
                     st.session_state.selected_shift_id = s_id
-                    st.session_state.selected_shift_name = row['name']
+                    st.session_state.selected_shift_name = row["name"]
                     st.rerun()
 
     st.markdown("---")
-    
+
     # Botón de envío
-    if st.button("Aplicar Asignación Directa", type="primary", use_container_width=True):
+    if st.button(
+        "Aplicar Asignación Directa", type="primary", use_container_width=True
+    ):
         if not selected_emps:
             st.error("Debes incluir al menos un empleado.")
         elif not dow_sel:
             st.error("Debes incluir al menos un día de la semana para aplicar.")
-        elif date_mode == "📅 Rango de Fechas (Calendario)" and (not isinstance(date_range, (tuple, list)) or len(date_range) < 2):
-            st.error("Debes seleccionar un rango de fechas válido (haz clic en el día de inicio y luego en el día de fin del rango).")
-        elif date_mode == "📆 Semanas Específicas (Multiselección)" and not selected_weeks:
+        elif date_mode == "📅 Rango de Fechas (Calendario)" and (
+            not isinstance(date_range, (tuple, list)) or len(date_range) < 2
+        ):
+            st.error(
+                "Debes seleccionar un rango de fechas válido (haz clic en el día de inicio y luego en el día de fin del rango)."
+            )
+        elif (
+            date_mode == "📆 Semanas Específicas (Multiselección)"
+            and not selected_weeks
+        ):
             st.error("Debes seleccionar al menos una semana.")
         else:
             sid = st.session_state.selected_shift_id
             assigned_count = 0
-            
+
             if date_mode == "📅 Rango de Fechas (Calendario)":
                 start_date, end_date = date_range[0], date_range[1]
                 current_d = start_date
@@ -583,53 +733,81 @@ def page_assign_shifts():
                                 assign_shift(uid, week_start, int(dow), sid)
                                 assigned_count += 1
                         current_d += timedelta(days=1)
-                st.success(f"✅ Se han asignado {assigned_count} turnos correspondientes al rango {start_date.strftime('%d/%m/%Y')} al {end_date.strftime('%d/%m/%Y')}.")
+                st.success(
+                    f"✅ Se han asignado {assigned_count} turnos correspondientes al rango {start_date.strftime('%d/%m/%Y')} al {end_date.strftime('%d/%m/%Y')}."
+                )
             else:
                 with st.spinner("Procesando asignación por semanas..."):
                     for w_start in selected_weeks:
-                        ws_iso = (w_start - timedelta(days=w_start.weekday())).isoformat()
+                        ws_iso = (
+                            w_start - timedelta(days=w_start.weekday())
+                        ).isoformat()
                         for uid in selected_emps:
                             for dow in dow_sel:
                                 assign_shift(uid, ws_iso, int(dow), sid)
                                 assigned_count += 1
-                st.success(f"✅ Se han asignado {assigned_count} turnos correspondientes a {len(selected_weeks)} semana(s).")
+                st.success(
+                    f"✅ Se han asignado {assigned_count} turnos correspondientes a {len(selected_weeks)} semana(s)."
+                )
 
     st.markdown("---")
     st.subheader("✨ Asignación Mágica (Clonar Semana)")
-    st.write("Copia los turnos de una semana origen a la(s) siguiente(s) para evitar registrar uno por uno.")
-    
+    st.write(
+        "Copia los turnos de una semana origen a la(s) siguiente(s) para evitar registrar uno por uno."
+    )
+
     col_clone1, col_clone2 = st.columns(2)
     with col_clone1:
-        source_week = st.date_input("Semana Base a Copiar (Automáticamente toma Lunes)", value=default_week_start - timedelta(days=7))
+        source_week = st.date_input(
+            "Semana Base a Copiar (Automáticamente toma Lunes)",
+            value=default_week_start - timedelta(days=7),
+        )
     with col_clone2:
-        target_weeks = st.number_input("¿Semanas a generar hacia adelante?", min_value=1, max_value=12, value=1)
-        
+        target_weeks = st.number_input(
+            "¿Semanas a generar hacia adelante?", min_value=1, max_value=12, value=1
+        )
+
     if st.button("🚀 Iniciar Clonación", type="primary"):
-        ws_source_iso = (source_week - timedelta(days=source_week.weekday())).isoformat()
-        
+        ws_source_iso = (
+            source_week - timedelta(days=source_week.weekday())
+        ).isoformat()
+
         with db_session() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT user_id, dow, shift_id FROM shift_assignments WHERE week_start = ?", (ws_source_iso,))
+            cur.execute(
+                "SELECT user_id, dow, shift_id FROM shift_assignments WHERE week_start = ?",
+                (ws_source_iso,),
+            )
             source_assignments = cur.fetchall()
-        
+
         if not source_assignments:
             st.warning(f"No hay turnos asignados en la semana del {ws_source_iso}.")
         else:
             inserted = 0
             for i in range(1, target_weeks + 1):
-                target_week_iso = (source_week - timedelta(days=source_week.weekday()) + timedelta(weeks=i)).isoformat()
+                target_week_iso = (
+                    source_week
+                    - timedelta(days=source_week.weekday())
+                    + timedelta(weeks=i)
+                ).isoformat()
                 for uid, dow, shift_iid in source_assignments:
                     assign_shift(uid, target_week_iso, dow, shift_iid)
                     inserted += 1
-            st.success(f"¡Magia completada! Se clonaron {inserted} asignaciones hacia {target_weeks} semana(s) destino.")
+            st.success(
+                f"¡Magia completada! Se clonaron {inserted} asignaciones hacia {target_weeks} semana(s) destino."
+            )
 
-import io
+
 import calendar
+import io
+
 
 def page_bulk_assign_shifts():
     st.title("📥 Carga Masiva de Turnos (Mensual)")
-    st.write("Sube la sábana de turnos del mes completo utilizando Nomenclatura Estándar.")
-    
+    st.write(
+        "Sube la sábana de turnos del mes completo utilizando Nomenclatura Estándar."
+    )
+
     with st.expander("📖 Ver Nomenclatura de Códigos Válidos", expanded=True):
         st.markdown("""
         **Códigos de Turno (Horarios):**
@@ -679,9 +857,24 @@ def page_bulk_assign_shifts():
     colA, colB = st.columns(2)
     with colA:
         current_year = date.today().year
-        sel_year = st.number_input("Año", min_value=2020, max_value=2030, value=current_year)
+        sel_year = st.number_input(
+            "Año", min_value=2020, max_value=2030, value=current_year
+        )
     with colB:
-        meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+        meses = [
+            "Enero",
+            "Febrero",
+            "Marzo",
+            "Abril",
+            "Mayo",
+            "Junio",
+            "Julio",
+            "Agosto",
+            "Septiembre",
+            "Octubre",
+            "Noviembre",
+            "Diciembre",
+        ]
         current_month_idx = date.today().month - 1
         sel_month_str = st.selectbox("Mes", options=meses, index=current_month_idx)
         sel_month = meses.index(sel_month_str) + 1
@@ -694,87 +887,325 @@ def page_bulk_assign_shifts():
     # Fila de ejemplo
     example_row = ["10203040"] + ["M", "M", "T", "L", "N"] + [""] * (num_days - 5)
     df_template.loc[0] = example_row
-    
+
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df_template.to_excel(writer, index=False, sheet_name='Plantilla')
-    
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df_template.to_excel(writer, index=False, sheet_name="Plantilla")
+
     st.download_button(
         label="⬇️ Descargar Plantilla Ejemplo (.xlsx)",
         data=buffer.getvalue(),
         file_name="plantilla_turnos_asistencial.xlsx",
-        mime="application/octet-stream"
+        mime="application/octet-stream",
     )
-    
+
     st.markdown("### 3. Sube tu archivo diligenciado")
     uploaded_file = st.file_uploader("Arrastra aquí el archivo Excel", type=["xlsx"])
     if uploaded_file is not None:
         try:
-            df = pd.read_excel(uploaded_file, engine='openpyxl')
+            df = pd.read_excel(uploaded_file, engine="openpyxl")
             st.dataframe(df.head(), use_container_width=True)
-            if st.button(f"🚀 Procesar y Asignar Turnos de {sel_month_str} {sel_year}", type="primary"):
+            if st.button(
+                f"🚀 Procesar y Asignar Turnos de {sel_month_str} {sel_year}",
+                type="primary",
+            ):
                 with st.spinner(f"Procesando todo el mes de {sel_month_str}..."):
                     process_bulk_shifts(df, sel_year, sel_month, num_days)
         except Exception as e:
             st.error(f"Error procesando el archivo: {e}")
 
+
 def process_bulk_shifts(df, year, month, num_days):
     # Flexible validation: must contain Cedula and columns 1 to num_days
     str_cols = [str(c) for c in df.columns]
-    
+
     # Buscar columna Cedula ignorando mayúsculas
     cedula_col = None
     for c in df.columns:
         if str(c).strip().lower() in ["cedula", "cédula"]:
             cedula_col = c
             break
-            
+
     if not cedula_col:
         st.error("El Excel no tiene la columna 'Cedula'. Por favor usa la plantilla.")
         return
-        
+
     missing_days = []
     for d in range(1, num_days + 1):
         # Allow column names as integers or strings
         if d not in df.columns and str(d) not in df.columns:
             missing_days.append(str(d))
-            
+
     if missing_days:
-        st.error(f"El Excel no tiene columnas para los días: {', '.join(missing_days)}. Deben ser números del 1 al {num_days}.")
+        st.error(
+            f"El Excel no tiene columnas para los días: {', '.join(missing_days)}. Deben ser números del 1 al {num_days}."
+        )
         return
-        
+
     # Mapa de códigos estándar de turnos con sus respectivos horarios (formato 24h)
     # Estos turnos se crearán automáticamente en la base de datos si no existen.
     SHIFT_CODES_MAP = {
-        "M": {"name": "Turno_M", "start": "06:00", "end": "14:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "T": {"name": "Turno_T", "start": "14:00", "end": "22:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "N": {"name": "Turno_N", "start": "22:00", "end": "06:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 1},
-        "TA": {"name": "Turno_Ta", "start": "14:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "C1": {"name": "Turno_C1", "start": "08:00", "end": "12:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "C2": {"name": "Turno_C2", "start": "14:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "M2": {"name": "Turno_M2", "start": "07:00", "end": "15:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "T2": {"name": "Turno_T2", "start": "12:00", "end": "20:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "C3": {"name": "Turno_C3", "start": "07:00", "end": "12:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "C4": {"name": "Turno_C4", "start": "14:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "M3": {"name": "Turno_M3", "start": "07:00", "end": "14:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "T3": {"name": "Turno_T3", "start": "13:00", "end": "20:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "M4": {"name": "Turno_M4", "start": "08:00", "end": "12:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "AP": {"name": "Turno_AP", "start": "10:00", "end": "14:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "AP1": {"name": "Turno_AP1", "start": "18:00", "end": "22:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "AP2": {"name": "Turno_AP2", "start": "16:00", "end": "20:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "TE1": {"name": "Turno_TE1", "start": "06:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "TE2": {"name": "Turno_TE2", "start": "10:00", "end": "22:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "TP": {"name": "Turno_TP", "start": "10:00", "end": "22:00", "has_break": 1, "break_start": "14:00", "break_end": "18:00", "is_overnight": 0},
-        "M5": {"name": "Turno_M5", "start": "07:00", "end": "10:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "M6": {"name": "Turno_M6", "start": "07:00", "end": "11:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "C5": {"name": "Turno_C5", "start": "13:00", "end": "16:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "M8": {"name": "Turno_M8", "start": "06:00", "end": "10:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "M9": {"name": "Turno_M9", "start": "10:00", "end": "18:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "C6": {"name": "Turno_C6", "start": "08:00", "end": "16:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "C7": {"name": "Turno_C7", "start": "08:30", "end": "12:30", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "C8": {"name": "Turno_C8", "start": "12:00", "end": "16:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "C9": {"name": "Turno_C9", "start": "06:00", "end": "10:00", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
-        "C10": {"name": "Turno_C10", "start": "12:30", "end": "16:30", "has_break": 0, "break_start": "", "break_end": "", "is_overnight": 0},
+        "M": {
+            "name": "Turno_M",
+            "start": "06:00",
+            "end": "14:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "T": {
+            "name": "Turno_T",
+            "start": "14:00",
+            "end": "22:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "N": {
+            "name": "Turno_N",
+            "start": "22:00",
+            "end": "06:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 1,
+        },
+        "TA": {
+            "name": "Turno_Ta",
+            "start": "14:00",
+            "end": "18:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "C1": {
+            "name": "Turno_C1",
+            "start": "08:00",
+            "end": "12:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "C2": {
+            "name": "Turno_C2",
+            "start": "14:00",
+            "end": "18:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "M2": {
+            "name": "Turno_M2",
+            "start": "07:00",
+            "end": "15:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "T2": {
+            "name": "Turno_T2",
+            "start": "12:00",
+            "end": "20:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "C3": {
+            "name": "Turno_C3",
+            "start": "07:00",
+            "end": "12:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "C4": {
+            "name": "Turno_C4",
+            "start": "14:00",
+            "end": "18:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "M3": {
+            "name": "Turno_M3",
+            "start": "07:00",
+            "end": "14:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "T3": {
+            "name": "Turno_T3",
+            "start": "13:00",
+            "end": "20:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "M4": {
+            "name": "Turno_M4",
+            "start": "08:00",
+            "end": "12:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "AP": {
+            "name": "Turno_AP",
+            "start": "10:00",
+            "end": "14:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "AP1": {
+            "name": "Turno_AP1",
+            "start": "18:00",
+            "end": "22:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "AP2": {
+            "name": "Turno_AP2",
+            "start": "16:00",
+            "end": "20:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "TE1": {
+            "name": "Turno_TE1",
+            "start": "06:00",
+            "end": "18:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "TE2": {
+            "name": "Turno_TE2",
+            "start": "10:00",
+            "end": "22:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "TP": {
+            "name": "Turno_TP",
+            "start": "10:00",
+            "end": "22:00",
+            "has_break": 1,
+            "break_start": "14:00",
+            "break_end": "18:00",
+            "is_overnight": 0,
+        },
+        "M5": {
+            "name": "Turno_M5",
+            "start": "07:00",
+            "end": "10:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "M6": {
+            "name": "Turno_M6",
+            "start": "07:00",
+            "end": "11:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "C5": {
+            "name": "Turno_C5",
+            "start": "13:00",
+            "end": "16:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "M8": {
+            "name": "Turno_M8",
+            "start": "06:00",
+            "end": "10:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "M9": {
+            "name": "Turno_M9",
+            "start": "10:00",
+            "end": "18:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "C6": {
+            "name": "Turno_C6",
+            "start": "08:00",
+            "end": "16:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "C7": {
+            "name": "Turno_C7",
+            "start": "08:30",
+            "end": "12:30",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "C8": {
+            "name": "Turno_C8",
+            "start": "12:00",
+            "end": "16:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "C9": {
+            "name": "Turno_C9",
+            "start": "06:00",
+            "end": "10:00",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
+        "C10": {
+            "name": "Turno_C10",
+            "start": "12:30",
+            "end": "16:30",
+            "has_break": 0,
+            "break_start": "",
+            "break_end": "",
+            "is_overnight": 0,
+        },
     }
     # Mapa de códigos de excepciones (días libres y licencias especiales)
     EXCEPTION_CODES_MAP = {
@@ -787,11 +1218,11 @@ def process_bulk_shifts(df, year, month, num_days):
         "S": "Suspensión",
         "LNR": "Licencia No Remunerada",
     }
-    
+
     shift_ids = {}
     assigned = 0
     errors = []
-    
+
     with db_session() as conn:
         cur = conn.cursor()
         # 1. Asegurar que los turnos base existen
@@ -801,72 +1232,118 @@ def process_bulk_shifts(df, year, month, num_days):
             if row:
                 shift_ids[code] = row[0]
             else:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO shifts (name, start_time, end_time, grace_minutes, has_break, break_start, break_end, is_overnight, shift_code, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (info["name"], info["start"], info["end"], 0, info["has_break"], info["break_start"], info["break_end"], info["is_overnight"], code, datetime.now().isoformat()))
+                """,
+                    (
+                        info["name"],
+                        info["start"],
+                        info["end"],
+                        0,
+                        info["has_break"],
+                        info["break_start"],
+                        info["break_end"],
+                        info["is_overnight"],
+                        code,
+                        datetime.now().isoformat(),
+                    ),
+                )
                 shift_ids[code] = cur.lastrowid
-                
+
         # 2. Cargar todos los empleados válidos
         cur.execute("SELECT user_id FROM employees")
         valid_users = {str(r[0]) for r in cur.fetchall()}
-        
+
         # 3. Iterar cada fila
         for idx, row in df.iterrows():
             try:
                 uid = str(row[cedula_col]).strip()
-                if uid.endswith('.0'):
-                    uid = uid[:-2]
-                    
+                uid = uid.removesuffix(".0")
+
                 if uid == "nan" or not uid:
                     continue
                 if uid not in valid_users:
-                    errors.append(f"Fila {idx+2}: Cédula {uid} no encontrada en la base de datos.")
+                    errors.append(
+                        f"Fila {idx + 2}: Cédula {uid} no encontrada en la base de datos."
+                    )
                     continue
-                    
+
                 for d in range(1, num_days + 1):
                     # Retrieve value using either int or string key
                     val = row.get(d)
                     if val is None or pd.isna(val):
                         val = row.get(str(d))
-                    
+
                     val = str(val).strip().upper() if pd.notna(val) else ""
                     if val == "NAN":
                         val = ""
-                    
+
                     current_date = date(year, month, d)
                     current_date_iso = current_date.isoformat()
-                    ws_iso = (current_date - timedelta(days=current_date.weekday())).isoformat()
+                    ws_iso = (
+                        current_date - timedelta(days=current_date.weekday())
+                    ).isoformat()
                     dow = current_date.weekday()
-                    
+
                     # Reset assignments for this day
-                    cur.execute("DELETE FROM shift_assignments WHERE user_id = ? AND week_start = ? AND dow = ?", (uid, ws_iso, dow))
-                    cur.execute("DELETE FROM exceptions WHERE user_id = ? AND date = ?", (uid, current_date_iso))
-                    
+                    cur.execute(
+                        "DELETE FROM shift_assignments WHERE user_id = ? AND week_start = ? AND dow = ?",
+                        (uid, ws_iso, dow),
+                    )
+                    cur.execute(
+                        "DELETE FROM exceptions WHERE user_id = ? AND date = ?",
+                        (uid, current_date_iso),
+                    )
+
                     if val in shift_ids:
-                        cur.execute("""
+                        cur.execute(
+                            """
                             INSERT INTO shift_assignments (user_id, week_start, dow, shift_id, created_at)
                             VALUES (?, ?, ?, ?, ?)
-                        """, (uid, ws_iso, dow, shift_ids[val], datetime.now().isoformat()))
+                        """,
+                            (
+                                uid,
+                                ws_iso,
+                                dow,
+                                shift_ids[val],
+                                datetime.now().isoformat(),
+                            ),
+                        )
                         assigned += 1
                     elif val in EXCEPTION_CODES_MAP:
-                        cur.execute("""
+                        cur.execute(
+                            """
                             INSERT INTO exceptions (user_id, date, type, created_at)
                             VALUES (?, ?, ?, ?)
-                        """, (uid, current_date_iso, EXCEPTION_CODES_MAP[val], datetime.now().isoformat()))
+                        """,
+                            (
+                                uid,
+                                current_date_iso,
+                                EXCEPTION_CODES_MAP[val],
+                                datetime.now().isoformat(),
+                            ),
+                        )
                         assigned += 1
                     elif val == "L" or val == "":
                         # Ya se limpió en los DELETE de arriba, día libre
                         pass
                     else:
-                        errors.append(f"Fila {idx+2}: Código desconocido '{val}' ignorado el día {d}.")
+                        errors.append(
+                            f"Fila {idx + 2}: Código desconocido '{val}' ignorado el día {d}."
+                        )
             except Exception as e:
-                errors.append(f"Fila {idx+2}: Error procesando los datos. Verifica el formato de la fila - {e}")
+                errors.append(
+                    f"Fila {idx + 2}: Error procesando los datos. Verifica el formato de la fila - {e}"
+                )
                 continue
-                    
+
     if errors:
         st.warning("El proceso terminó pero con las siguientes advertencias:")
         for e in set(errors):
             st.write(f"⚠️ {e}")
-            
-    st.success(f"🎉 ¡Magia completada! Se procesaron {assigned} asignaciones o excepciones diarias en el sistema.")
+
+    st.success(
+        f"🎉 ¡Magia completada! Se procesaron {assigned} asignaciones o excepciones diarias en el sistema."
+    )
