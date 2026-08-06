@@ -333,20 +333,22 @@ def page_sync():
                         "Debes dejar marcado al menos un reloj para hacer la sincronización."
                     )
                 else:
-                    with st.spinner(
-                        "Sincronizando hora de los relojes seleccionados..."
-                    ):
-                        for d in selected_devices:
-                            label = f"{d.get('name', d['ip'])} ({d['ip']})"
-                            success, err = sync_device_time(d)
-                            if success:
-                                st.success(
-                                    f"{label} ✅ Hora sincronizada con el servidor."
-                                )
-                            else:
-                                st.error(
-                                    f"{label} ❌ Error de conexión al sincronizar: {err}"
-                                )
+                    from utils.animations import render_lottie_sync
+                    anim_placeholder = st.empty()
+                    with anim_placeholder.container():
+                        st.markdown("<div style='display: flex; justify-content: center;'>", unsafe_allow_html=True)
+                        render_lottie_sync(key="sync_time", height=150)
+                        st.markdown("<p style='text-align: center; color: #94a3b8;'>Sincronizando hora de los relojes...</p></div>", unsafe_allow_html=True)
+                    
+                    for d in selected_devices:
+                        label = f"{d.get('name', d['ip'])} ({d['ip']})"
+                        success, err = sync_device_time(d)
+                        if success:
+                            st.success(f"{label} ✅ Hora sincronizada con el servidor.")
+                        else:
+                            st.error(f"{label} ❌ Error de conexión al sincronizar: {err}")
+                    
+                    anim_placeholder.empty()
 
             if btn_sync:
                 if not selected_devices:
