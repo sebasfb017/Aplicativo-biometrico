@@ -185,7 +185,7 @@ def _get_base_template(title, body_content, header_color="#0D6EFD"):
                 <div class="content">
                     {body_content}
                     <div class="btn-container">
-                        <a href="http://localhost:8501" class="btn">Ir al Portal Web</a>
+                        <a href="http://192.168.52.29:8501" class="btn">Ir al Portal Web</a>
                     </div>
                 </div>
                 <div class="footer">
@@ -341,3 +341,59 @@ def send_status_update_email(
     html = _get_base_template(title, body, header_color=color)
     text = f"Tu solicitud ha cambiado a: {new_status}"
     return _send_email([to_email], subject, html, text)
+
+
+def send_hr_procedure_alert(employee_name, procedure_type, timestamp):
+    """Notifica a Recursos Humanos cuando se radica un nuevo Trámite en Línea."""
+    
+    subject = f"Nuevo Trámite Radicado - {procedure_type} - {employee_name}"
+    
+    html_content = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #333;">
+        <h2 style="color: #2E86C1;">Nuevo Trámite en Línea Radicado</h2>
+        <p>Hola Equipo de Talento Humano,</p>
+        <p>El empleado <strong>{employee_name}</strong> ha radicado una nueva solicitud en el portal de autogestión.</p>
+        <div style="background-color: #F8F9F9; padding: 15px; border-radius: 8px; border-left: 4px solid #3498DB;">
+            <p><strong>Tipo de Solicitud:</strong> {procedure_type}</p>
+            <p><strong>Fecha/Hora:</strong> {timestamp}</p>
+        </div>
+        <p>Por favor ingresa al <strong>Portal Administrativo</strong>, pestaña <em>Trámites en Línea</em>, para descargar los soportes documentales y gestionar esta solicitud.</p>
+        <p>Gracias,</p>
+        <p><em>Sistema de Notificaciones - Dolormed</em></p>
+      </body>
+    </html>
+    """
+    
+    _send_email("nomina@dolormed.com.co", subject, html_content)
+
+
+def send_hr_procedure_status_update(employee_email, employee_name, procedure_type, status):
+    """Notifica al empleado cuando su Trámite en Línea ha sido completado o rechazado."""
+    
+    if not employee_email:
+        return
+        
+    estado_texto = "Completada ✅" if status == "COMPLETED" else "Rechazada ❌"
+    color = "#2E7D32" if status == "COMPLETED" else "#C62828"
+    
+    subject = f"Tu trámite de {procedure_type} ha sido actualizado"
+    
+    html_content = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #333;">
+        <h2 style="color: {color};">Actualización de Trámite en Línea</h2>
+        <p>Hola <strong>{employee_name}</strong>,</p>
+        <p>Te informamos que el estado de tu trámite ha sido actualizado por Talento Humano.</p>
+        <div style="background-color: #F8F9F9; padding: 15px; border-radius: 8px; border-left: 4px solid {color};">
+            <p><strong>Tipo de Solicitud:</strong> {procedure_type}</p>
+            <p><strong>Nuevo Estado:</strong> {estado_texto}</p>
+        </div>
+        <p>Puedes verificar los detalles entrando a <em>Mi Portal de Autogestión</em> en la pestaña de <strong>Mis Trámites en Línea</strong>.</p>
+        <p>Gracias,</p>
+        <p><em>Talento Humano - Dolormed</em></p>
+      </body>
+    </html>
+    """
+    
+    _send_email(employee_email, subject, html_content)

@@ -11,3 +11,6 @@ holidays>=0.40
 APScheduler>=3.10.0
 fpdf2>=2.7.0
 google-generativeai==0.8.2
+streamlit-lottie>=0.0.3
+PyPDF2>=3.0.1
+PyPDF2>=3.0.1

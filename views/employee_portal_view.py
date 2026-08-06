@@ -119,7 +119,12 @@ def create_status_tracker(current_status, reason_type):
 # --- Fin del Componente Visual ---
 
 
-from database_conn.queries import db_cancel_leave_request, db_create_leave_request
+from database_conn.queries import (
+    db_cancel_leave_request,
+    db_create_leave_request,
+    db_create_hr_procedure,
+    db_get_employee_procedures,
+)
 from services.email_service import send_novedad_alert
 from services.notifications import generate_fth012_pdf
 
@@ -423,8 +428,13 @@ def page_employee_portal():
 
     st.write("")  # Espaciador
 
-    t1, t2, t3 = st.tabs(
-        ["📝 Radicar Nuevo Permiso", "🗂️ Mis Solicitudes", "💬 Asistente Virtual RRHH"]
+    t1, t2, t3, t4 = st.tabs(
+        [
+            "📝 Radicar Nuevo Permiso",
+            "🗂️ Mis Solicitudes",
+            "💬 Asistente Virtual RRHH",
+            "🏢 Mis Trámites en Línea",
+        ]
     )
 
     with t1:
@@ -434,6 +444,8 @@ def page_employee_portal():
         )
 
         if st.session_state.get("submit_success"):
+            from utils.animations import render_lottie_success
+            render_lottie_success(height=120)
             st.success(
                 "✅ Solicitud enviada exitosamente. El formulario ha sido limpiado."
             )
@@ -1024,12 +1036,7 @@ def page_employee_portal():
                                 )
                                 target_emails = []
                                 for _, c_row in coord_all.iterrows():
-                                    c_depts = [
-                                        d.strip()
-                                        for d in c_row["managed_department"].split(",")
-                                        if d.strip()
-                                    ]
-                                    if target_coord_dept in c_depts:
+                                    if target_coord_dept in c_row["managed_department"]:
                                         target_emails.append(c_row["emp_email"])
                             elif target_status == "PENDING_JEFE":
                                 user_app_df = pd.read_sql_query(
@@ -1340,10 +1347,21 @@ def page_employee_portal():
                 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
                 model = genai.GenerativeModel("gemini-1.5-flash")
                 
+                from utils.chatbot_rag import get_knowledge_base_context
+                kb_context = get_knowledge_base_context()
+                
                 system_prompt = f"""
 Eres el Asistente Virtual de RRHH de la clínica Dolormed. Estás hablando con {user.get('full_name', 'colaborador')}.
 El empleado tiene actualmente {saldo_vac} días de vacaciones disponibles.
-Responde a sus preguntas basándote en las siguientes reglas internas:
+
+A continuación, tienes acceso a la Base de Conocimiento oficial de la empresa (extraída de PDFs):
+<BASE_DE_CONOCIMIENTO>
+{kb_context}
+</BASE_DE_CONOCIMIENTO>
+
+Responde a sus preguntas basándote ESTRICTAMENTE en la información de la <BASE_DE_CONOCIMIENTO>. 
+Si el documento menciona reglas de vacaciones, permisos o incapacidades, usa esa información. 
+Si no hay información en la base de conocimiento para responder la pregunta, puedes usar las siguientes reglas básicas de contingencia:
 - Vacaciones: Deben solicitarse con 15 días de anticipación.
 - Incapacidades: Deben radicarse en máximo 2 días hábiles y adjuntar soporte médico.
 - Pagos de nómina: Se realizan los días 15 y 30 de cada mes. Certificados a nomina@dolormed.com.
@@ -1392,3 +1410,200 @@ Mantén tus respuestas amables, con emojis, profesionales y directas al punto (m
                     fk = st.session_state.get("form_key", 0)
                     st.session_state[f"categoria_{fk}"] = "Cambio de Turno"
                     st.success("✅ Formulario pre-cargado. Sube y haz clic en la pestaña '📝 Radicar Nuevo Permiso' para completarlo.")
+
+    with t4:
+        st.subheader("Gestión de Trámites en Línea")
+        st.info("Radica solicitudes a Talento Humano y Nómina. Adjunta soportes si es necesario.")
+        
+        if "procedure_success" not in st.session_state:
+            st.session_state.procedure_success = False
+            
+        if st.session_state.procedure_success:
+            st.success("✅ Trámite radicado exitosamente.")
+            st.session_state.procedure_success = False
+
+        if "proc_form_key" not in st.session_state:
+            st.session_state.proc_form_key = 0
+            
+        pfk = st.session_state.proc_form_key
+        
+        proc_type = st.selectbox(
+            "Tipo de Solicitud a Realizar *",
+            [
+                "Certificación Laboral",
+                "Desprendible de Pago de Nómina",
+                "Certificado de Ingresos y Retenciones",
+                "Retiro de Cesantías",
+                "Cambio de EPS",
+                "Inclusión Beneficiario EPS",
+                "Inclusión Beneficiario Caja de Compensación",
+                "Otro"
+            ],
+            key=f"proc_type_{pfk}"
+        )
+        
+        # --- SELECTORES SECUNDARIOS FUERA DEL FORM PARA QUE SE ACTUALICEN EN TIEMPO REAL ---
+        causal_cesantias = "Ninguna"
+        eps_name = "Ninguna"
+        bene_type = "Ninguno"
+        
+        st.markdown(f"### Detalles Adicionales para: **{proc_type}**")
+        
+        if proc_type == "Retiro de Cesantías":
+            cesantias_options = ["Compra de Vivienda", "Mejoramiento de Vivienda", "Estudio para el Trabajador, Cónyuge o Hijo", "Pago de Impuestos de Vivienda", "Sustitución Patronal", "Abono a Crédito Hipotecario"]
+            causal_cesantias = st.selectbox("Causal para Retiro de Cesantías", ["Ninguna"] + cesantias_options, key=f"proc_causal_cesantias_{pfk}")
+            
+            if causal_cesantias == "Compra de Vivienda":
+                st.info("""**Documentos Requeridos:**\n- Carta de Solicitud de Retiro de Cesantías\n- Contrato de Compraventa Autenticado\n- Certificado de Tradición del predio o vivienda a comprar ("debe aparecer como dueño legítimo el vendedor")\n- Cédula de las partes del contrato\n- Certificado Bancario a nombre del colaborador""")
+            elif causal_cesantias == "Mejoramiento de Vivienda":
+                st.info("""**Documentos Requeridos:**\n- Carta de Solicitud de Retiro de Cesantías\n- Certificado de Tradición del predio o vivienda (poseedor del colaborador)\n- Cotización de Materiales\n- Contrato de Obra Civil (No requiere estar autenticado)\n- Cédulas de las partes del contrato\n- Carnet de constructor o RUT de la persona contratada\n- Certificado Bancario a nombre del colaborador""")
+            elif causal_cesantias == "Estudio para el Trabajador, Cónyuge o Hijo":
+                st.info("""**Documentos Requeridos:**\n- Recibo de Matrícula\n- Documento de Identidad del Colaborador, Hijo o Cónyuge (Para hijo: Registro Civil de Nacimiento. Para cónyuge: Certificado de Matrimonio o Declaración Juramentada de convivencia)\n- Certificado Bancario a nombre del colaborador\n\n*Nota: El recurso será consignado directamente a la Institución o Universidad.*""")
+            elif causal_cesantias == "Pago de Impuestos de Vivienda":
+                st.info("""**Documentos Requeridos:**\n- Solicitud de Retiro de Cesantías\n- Certificado de Tradición del predio o vivienda\n- Cédula del(a) Colaborador(a)\n- Recibo de Predial\n- Certificado Bancario a nombre del colaborador\n\n*En caso que la vivienda sea del cónyuge debe adjuntar Acta de Matrimonio o Declaración Juramentada.*""")
+            elif causal_cesantias == "Sustitución Patronal":
+                st.info("""**Documentos Requeridos:**\n- Solicitud de retiro de cesantías (mencionando que tuvo sustitución patronal)\n- Certificado Bancario a nombre del colaborador""")
+            elif causal_cesantias == "Abono a Crédito Hipotecario":
+                st.info("""**Documentos Requeridos:**\n- Carta de Solicitud de Retiro de Cesantías\n- Estado de cuenta del crédito hipotecario actualizado\n- Certificado Bancario a nombre del colaborador""")
+        
+        elif proc_type == "Cambio de EPS":
+            eps_options = ["Sanitas", "EPS Sura", "Salud Total", "Nueva EPS", "SOS", "Famisanar", "Emssanar", "Asmet Salud", "Coosalud"]
+            eps_name = st.selectbox("A qué EPS desea trasladarse", ["Ninguna"] + eps_options, key=f"proc_eps_{pfk}")
+            if eps_name != "Ninguna":
+                st.info("""**Documentos a Adjuntar:**\n- Cédula del Colaborador(a) y documentos de Identidad en caso que tenga beneficiarios en su núcleo Familiar.\n\n*Nota: Este proceso se puede demorar entre 2 y 4 meses dependiendo de la entidad.*""")
+        
+        elif proc_type == "Inclusión Beneficiario EPS":
+            bene_options = ["Hijo(a)", "Padre y/o Madre", "Cónyuge", "Hijastro(a)"]
+            bene_type = st.selectbox("Tipo de Inclusión (Beneficiario)", ["Ninguno"] + bene_options, key=f"proc_bene_{pfk}")
+            if bene_type == "Hijo(a)":
+                st.info("""**Requisitos:**\n- Cédula del(a) Colaborador(a)\n- Registro Civil Hijo(a)\n- Tarjeta de identidad Hijo(a) (Solo si es mayor de 8 años)""")
+            elif bene_type == "Padre y/o Madre":
+                st.info("""**Requisitos:**\n- Cédula del(a) Colaborador(a)\n- Registro Civil del Colaborador(a)\n- Cédula del Padre y/o Madre a incluir""")
+            elif bene_type == "Cónyuge":
+                st.info("""**Requisitos:**\n- Cédula del(a) Colaborador(a)\n- Cédula del(a) Cónyuge\n- Acta de Matrimonio o Declaración Juramentada de Convivencia""")
+            elif bene_type == "Hijastro(a)":
+                st.info("""**Requisitos:**\n- Cédula del Colaborador y del Cónyuge\n- Acta de Matrimonio o Declaración Juramentada de Convivencia\n- Registro Civil del Hijastro(a) y Tarjeta de Identidad (si aplica)\n- Declaración de dependencia económica del Hijastro(a) a incluir""")
+
+        elif proc_type == "Inclusión Beneficiario Caja de Compensación":
+            bene_options = ["Hijo(a)", "Padre y/o Madre", "Cónyuge", "Hijastro(a)"]
+            bene_type = st.selectbox("Tipo de Inclusión (Beneficiario Caja)", ["Ninguno"] + bene_options, key=f"proc_bene_{pfk}")
+            if bene_type != "Ninguno":
+                st.info("Debe adjuntar los documentos de identidad, registro civil / acta de matrimonio, y el Formulario de Declaración Juramentada de la Caja de Compensación según corresponda al tipo de beneficiario.")
+        
+        # --- AHORA SI EL FORMULARIO PARA LOS DATOS RESTANTES Y EL BOTÓN ---
+        with st.form(key=f"form_procedures_{pfk}"):
+            selected_months = []
+            selected_years = []
+            other_text = ""
+            
+            if proc_type == "Desprendible de Pago de Nómina":
+                months_options = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+                selected_months = st.multiselect("Meses requeridos (Desprendibles)", months_options, key=f"proc_months_{pfk}")
+            
+            elif proc_type == "Certificado de Ingresos y Retenciones":
+                years_options = ["2022", "2023", "2024", "2025"]
+                selected_years = st.multiselect("Años requeridos (Retenciones)", years_options, key=f"proc_years_{pfk}")
+            
+            elif proc_type == "Otro":
+                other_text = st.text_area("Por favor describe detalladamente tu solicitud", key=f"proc_other_{pfk}")
+            
+            needs_attachment = proc_type in ["Retiro de Cesantías", "Cambio de EPS", "Inclusión Beneficiario EPS", "Inclusión Beneficiario Caja de Compensación"]
+            
+            if needs_attachment:
+                st.markdown("---")
+                st.markdown("### Soporte Documental Obligatorio 📎")
+                st.warning("Debe escanear y adjuntar un ÚNICO archivo PDF con todos los soportes requeridos para esta solicitud.")
+            else:
+                st.markdown("---")
+                st.markdown("### Soporte Documental (Opcional)")
+                st.info("Puedes adjuntar un documento si crees que es necesario para tu trámite.")
+                
+            uploaded_files = st.file_uploader("Adjuntar archivo PDF", type=["pdf"], key=f"proc_file_{pfk}", accept_multiple_files=True)
+            
+            submitted = st.form_submit_button("Radicar Trámite", type="primary", use_container_width=True)
+            
+            if submitted:
+                import json
+                import os
+                from PyPDF2 import PdfMerger
+                from services.email_service import send_hr_procedure_alert
+                
+                # Build JSON details
+                details_dict = {}
+                if proc_type == "Desprendible de Pago de Nómina" and selected_months:
+                    details_dict["Meses"] = selected_months
+                if proc_type == "Certificado de Ingresos y Retenciones" and selected_years:
+                    details_dict["Años"] = selected_years
+                if proc_type == "Retiro de Cesantías" and causal_cesantias != "Ninguna":
+                    details_dict["Causal"] = causal_cesantias
+                if proc_type == "Cambio de EPS" and eps_name != "Ninguna":
+                    details_dict["Nueva EPS"] = eps_name
+                if "Inclusión Beneficiario" in proc_type and bene_type != "Ninguno":
+                    details_dict["Tipo Beneficiario"] = bene_type
+                if other_text:
+                    details_dict["Notas"] = other_text
+                    
+                details_json = json.dumps(details_dict, ensure_ascii=False)
+                
+                # Validation rules
+                needs_causal = proc_type == "Retiro de Cesantías" and causal_cesantias == "Ninguna"
+                needs_eps = proc_type == "Cambio de EPS" and eps_name == "Ninguna"
+                needs_bene = "Inclusión Beneficiario" in proc_type and bene_type == "Ninguno"
+                
+                if needs_causal or needs_eps or needs_bene:
+                    st.error("❌ Por favor selecciona una opción válida en el menú desplegable (Causal, EPS o Beneficiario) antes de radicar.")
+                else:
+                    # Save attachment(s)
+                    file_path = None
+                    if uploaded_files:
+                        os.makedirs("data/attachments", exist_ok=True)
+                        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                        file_path = f"data/attachments/{user['username']}_tramite_{timestamp}_consolidado.pdf"
+                        
+                        try:
+                            if len(uploaded_files) > 1:
+                                merger = PdfMerger()
+                                for pdf in uploaded_files:
+                                    merger.append(pdf)
+                                with open(file_path, "wb") as f_out:
+                                    merger.write(f_out)
+                                merger.close()
+                            else:
+                                # Just one file
+                                with open(file_path, "wb") as f:
+                                    f.write(uploaded_files[0].getbuffer())
+                        except Exception as e:
+                            st.error(f"Error procesando los PDFs: {e}")
+                            file_path = None
+                    
+                    if needs_attachment and not file_path:
+                        st.error("❌ Este trámite requiere subir soportes documentales en PDF obligatoriamente.")
+                    else:
+                        db_create_hr_procedure(user["username"], proc_type, details_json, file_path)
+                        # Send alert
+                        send_hr_procedure_alert(user["full_name"], proc_type, datetime.now().strftime("%Y-%m-%d %H:%M"))
+                        
+                        st.session_state.procedure_success = True
+                        st.session_state.proc_form_key += 1
+                        st.rerun()
+
+        st.divider()
+        st.subheader("Historial de Trámites Radicados")
+        mis_tramites = db_get_employee_procedures(user["username"])
+        
+        if not mis_tramites:
+            st.info("No has radicado ningún trámite en línea recientemente.")
+        else:
+            for tram in mis_tramites:
+                with st.expander(f"📌 {tram['procedure_type']} - Radicado el {tram['created_at'].split('T')[0]}"):
+                    st.write(f"**Estado Actual:** `{tram['status']}`")
+                    if tram["details"] and tram["details"] != "{}":
+                        import json
+                        try:
+                            d = json.loads(tram["details"])
+                            for k, v in d.items():
+                                st.write(f"- **{k}:** {v}")
+                        except:
+                            st.write(f"- **Detalles:** {tram['details']}")
+                    if tram["attachment_path"]:
+                        st.write(f"📎 **Soporte adjunto:** `{tram['attachment_path'].split('/')[-1]}`")

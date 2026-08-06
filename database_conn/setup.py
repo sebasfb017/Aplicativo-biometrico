@@ -160,6 +160,19 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS hr_procedures (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        procedure_type TEXT NOT NULL,
+        details TEXT,
+        attachment_path TEXT,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users_app(username)
+    );
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS leave_requests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,

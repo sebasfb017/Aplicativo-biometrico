@@ -1307,11 +1307,12 @@ def page_exceptions():
         "📥 Solicitudes Digitales de Empleados",
         "📅 Calendario de Ausencias",
         "🌐 Monitoreo Global",
+        "🏢 Trámites en Línea",
     ]
     sel_tab = option_menu(
         menu_title=None,
         options=tab_options,
-        icons=["pencil", "list-task", "download", "calendar", "globe"],
+        icons=["pencil", "list-task", "download", "calendar", "globe", "file-earmark-pdf"],
         menu_icon="cast",
         default_index=default_tab_idx,
         orientation="horizontal",
@@ -2249,3 +2250,74 @@ def page_exceptions():
             st.warning(
                 "No tienes permisos de Administrador para ver la panorámica global de todas las áreas."
             )
+            
+    elif sel_tab == "🏢 Trámites en Línea":
+        user_role = st.session_state["user"]["role"]
+        if user_role == "empleado" and st.session_state["user"].get("emp_subarea") in ["Nomina", "Talento humano"]:
+            user_role = "nomina"
+            
+        if user_role in ["admin", "nomina"]:
+            st.header("🏢 Gestión de Trámites en Línea")
+            st.info("Bandeja central de Trámites Radicados por Empleados (Cesantías, EPS, etc.)")
+            
+            from database_conn.queries import db_get_pending_hr_procedures, db_update_hr_procedure_status
+            from services.email_service import send_hr_procedure_status_update
+            
+            pending_df = db_get_pending_hr_procedures()
+            
+            if pending_df.empty:
+                st.success("🎉 ¡No hay trámites pendientes por gestionar!")
+            else:
+                for idx, row in pending_df.iterrows():
+                    proc_id = row["id"]
+                    emp_name = row["full_name"]
+                    user_id = row["user_id"]
+                    proc_type = row["procedure_type"]
+                    created_at = row["created_at"]
+                    
+                    with st.expander(f"📁 #{proc_id} - {emp_name} | {proc_type} ({created_at})"):
+                        col_info, col_actions = st.columns([2, 1])
+                        
+                        with col_info:
+                            st.markdown(f"**Usuario:** {user_id} - {emp_name}")
+                            st.markdown(f"**Departamento:** {row['department']}")
+                            st.markdown(f"**Detalles:**")
+                            st.json(row["details"])
+                            
+                            if row["attachment_path"]:
+                                import os
+                                if os.path.exists(row["attachment_path"]):
+                                    with open(row["attachment_path"], "rb") as f:
+                                        st.download_button(
+                                            label="📄 Descargar Soporte (PDF Consolidado)",
+                                            data=f,
+                                            file_name=os.path.basename(row["attachment_path"]),
+                                            mime="application/pdf",
+                                            key=f"dl_btn_{proc_id}"
+                                        )
+                                else:
+                                    st.warning("⚠️ El archivo adjunto no se encontró en el servidor.")
+                        
+                        with col_actions:
+                            st.markdown("### Acciones")
+                            # Add a form for approval/rejection to avoid immediate rerun issues
+                            with st.form(f"hr_action_{proc_id}"):
+                                action_opt = st.radio("Acción a tomar", ["Aprobar/Completar", "Rechazar"])
+                                notes = st.text_area("Observaciones (Opcional)")
+                                if st.form_submit_button("Procesar Trámite", use_container_width=True):
+                                    new_status = "COMPLETED" if action_opt == "Aprobar/Completar" else "REJECTED"
+                                    db_update_hr_procedure_status(proc_id, new_status, notes)
+                                    
+                                    # Obtener correo del empleado (usando el db_session global)
+                                    with db_session() as conn:
+                                        c = conn.cursor()
+                                        c.execute("SELECT email FROM users_app WHERE username = ?", (user_id,))
+                                        res = c.fetchone()
+                                        emp_email = res[0] if res else None
+                                        
+                                    send_hr_procedure_status_update(emp_email, emp_name, proc_type, new_status)
+                                    
+                                    st.success("✅ Trámite actualizado correctamente.")
+                                    st.rerun()
+        else:
+            st.warning("No tienes permisos para acceder a la bandeja de Trámites.")

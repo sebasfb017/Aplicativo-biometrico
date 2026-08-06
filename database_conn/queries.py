@@ -548,14 +548,14 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                         (c[0],),
                     )
                     m_dept = cur.fetchone()[0] or ""
-                    depts = [d.strip() for d in m_dept.split(",") if d.strip()]
+
                     target_subarea = req_subarea
                     if target_subarea == "Servicios Generales":
                         target_subarea = "Calidad"
                     elif target_subarea == "Orientador":
                         target_subarea = "Seguridad"
 
-                    if target_subarea in depts or req_subarea in depts:
+                    if target_subarea in m_dept or req_subarea in m_dept:
                         cur.execute(
                             "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
                             (
@@ -1199,3 +1199,70 @@ def db_run_vacation_accruals():
                     "UPDATE users_app SET vacation_balance = ?, last_anniversary_year = ? WHERE username = ?",
                     (bal, last_year, username),
                 )
+
+def db_create_hr_procedure(user_id, procedure_type, details, attachment_path):
+    with db_session() as conn:
+        cur = conn.cursor()
+        now_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        cur.execute(
+            """
+            INSERT INTO hr_procedures (user_id, procedure_type, details, attachment_path, status, created_at)
+            VALUES (?, ?, ?, ?, 'PENDING', ?)
+            """,
+            (user_id, procedure_type, details, attachment_path, now_str),
+        )
+        conn.commit()
+
+
+def db_get_employee_procedures(user_id):
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, procedure_type, details, attachment_path, status, created_at
+            FROM hr_procedures
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        )
+        return [
+            dict(
+                id=r[0],
+                procedure_type=r[1],
+                details=r[2],
+                attachment_path=r[3],
+                status=r[4],
+                created_at=r[5],
+            )
+            for r in cur.fetchall()
+        ]
+
+def db_get_pending_hr_procedures():
+    """Retrieve all pending or in-progress HR procedures for the dashboard."""
+    with db_session() as conn:
+        import pandas as pd
+        
+        query = """
+        SELECT hp.id, hp.user_id, e.full_name, e.department, hp.procedure_type, 
+               hp.details, hp.attachment_path, hp.status, hp.created_at
+        FROM hr_procedures hp
+        LEFT JOIN employees e ON hp.user_id = e.user_id
+        WHERE hp.status IN ('PENDING', 'IN_PROGRESS')
+        ORDER BY hp.created_at ASC
+        """
+        return pd.read_sql_query(query, conn)
+
+def db_update_hr_procedure_status(procedure_id, status, notes=""):
+    """Update the status of an HR procedure."""
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE hr_procedures
+            SET status = ?
+            WHERE id = ?
+            """,
+            (status, procedure_id),
+        )
+        conn.commit()
