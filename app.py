@@ -77,45 +77,81 @@ def main():
     st.markdown(
         """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
     
     /* Tipografía Global y Variables */
     html, body, [class*="css"] {
-        font-family: 'Outfit', sans-serif !important;
+        font-family: 'Inter', sans-serif !important;
     }
     
     :root {
-        --primary-blue: #6366f1;
-        --glow-blue: rgba(99, 102, 241, 0.4);
-        --glass-bg: rgba(255, 255, 255, 0.05);
-        --glass-border: rgba(255, 255, 255, 0.1);
+        --primary-blue: #3B82F6;
+        --glow-blue: rgba(59, 130, 246, 0.5);
+        --glass-bg: rgba(255, 255, 255, 0.08);
+        --glass-border: rgba(255, 255, 255, 0.15);
     }
     
-    /* Animación principal de renderizado (Fade-In) */
+    /* Fondo Dinámico con Gradiente Premium */
+    .stApp {
+        background: radial-gradient(circle at top left, #1e1b4b 0%, #0f172a 40%, #020617 100%) !important;
+        background-attachment: fixed !important;
+    }
+    
+    /* Títulos y textos principales, cuidando de no sobreescribir íconos */
+    h1, h2, h3, p, label {
+        font-family: 'Outfit', sans-serif !important;
+    }
+    
+    /* Exclusión para arreglar íconos de Material Symbols y Streamlit */
+    i, .material-icons, .material-symbols-rounded, [class*="icon"], [class*="Icon"], [data-testid="stIconMaterial"] {
+        font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
+    }
+    
+    /* Animaciones de Transición Suave (Fade-In) */
     @keyframes fadeIn {
         0% { opacity: 0; transform: translateY(15px); }
         100% { opacity: 1; transform: translateY(0); }
     }
     
-    .main .block-container {
-        animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    .main .block-container, [data-testid="stTabContent"] > div, div[data-testid="stExpanderDetails"] {
+        animation: fadeIn 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    }
+    
+    @keyframes pulseGlow {
+        0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+        70% { box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
     }
     
     /* Efecto Glassmorphism y Elevación Premium en Métricas */
     div[data-testid="stMetric"] {
         border-radius: 16px;
         padding: 20px;
-        background: var(--glass-bg);
+        background: linear-gradient(145deg, var(--glass-bg), rgba(255,255,255,0.02));
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05);
-        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         border: 1px solid var(--glass-border);
+        position: relative;
+        overflow: hidden;
+    }
+    /* Pseudo-elemento para un brillo sutil dinámico */
+    div[data-testid="stMetric"]::before {
+        content: '';
+        position: absolute;
+        top: 0; left: -100%; width: 50%; height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+        transition: all 0.6s ease;
+    }
+    div[data-testid="stMetric"]:hover::before {
+        left: 150%;
     }
     div[data-testid="stMetric"]:hover {
-        transform: translateY(-6px) scale(1.02);
-        box-shadow: 0 15px 30px var(--glow-blue);
+        transform: translateY(-8px) scale(1.03);
+        box-shadow: 0 20px 40px var(--glow-blue);
         border-color: var(--primary-blue);
+        animation: pulseGlow 1.5s infinite;
     }
     
     /* Estilizar botones para efecto premium */
@@ -181,19 +217,21 @@ def main():
         border: 1px solid var(--glass-border) !important;
     }
     
-    /* Estilizar la barra lateral (Sidebar) */
+    /* Estilizar la barra lateral (Sidebar) con Neumorphism */
     section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #111827 0%, #1F2937 100%) !important;
-        box-shadow: 4px 0 20px rgba(0,0,0,0.3) !important;
-        border-right: 1px solid rgba(255,255,255,0.05) !important;
+        background: rgba(15, 23, 42, 0.7) !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
+        box-shadow: 4px 0 25px rgba(0,0,0,0.5) !important;
+        border-right: 1px solid rgba(255,255,255,0.08) !important;
     }
     
     /* Botones del Menú Lateral (Sidebar) */
     section[data-testid="stSidebar"] .stButton>button {
         border-radius: 12px !important;
-        background: rgba(255,255,255,0.03) !important;
-        border: 1px solid rgba(255,255,255,0.05) !important;
-        color: #e5e7eb !important;
+        background: transparent !important;
+        border: none !important;
+        color: #94a3b8 !important;
         text-align: left !important;
         justify-content: flex-start !important;
         padding-left: 20px !important;
@@ -203,11 +241,39 @@ def main():
     }
     
     section[data-testid="stSidebar"] .stButton>button:hover {
-        background: var(--primary-blue) !important;
-        border-color: var(--primary-blue) !important;
+        background: rgba(255,255,255,0.1) !important;
         color: white !important;
         transform: translateX(6px) !important;
-        box-shadow: 0 4px 15px var(--glow-blue) !important;
+    }
+
+    /* Rediseño de los Tabs (Pestañas nativas de Streamlit) */
+    div[data-testid="stTabs"] button {
+        background-color: transparent !important;
+        border: none !important;
+        border-bottom: 3px solid transparent !important;
+        color: #94a3b8 !important;
+        font-weight: 600 !important;
+        padding: 10px 20px !important;
+        transition: all 0.3s ease !important;
+    }
+    div[data-testid="stTabs"] button[aria-selected="true"] {
+        color: var(--primary-blue) !important;
+        border-bottom-color: var(--primary-blue) !important;
+        background: linear-gradient(0deg, rgba(59, 130, 246, 0.1) 0%, transparent 100%) !important;
+    }
+    div[data-testid="stTabs"] button:hover {
+        color: white !important;
+    }
+
+    /* Toast Notifications (Alertas flotantes) */
+    div[data-testid="stAlert"] {
+        border-radius: 12px !important;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.2) !important;
+        border: 1px solid var(--glass-border) !important;
+        background: rgba(15, 23, 42, 0.85) !important;
+        backdrop-filter: blur(10px) !important;
+        color: white !important;
+        animation: fadeIn 0.4s ease-out forwards;
     }
     
     /* Separador sutil del sidebar */
