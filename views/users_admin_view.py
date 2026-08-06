@@ -235,22 +235,24 @@ def page_users_admin():
 
     is_admin = st.session_state.get("user", {}).get("role") == "admin"
     if is_admin:
-        tab1, tab2, tab3, tab_vac, tab4 = st.tabs(
+        tab1, tab2, tab3, tab_vac, tab4, tab_ia = st.tabs(
             [
                 "📝 Registrar Nuevo",
                 "👔 Portal Administrativo",
                 "🛠️ Portal Empleados",
                 "🏖️ Vacaciones",
                 "⚙️ Servidor de Correos",
+                "📚 IA Conocimiento",
             ]
         )
     else:
-        tab1, tab2, tab3, tab_vac = st.tabs(
+        tab1, tab2, tab3, tab_vac, tab_ia = st.tabs(
             [
                 "📝 Registrar Nuevo",
                 "👔 Portal Administrativo",
                 "🛠️ Portal Empleados",
                 "🏖️ Vacaciones",
+                "📚 IA Conocimiento",
             ]
         )
 
@@ -616,6 +618,41 @@ def page_users_admin():
     with tab_vac:
         render_vacations_tab()
 
+    with tab_ia:
+        st.subheader("📚 Base de Conocimiento (Bot de RRHH)")
+        st.write("Sube aquí los reglamentos, políticas y manuales en PDF. El Asistente Virtual usará estos documentos para responder a los empleados.")
+        
+        from utils.chatbot_rag import KNOWLEDGE_BASE_DIR, init_knowledge_base
+        init_knowledge_base()
+        
+        uploaded_file = st.file_uploader("Sube un nuevo PDF", type=["pdf"])
+        if uploaded_file is not None:
+            if st.button("Guardar en Base de Conocimiento", type="primary"):
+                import os
+                file_path = os.path.join(KNOWLEDGE_BASE_DIR, uploaded_file.name)
+                with open(file_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                st.success(f"Archivo {uploaded_file.name} guardado correctamente.")
+                st.rerun()
+                
+        st.markdown("---")
+        st.subheader("Documentos Actuales")
+        import os
+        docs = [f for f in os.listdir(KNOWLEDGE_BASE_DIR) if f.lower().endswith(".pdf")]
+        if not docs:
+            st.info("No hay documentos en la base de conocimiento.")
+        else:
+            for doc in docs:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.write(f"📄 **{doc}**")
+                with col2:
+                    if st.button("🗑️ Eliminar", key=f"del_{doc}"):
+                        os.remove(os.path.join(KNOWLEDGE_BASE_DIR, doc))
+                        st.warning(f"Archivo {doc} eliminado.")
+                        import time
+                        time.sleep(0.5)
+                        st.rerun()
 
 def render_vacations_tab():
     st.subheader("🏖️ Control de Vacaciones")
@@ -773,3 +810,4 @@ def render_vacations_tab():
 
                 time.sleep(1)
                 st.rerun()
+
