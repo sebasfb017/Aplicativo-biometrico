@@ -428,11 +428,10 @@ def page_employee_portal():
 
     st.write("")  # Espaciador
 
-    t1, t2, t3, t4 = st.tabs(
+    t1, t2, t3 = st.tabs(
         [
             "📝 Radicar Nuevo Permiso",
             "🗂️ Mis Solicitudes",
-            "💬 Asistente Virtual RRHH",
             "🏢 Mis Trámites en Línea",
         ]
     )
@@ -1309,109 +1308,6 @@ def page_employee_portal():
                                         )
 
     with t3:
-        st.subheader("🤖 Asistente Virtual de RRHH")
-        st.write(
-            "Hola, soy tu asistente de Dolormed. Estoy aquí para responder rápidamente a tus preguntas más frecuentes sin que tengas que esperar."
-        )
-
-        # Inicializar historial de chat
-        if "chat_messages" not in st.session_state:
-            st.session_state.chat_messages = [
-                {
-                    "role": "assistant",
-                    "content": f"¡Hola {user.get('full_name', 'colaborador').split(' ')[0]}! Soy tu asistente de recursos humanos. Puedes preguntarme sobre:\n\n- 🏖️ Vacaciones\n\n- 🏥 Incapacidades médicas\n\n- 💸 Nómina y pagos\n\n- ⏰ Horarios y Permisos",
-                }
-            ]
-
-        # Contenedor con altura máxima (chatbox)
-        chat_container = st.container(height=450)
-
-        with chat_container:
-            for msg in st.session_state.chat_messages:
-                with st.chat_message(
-                    msg["role"], avatar="🤖" if msg["role"] == "assistant" else "👤"
-                ):
-                    st.markdown(msg["content"], unsafe_allow_html=True)
-
-        # Input de chat
-        prompt = st.chat_input(
-            "Escribe tu pregunta aquí (ej. ¿Cómo pido vacaciones?)..."
-        )
-        if prompt:
-            # 1. Agregar pregunta del usuario
-            st.session_state.chat_messages.append({"role": "user", "content": prompt})
-
-            # 2. Lógica del Bot (Inteligencia Artificial Gemini)
-            action_btn = None
-            try:
-                genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                
-                from utils.chatbot_rag import get_knowledge_base_context
-                kb_context = get_knowledge_base_context()
-                
-                system_prompt = f"""
-Eres el Asistente Virtual de RRHH de la clínica Dolormed. Estás hablando con {user.get('full_name', 'colaborador')}.
-El empleado tiene actualmente {saldo_vac} días de vacaciones disponibles.
-
-A continuación, tienes acceso a la Base de Conocimiento oficial de la empresa (extraída de PDFs):
-<BASE_DE_CONOCIMIENTO>
-{kb_context}
-</BASE_DE_CONOCIMIENTO>
-
-Responde a sus preguntas basándote ESTRICTAMENTE en la información de la <BASE_DE_CONOCIMIENTO>. 
-Si el documento menciona reglas de vacaciones, permisos o incapacidades, usa esa información. 
-Si no hay información en la base de conocimiento para responder la pregunta, puedes usar las siguientes reglas básicas de contingencia:
-- Vacaciones: Deben solicitarse con 15 días de anticipación.
-- Incapacidades: Deben radicarse en máximo 2 días hábiles y adjuntar soporte médico.
-- Pagos de nómina: Se realizan los días 15 y 30 de cada mes. Certificados a nomina@dolormed.com.
-- Luto: 5 días hábiles.
-- Permisos por horas: Deben ser aprobados por el jefe directo (incluye citas, bancos).
-
-Si el usuario manifiesta la necesidad de hacer o reportar alguno de estos dos eventos específicos, DEBES incluir OBLIGATORIAMENTE al final de tu respuesta uno de los siguientes códigos para activar el botón automático del sistema:
-- Si el usuario llegó tarde o llegará tarde: Escribe el código exacto [ACTION_LLEGADA_TARDE]
-- Si el usuario necesita cambiar un turno: Escribe el código exacto [ACTION_CAMBIO_TURNO]
-
-Mantén tus respuestas amables, con emojis, profesionales y directas al punto (máximo 2 párrafos).
-"""
-                response_obj = model.generate_content(f"{system_prompt}\n\nPregunta del usuario: {prompt}")
-                response = response_obj.text
-                
-                if "[ACTION_LLEGADA_TARDE]" in response:
-                    action_btn = "llegada_tarde"
-                    response = response.replace("[ACTION_LLEGADA_TARDE]", "").strip()
-                elif "[ACTION_CAMBIO_TURNO]" in response:
-                    action_btn = "cambio_turno"
-                    response = response.replace("[ACTION_CAMBIO_TURNO]", "").strip()
-
-            except Exception as e:
-                response = f"🤖 Lo siento, en este momento mis circuitos están fallando. Por favor, comunícate directamente con RRHH al WhatsApp +57 315 6386178."
-
-            # 3. Agregar respuesta del bot
-            st.session_state.chat_messages.append(
-                {"role": "assistant", "content": response, "action": action_btn}
-            )
-            st.rerun()
-
-        # Renderizar botones de acción si el último mensaje tiene una acción sugerida
-        if st.session_state.chat_messages and st.session_state.chat_messages[-1]["role"] == "assistant":
-            last_msg = st.session_state.chat_messages[-1]
-            if last_msg.get("action") == "llegada_tarde":
-                if st.button("👉 Ir al formulario de Llegada Tarde", key=f"btn_llegada_tarde_{len(st.session_state.chat_messages)}"):
-                    fk = st.session_state.get("form_key", 0)
-                    st.session_state[f"categoria_{fk}"] = "Permisos"
-                    st.session_state[f"rt_permisos_{fk}"] = "Permiso Personal"
-                    st.session_state[f"is_paid_{fk}"] = "Sí, Remunerado"
-                    st.session_state[f"duracion_permiso_{fk}"] = "Por Horas"
-                    st.session_state[f"tipo_tiempo_{fk}"] = "Llegada Tarde"
-                    st.success("✅ Formulario pre-cargado. Sube y haz clic en la pestaña '📝 Radicar Nuevo Permiso' para completarlo.")
-            elif last_msg.get("action") == "cambio_turno":
-                if st.button("👉 Ir al formulario de Cambio de Turno", key=f"btn_cambio_turno_{len(st.session_state.chat_messages)}"):
-                    fk = st.session_state.get("form_key", 0)
-                    st.session_state[f"categoria_{fk}"] = "Cambio de Turno"
-                    st.success("✅ Formulario pre-cargado. Sube y haz clic en la pestaña '📝 Radicar Nuevo Permiso' para completarlo.")
-
-    with t4:
         st.subheader("Gestión de Trámites en Línea")
         st.info("Radica solicitudes a Talento Humano y Nómina. Adjunta soportes si es necesario.")
         
