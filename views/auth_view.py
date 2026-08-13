@@ -39,7 +39,7 @@ def register_employee_dialog():
 
         conn = db_conn()
         emp_df = pd.read_sql_query(
-            "SELECT full_name FROM employees WHERE user_id = ?",
+            "SELECT full_name FROM employees WHERE user_id = %s",
             conn,
             params=(cedula_reg,),
         )
@@ -53,7 +53,7 @@ def register_employee_dialog():
         full_name = emp_df.iloc[0]["full_name"]
 
         user_df = pd.read_sql_query(
-            "SELECT username FROM users_app WHERE username = ?",
+            "SELECT username FROM users_app WHERE username = %s",
             conn,
             params=(cedula_reg,),
         )
@@ -109,7 +109,7 @@ def register_employee_dialog():
             cur.execute(
                 """
                 INSERT INTO users_app(username, full_name, role, password_hash, active, created_at, managed_department, emp_area, emp_subarea, emp_phone, emp_email, managed_area)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
                 (
                     st.session_state["reg_dni"],
@@ -269,7 +269,7 @@ def forgot_password_dialog():
 
         conn = db_conn()
         df = pd.read_sql_query(
-            "SELECT full_name, emp_email FROM users_app WHERE username = ?",
+            "SELECT full_name, emp_email FROM users_app WHERE username = %s",
             conn,
             params=(dni,),
         )
@@ -315,7 +315,7 @@ def forgot_password_dialog():
 
         cur = conn.cursor()
         cur.execute(
-            "UPDATE users_app SET reset_pin = ?, reset_expires = ? WHERE username = ?",
+            "UPDATE users_app SET reset_pin = %s, reset_expires = %s WHERE username = %s",
             (pin, expires, dni),
         )
         conn.commit()
@@ -348,7 +348,7 @@ def forgot_password_dialog():
 
         conn = db_conn()
         df = pd.read_sql_query(
-            "SELECT reset_pin, reset_expires FROM users_app WHERE username = ?",
+            "SELECT reset_pin, reset_expires FROM users_app WHERE username = %s",
             conn,
             params=(st.session_state["fp_dni"],),
         )
@@ -367,7 +367,7 @@ def forgot_password_dialog():
             )
             cur = conn.cursor()
             cur.execute(
-                "UPDATE users_app SET reset_pin = NULL, reset_expires = NULL WHERE username = ?",
+                "UPDATE users_app SET reset_pin = NULL, reset_expires = NULL WHERE username = %s",
                 (st.session_state["fp_dni"],),
             )
             conn.commit()
@@ -378,14 +378,14 @@ def forgot_password_dialog():
         pw_hash = bcrypt.hashpw(pw1.encode("utf-8"), bcrypt.gensalt())
         cur = conn.cursor()
         cur.execute(
-            "UPDATE users_app SET password_hash = ?, reset_pin = NULL, reset_expires = NULL WHERE username = ?",
+            "UPDATE users_app SET password_hash = %s, reset_pin = NULL, reset_expires = NULL WHERE username = %s",
             (pw_hash, st.session_state["fp_dni"]),
         )
         conn.commit()
 
         # Consultar de forma segura para enviar correo
         df_mail = pd.read_sql_query(
-            "SELECT full_name, emp_email FROM users_app WHERE username = ?",
+            "SELECT full_name, emp_email FROM users_app WHERE username = %s",
             conn,
             params=(st.session_state["fp_dni"],),
         )

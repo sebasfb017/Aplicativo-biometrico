@@ -133,7 +133,7 @@ from services.notifications import generate_fth012_pdf
 def show_leave_request_details(req_id: int):
     conn = db_conn()
     df_req = pd.read_sql_query(
-        "SELECT * FROM leave_requests WHERE id = ?", conn, params=(req_id,)
+        "SELECT * FROM leave_requests WHERE id = %s", conn, params=(req_id,)
     )
 
     df_audit = pd.read_sql_query(
@@ -141,7 +141,7 @@ def show_leave_request_details(req_id: int):
         SELECT a.user_id, a.action, a.timestamp, u.full_name, a.details, u.role
         FROM audit_logs a
         LEFT JOIN users_app u ON a.user_id = u.username
-        WHERE a.details LIKE ? AND (a.action LIKE 'APPROVE_%' OR a.action LIKE 'REJECT_%')
+        WHERE a.details LIKE %s AND (a.action LIKE 'APPROVE_%' OR a.action LIKE 'REJECT_%')
         ORDER BY a.timestamp ASC
     """,
         conn,
@@ -399,7 +399,7 @@ def page_employee_portal():
     conn_vac = db_conn()
     cur_vac = conn_vac.cursor()
     cur_vac.execute(
-        "SELECT vacation_balance FROM users_app WHERE username = ?", (user["username"],)
+        "SELECT vacation_balance FROM users_app WHERE username = %s", (user["username"],)
     )
     row_vac = cur_vac.fetchone()
     conn_vac.close()
@@ -1005,7 +1005,7 @@ def page_employee_portal():
                 try:
                     with db_conn() as conn:
                         req_df = pd.read_sql_query(
-                            "SELECT status FROM leave_requests WHERE id = ?",
+                            "SELECT status FROM leave_requests WHERE id = %s",
                             conn,
                             params=(req_id,),
                         )
@@ -1016,7 +1016,7 @@ def page_employee_portal():
 
                             if target_status == "PENDING_COORD":
                                 user_app_df = pd.read_sql_query(
-                                    "SELECT emp_subarea FROM users_app WHERE username = ?",
+                                    "SELECT emp_subarea FROM users_app WHERE username = %s",
                                     conn,
                                     params=(user["username"],),
                                 )
@@ -1040,7 +1040,7 @@ def page_employee_portal():
                                         if c_row["emp_phone"]: target_phones.append(c_row["emp_phone"])
                             elif target_status == "PENDING_JEFE":
                                 user_app_df = pd.read_sql_query(
-                                    "SELECT role, emp_area, emp_subarea, managed_department FROM users_app WHERE username = ?",
+                                    "SELECT role, emp_area, emp_subarea, managed_department FROM users_app WHERE username = %s",
                                     conn,
                                     params=(user["username"],),
                                 )
@@ -1103,7 +1103,7 @@ def page_employee_portal():
                                     """
                                     SELECT emp_email, emp_phone FROM users_app 
                                     WHERE role = 'jefe_area' AND active = 1 
-                                    AND (managed_area = ? OR managed_area = 'Control Interno')
+                                    AND (managed_area = %s OR managed_area = 'Control Interno')
                                 """,
                                     conn,
                                     params=(target_jefe_area,),
@@ -1162,12 +1162,12 @@ def page_employee_portal():
         with db_conn() as conn:
             df_reqs = pd.read_sql_query(
                 """
-                SELECT id as Radicado, request_date as Fecha_Solicitud, leave_date_start, 
-                       leave_date_end, total_time as Duración, reason_type as Motivo, status as Estado,
+                SELECT id as "Radicado", request_date as "Fecha_Solicitud", leave_date_start, 
+                       leave_date_end, total_time as "Duración", reason_type as "Motivo", status as "Estado",
                        full_name
                 FROM leave_requests lr
                 JOIN users_app ua ON lr.user_id = ua.username
-                WHERE lr.user_id = ? AND (lr.hidden_by_employee IS NULL OR lr.hidden_by_employee = 0)
+                WHERE lr.user_id = %s AND (lr.hidden_by_employee IS NULL OR lr.hidden_by_employee = 0)
                 ORDER BY id DESC
             """,
                 conn,

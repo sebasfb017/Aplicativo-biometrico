@@ -20,7 +20,7 @@ from utils.constants import AREA_MAPPING
 def edit_user_dialog(username: str, emp_df: pd.DataFrame):
     conn = db_conn()
     df_u = pd.read_sql_query(
-        "SELECT * FROM users_app WHERE username = ?", conn, params=(username,)
+        "SELECT * FROM users_app WHERE username = %s", conn, params=(username,)
     )
     conn.close()
 
@@ -160,8 +160,8 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
                 cur.execute(
                     """
                     UPDATE users_app 
-                    SET role = ?, managed_department = ?, active = ?, password_hash = ?, emp_area = ?, emp_subarea = ?, emp_phone = ?, emp_email = ?, managed_area = ?
-                    WHERE username = ?
+                    SET role = %s, managed_department = %s, active = %s, password_hash = %s, emp_area = %s, emp_subarea = %s, emp_phone = %s, emp_email = %s, managed_area = %s
+                    WHERE username = %s
                 """,
                     (
                         new_role,
@@ -180,8 +180,8 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
                 cur.execute(
                     """
                     UPDATE users_app 
-                    SET role = ?, managed_department = ?, active = ?, emp_area = ?, emp_subarea = ?, emp_phone = ?, emp_email = ?, managed_area = ?
-                    WHERE username = ?
+                    SET role = %s, managed_department = %s, active = %s, emp_area = %s, emp_subarea = %s, emp_phone = %s, emp_email = %s, managed_area = %s
+                    WHERE username = %s
                 """,
                     (
                         new_role,
@@ -213,7 +213,7 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
     if submit_delete:
         conn = db_conn()
         cur = conn.cursor()
-        cur.execute("DELETE FROM users_app WHERE username = ?", (username,))
+        cur.execute("DELETE FROM users_app WHERE username = %s", (username,))
         conn.commit()
         conn.close()
         log_audit("DELETE_USER", f"Usuario eliminado del sistema: {username}")
@@ -339,7 +339,7 @@ def page_users_admin():
                     cur.execute(
                         """
                         INSERT INTO users_app(username, full_name, role, password_hash, active, created_at, managed_department, emp_area, emp_subarea, emp_phone, emp_email, managed_area)
-                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT(username) DO UPDATE SET
                             full_name=excluded.full_name,
                             role=excluded.role,
@@ -709,7 +709,7 @@ def render_vacations_tab():
                         from datetime import datetime
 
                         cur.execute(
-                            "UPDATE users_app SET hire_date = ?, vacation_balance = ?, last_anniversary_year = ? WHERE username = ?",
+                            "UPDATE users_app SET hire_date = %s, vacation_balance = %s, last_anniversary_year = %s WHERE username = %s",
                             (hire_date, dias, datetime.now().year, cedula),
                         )
                         if cur.rowcount > 0:
@@ -763,7 +763,7 @@ def render_vacations_tab():
                 from datetime import datetime
 
                 cur.execute(
-                    "UPDATE users_app SET hire_date = ?, vacation_balance = ?, last_anniversary_year = ? WHERE username = ?",
+                    "UPDATE users_app SET hire_date = %s, vacation_balance = %s, last_anniversary_year = %s WHERE username = %s",
                     (m_hire_date, m_balance, datetime.now().year, selected_user),
                 )
                 conn.commit()

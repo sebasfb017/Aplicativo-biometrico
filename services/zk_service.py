@@ -243,9 +243,10 @@ def upsert_attendance(rows: list[dict]):
 
     cur.executemany(
         """
-        INSERT OR IGNORE INTO attendance_raw(device_name, device_ip, user_id, ts, status, punch, uid, downloaded_at)
-        VALUES(?,?,?,?,?,?,?,?)
-    """,
+        INSERT INTO attendance_raw(device_name, device_ip, user_id, ts, status, punch, uid, downloaded_at)
+        VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+        ON CONFLICT (device_ip, user_id, ts, status, punch, uid) DO NOTHING
+        """,
         data,
     )
 
@@ -665,7 +666,7 @@ def automated_daily_sync():
         with db_session() as conn:
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO audit_logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)",
+                "INSERT INTO audit_logs (user_id, action, details, timestamp) VALUES (%s, %s, %s, %s)",
                 (
                     "system",
                     "AUTO_SYNC",

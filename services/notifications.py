@@ -26,7 +26,7 @@ def notify_employee_status(
     """Busca el correo y teléfono del empleado y le envía una notificación por Email y WhatsApp."""
     conn = db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT emp_email, emp_phone FROM users_app WHERE username = ?", (user_id,))
+    cur.execute("SELECT emp_email, emp_phone FROM users_app WHERE username = %s", (user_id,))
     row = cur.fetchone()
     conn.close()
     
@@ -61,7 +61,7 @@ def log_audit(action, details):
         cur.execute(
             """
             INSERT INTO audit_logs (user_id, action, details, timestamp)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
         """,
             (user_id, action, details, datetime.now().isoformat(timespec="seconds")),
         )

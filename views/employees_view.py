@@ -11,7 +11,7 @@ from utils.constants import AREA_MAPPING
 def edit_employee_dialog(user_id):
     with db_session() as conn:
         emp_df = pd.read_sql_query(
-            "SELECT full_name, department, profile_id FROM employees WHERE user_id = ?",
+            "SELECT full_name, department, profile_id FROM employees WHERE user_id = %s",
             conn,
             params=(user_id,),
         )
@@ -97,8 +97,8 @@ def edit_employee_dialog(user_id):
                 cur.execute(
                     """
                     UPDATE employees 
-                    SET full_name = ?, department = ?, profile_id = ?
-                    WHERE user_id = ?
+                    SET full_name = %s, department = %s, profile_id = %s
+                    WHERE user_id = %s
                 """,
                     (new_name.strip(), final_dept, new_prof_id, str(user_id)),
                 )
@@ -124,10 +124,10 @@ def edit_employee_dialog(user_id):
                 with db_session() as conn:
                     cur = conn.cursor()
                     cur.execute(
-                        "DELETE FROM employees WHERE user_id = ?", (str(user_id),)
+                        "DELETE FROM employees WHERE user_id = %s", (str(user_id),)
                     )
                     cur.execute(
-                        "DELETE FROM users_app WHERE username = ?", (str(user_id),)
+                        "DELETE FROM users_app WHERE username = %s", (str(user_id),)
                     )
 
                 get_all_employees.clear()

@@ -19,7 +19,7 @@ def edit_attendance_dialog(record_id: int):
         SELECT a.*, COALESCE(e.full_name, 'Sin registrar') as full_name
         FROM attendance_raw a 
         LEFT JOIN employees e ON a.user_id = e.user_id
-        WHERE a.id = ?
+        WHERE a.id = %s
     """,
         conn,
         params=(record_id,),
@@ -93,20 +93,20 @@ def edit_attendance_dialog(record_id: int):
                 cur.execute(
                     """
                     UPDATE attendance_raw 
-                    SET ts = ?, punch = ? 
-                    WHERE id = ?
+                    SET ts = %s, punch = %s 
+                    WHERE id = %s
                 """,
                     (new_ts, new_punch_key, record_id),
                 )
             else:
                 cur.execute(
-                    "UPDATE attendance_raw SET is_ignored = 1 WHERE id = ?",
+                    "UPDATE attendance_raw SET is_ignored = 1 WHERE id = %s",
                     (record_id,),
                 )
                 cur.execute(
                     """
                     INSERT INTO attendance_raw (device_name, device_ip, user_id, ts, status, punch, uid, downloaded_at, is_ignored, is_manual)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 1)
                 """,
                     (
                         str(rec["device_name"]),
@@ -145,10 +145,10 @@ def edit_attendance_dialog(record_id: int):
             cur = conn.cursor()
             is_manual = rec.get("is_manual", 0)
             if is_manual == 1:
-                cur.execute("DELETE FROM attendance_raw WHERE id = ?", (record_id,))
+                cur.execute("DELETE FROM attendance_raw WHERE id = %s", (record_id,))
             else:
                 cur.execute(
-                    "UPDATE attendance_raw SET is_ignored = 1 WHERE id = ?",
+                    "UPDATE attendance_raw SET is_ignored = 1 WHERE id = %s",
                     (record_id,),
                 )
             conn.commit()
@@ -254,7 +254,7 @@ def page_view_attendance():
         FROM attendance_raw a
         LEFT JOIN employees e ON a.user_id = e.user_id
         LEFT JOIN users_app ua ON a.user_id = ua.username
-        WHERE a.ts >= ? AND a.ts < ? AND a.is_ignored = 0
+        WHERE a.ts >= %s AND a.ts < %s AND a.is_ignored = 0
     """
     params = [
         start_dt.isoformat(sep=" ", timespec="seconds"),
@@ -262,20 +262,20 @@ def page_view_attendance():
     ]
 
     if selected_device != "Todos los Dispositivos":
-        query += " AND a.device_name = ?"
+        query += " AND a.device_name = %s"
         params.append(selected_device)
 
     if user_filter.strip():
-        query += " AND (a.user_id LIKE ? OR e.full_name LIKE ?)"
+        query += " AND (a.user_id LIKE %s OR e.full_name LIKE %s)"
         search_term = f"%{user_filter.strip()}%"
         params.extend([search_term, search_term])
 
     if selected_area != "Todas las Áreas":
-        query += " AND ua.emp_area = ?"
+        query += " AND ua.emp_area = %s"
         params.append(selected_area)
 
     if selected_subarea != "Todas las Sub-áreas":
-        query += " AND ua.emp_subarea = ?"
+        query += " AND ua.emp_subarea = %s"
         params.append(selected_subarea)
 
     query += " ORDER BY a.ts DESC"

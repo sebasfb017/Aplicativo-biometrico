@@ -43,7 +43,7 @@ def page_dashboard():
     novedades_pend = cur.fetchone()[0]
 
     cur.execute(
-        "SELECT COUNT(*) FROM attendance_raw WHERE date(ts) = date('now', 'localtime') AND is_ignored = 0"
+        "SELECT COUNT(*) FROM attendance_raw WHERE CAST(ts AS date) = CURRENT_DATE AND is_ignored = 0"
     )
     marcaciones_hoy = cur.fetchone()[0]
 
@@ -220,11 +220,11 @@ def page_dashboard():
     st.subheader("📈 Actividad del Biométrico (Últimos 7 Días)")
     df_act = pd.read_sql_query(
         """
-        SELECT date(ts) as fecha, COUNT(*) as cantidad 
+        SELECT CAST(ts AS date) as fecha, COUNT(*) as cantidad 
         FROM attendance_raw 
-        WHERE date(ts) >= date('now', '-7 days') AND is_ignored = 0
-        GROUP BY date(ts)
-        ORDER BY date(ts)
+        WHERE CAST(ts AS date) >= CURRENT_DATE - INTERVAL '7 days' AND is_ignored = 0
+        GROUP BY CAST(ts AS date)
+        ORDER BY CAST(ts AS date)
     """,
         conn,
     )
@@ -250,8 +250,8 @@ def page_dashboard():
 
     df_pendientes = pd.read_sql_query(
         """
-        SELECT lr.id as Radicado, lr.request_date as Fecha, u.full_name as Empleado, 
-               e.department as Departamento, lr.reason_type as Motivo, lr.status as Estado
+        SELECT lr.id as "Radicado", lr.request_date as "Fecha", u.full_name as "Empleado", 
+               e.department as "Departamento", lr.reason_type as "Motivo", lr.status as "Estado"
         FROM leave_requests lr
         JOIN users_app u ON lr.user_id = u.username
         LEFT JOIN employees e ON u.username = e.user_id
@@ -290,15 +290,15 @@ def page_dashboard():
         yesterday = (date.today() - timedelta(days=1)).isoformat()
 
         missing_query = """
-            SELECT e.full_name as Empleado, sa.user_id as ID
+            SELECT e.full_name as "Empleado", sa.user_id as "ID"
             FROM shift_assignments sa
             JOIN employees e ON sa.user_id = e.user_id
-            WHERE sa.week_start = ? AND sa.dow = ? 
+            WHERE sa.week_start = %s AND sa.dow = %s 
             AND sa.user_id NOT IN (
-                SELECT user_id FROM attendance_raw WHERE date(ts) = ? AND is_ignored = 0
+                SELECT user_id FROM attendance_raw WHERE CAST(ts AS date) = %s AND is_ignored = 0
             )
             AND sa.user_id NOT IN (
-                SELECT user_id FROM exceptions WHERE date = ?
+                SELECT user_id FROM exceptions WHERE date = %s
             )
         """
         y_date = date.today() - timedelta(days=1)
@@ -322,10 +322,10 @@ def page_dashboard():
             date.today() - timedelta(days=date.today().weekday())
         ).isoformat()
         no_shift_query = """
-            SELECT full_name as Empleado, user_id as ID
+            SELECT full_name as "Empleado", user_id as "ID"
             FROM employees 
             WHERE user_id NOT IN (
-                SELECT DISTINCT user_id FROM shift_assignments WHERE week_start = ?
+                SELECT DISTINCT user_id FROM shift_assignments WHERE week_start = %s
             )
         """
         no_sch_df = pd.read_sql_query(no_shift_query, conn, params=(this_week_start,))

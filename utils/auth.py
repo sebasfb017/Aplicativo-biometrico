@@ -14,7 +14,7 @@ def get_user(username: str):
         cur.execute(
             """
             SELECT username, full_name, role, password_hash, active, managed_department, failed_attempts, locked_until, managed_area, emp_area, emp_subarea
-            FROM users_app WHERE username = ?
+            FROM users_app WHERE username = %s
         """,
             (username,),
         )
@@ -24,7 +24,7 @@ def get_user(username: str):
         cur.execute(
             """
             SELECT username, full_name, role, password_hash, active, managed_department, NULL, NULL, NULL, NULL, NULL
-            FROM users_app WHERE username = ?
+            FROM users_app WHERE username = %s
         """,
             (username,),
         )
@@ -94,12 +94,15 @@ def verify_login(username: str, password: str):
                 }
             )
 
+    if isinstance(pw_hash, memoryview):
+        pw_hash = bytes(pw_hash)
+
     if bcrypt.checkpw(password.encode("utf-8"), pw_hash):
         # Login exitoso, limpiar intentos
         conn = db_conn()
         cur = conn.cursor()
         cur.execute(
-            "UPDATE users_app SET failed_attempts = 0, locked_until = NULL WHERE username = ?",
+            "UPDATE users_app SET failed_attempts = 0, locked_until = NULL WHERE username = %s",
             (username,),
         )
         conn.commit()
@@ -126,7 +129,7 @@ def verify_login(username: str, password: str):
             )
 
         cur.execute(
-            "UPDATE users_app SET failed_attempts = ?, locked_until = ? WHERE username = ?",
+            "UPDATE users_app SET failed_attempts = %s, locked_until = %s WHERE username = %s",
             (new_attempts, new_locked_until, username),
         )
         conn.commit()

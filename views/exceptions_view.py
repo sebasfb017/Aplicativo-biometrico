@@ -59,11 +59,11 @@ def check_schedule_conflicts(
         FROM leave_requests lr
         JOIN employees e ON lr.user_id = e.user_id
         WHERE lr.status = 'APPROVED'
-          AND lr.id != ?
+          AND lr.id != %s
           AND (
-              (lr.leave_date_start <= ? AND lr.leave_date_end >= ?) OR
-              (lr.leave_date_start <= ? AND lr.leave_date_end >= ?) OR
-              (lr.leave_date_start >= ? AND lr.leave_date_end <= ?)
+              (lr.leave_date_start <= %s AND lr.leave_date_end >= %s) OR
+              (lr.leave_date_start <= %s AND lr.leave_date_end >= %s) OR
+              (lr.leave_date_start >= %s AND lr.leave_date_end <= %s)
           )
     """
 
@@ -82,12 +82,12 @@ def check_schedule_conflicts(
         depts = [d.strip() for d in managed_entity.split(",") if d.strip()]
         if not depts:
             depts = [""]
-        like_conds = " OR ".join(["e.department LIKE ?"] * len(depts))
+        like_conds = " OR ".join(["e.department LIKE %s"] * len(depts))
         query += f" AND ({like_conds})"
         for d in depts:
             params.append(f"% - {d}")
     elif approver_role == "jefe_area":
-        query += " AND e.department LIKE ?"
+        query += " AND e.department LIKE %s"
         params.append(f"{managed_entity} - %")
 
     with db_conn() as conn:
@@ -112,7 +112,7 @@ def show_exception_details(exc_id: int):
             SELECT ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
             FROM exceptions ex
             LEFT JOIN employees e ON ex.user_id = e.user_id
-            WHERE ex.id = ?
+            WHERE ex.id = %s
         """,
             conn,
             params=(exc_id,),
@@ -135,8 +135,8 @@ def show_exception_details(exc_id: int):
             """
             SELECT *
             FROM leave_requests
-            WHERE user_id = ? AND status = 'APPROVED'
-              AND leave_date_start <= ? AND leave_date_end >= ?
+            WHERE user_id = %s AND status = 'APPROVED'
+              AND leave_date_start <= %s AND leave_date_end >= %s
             ORDER BY id DESC LIMIT 1
         """,
             conn,
@@ -234,7 +234,7 @@ def show_exception_details(exc_id: int):
                 SELECT a.user_id, a.action, a.timestamp, u.full_name, a.details, u.role
                 FROM audit_logs a
                 LEFT JOIN users_app u ON a.user_id = u.username
-                WHERE a.details LIKE ? AND a.action LIKE 'APPROVE_%'
+                WHERE a.details LIKE %s AND a.action LIKE 'APPROVE_%'
                 ORDER BY a.timestamp ASC
             """,
                 conn,
@@ -420,7 +420,7 @@ def handle_approve_callback(r_dict, user):
                 cur.execute(
                     """
                     INSERT INTO exceptions(user_id, date, type, notes, created_at)
-                    VALUES(?,?,?,?,?)
+                    VALUES(%s,%s,%s,%s,%s)
                     ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
                 """,
                     (
@@ -435,7 +435,7 @@ def handle_approve_callback(r_dict, user):
 
             if r_dict["reason_type"] == "Vacaciones" and days_deducted > 0:
                 cur.execute(
-                    "UPDATE users_app SET vacation_balance = vacation_balance - ? WHERE username = ?",
+                    "UPDATE users_app SET vacation_balance = vacation_balance - %s WHERE username = %s",
                     (days_deducted, r_dict["user_id"]),
                 )
 
@@ -531,7 +531,7 @@ def render_absence_calendar(user):
             JOIN employees e ON lr.user_id = e.user_id
             LEFT JOIN users_app ua ON lr.user_id = ua.username
             WHERE lr.status IN {status_filter}
-              AND lr.leave_date_start <= ? AND lr.leave_date_end >= ?
+              AND lr.leave_date_start <= %s AND lr.leave_date_end >= %s
             ORDER BY lr.leave_date_start ASC
         """
         params = (last_day_str, first_day_str)
@@ -548,7 +548,7 @@ def render_absence_calendar(user):
             else ""
         )
         cond_zarzal = (
-            f"OR (lr.user_id IN ({','.join(['?'] * len(ZARZAL_EMPLOYEES))}))"
+            f"OR (lr.user_id IN ({','.join(['%s'] * len(ZARZAL_EMPLOYEES))}))"
             if user["username"] == "111644844"
             else ""
         )
@@ -560,9 +560,9 @@ def render_absence_calendar(user):
             JOIN employees e ON lr.user_id = e.user_id
             LEFT JOIN users_app ua ON lr.user_id = ua.username
             WHERE lr.status IN {status_filter}
-              AND lr.leave_date_start <= ? AND lr.leave_date_end >= ?
+              AND lr.leave_date_start <= %s AND lr.leave_date_end >= %s
               AND (
-                  ? LIKE '%' || ua.emp_subarea || '%'
+                  %s LIKE '%' || ua.emp_subarea || '%'
                   {cond_serv_gen}
                   {cond_orientador}
                   {cond_zarzal}
@@ -582,7 +582,7 @@ def render_absence_calendar(user):
                 JOIN employees e ON lr.user_id = e.user_id
                 LEFT JOIN users_app ua ON lr.user_id = ua.username
                 WHERE lr.status IN {status_filter}
-                  AND lr.leave_date_start <= ? AND lr.leave_date_end >= ?
+                  AND lr.leave_date_start <= %s AND lr.leave_date_end >= %s
                 ORDER BY lr.leave_date_start ASC
             """
             params = (last_day_str, first_day_str)
@@ -594,13 +594,13 @@ def render_absence_calendar(user):
                 JOIN employees e ON lr.user_id = e.user_id
                 LEFT JOIN users_app ua ON lr.user_id = ua.username
                 WHERE lr.status IN {status_filter}
-                  AND lr.leave_date_start <= ? AND lr.leave_date_end >= ?
+                  AND lr.leave_date_start <= %s AND lr.leave_date_end >= %s
                   AND (
-                      (ua.username IN ('119279359', '111627893') AND ? = 'Administrativo') OR
-                      (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
-                      (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo') OR
-                      (ua.emp_subarea = 'Admisiones' AND ? = 'Financiera') OR
-                      (lr.user_id IN ({",".join(["?"] * len(ZARZAL_EMPLOYEES))}) AND ? = 'Administrativo')
+                      (ua.username IN ('119279359', '111627893') AND %s = 'Administrativo') OR
+                      (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
+                      (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
+                      (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
+                      (lr.user_id IN ({",".join(["%s"] * len(ZARZAL_EMPLOYEES))}) AND %s = 'Administrativo')
                   )
                 ORDER BY lr.leave_date_start ASC
             """
@@ -866,7 +866,7 @@ def page_exceptions():
                     else ""
                 )
                 cond_zarzal = (
-                    f"OR (lr.user_id IN ({','.join(['?'] * len(ZARZAL_EMPLOYEES))}))"
+                    f"OR (lr.user_id IN ({','.join(['%s'] * len(ZARZAL_EMPLOYEES))}))"
                     if user["username"] == "111644844"
                     else ""
                 )
@@ -880,7 +880,7 @@ def page_exceptions():
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_COORD' AND 
                           (
-                              ? LIKE '%' || ua.emp_subarea || '%'
+                              %s LIKE '%' || ua.emp_subarea || '%'
                               {cond_serv_gen}
                               {cond_orientador}
                               {cond_zarzal}
@@ -918,11 +918,11 @@ def page_exceptions():
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_JEFE' AND 
                           (
-                              (ua.username IN ('119279359', '111627893') AND ? = 'Administrativo') OR
-                              (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = ? AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
-                              (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND ? = 'Administrativo') OR
-                              (ua.emp_subarea = 'Admisiones' AND ? = 'Financiera') OR
-                              (lr.user_id IN ({",".join(["?"] * len(ZARZAL_EMPLOYEES))}) AND ? = 'Administrativo')
+                              (ua.username IN ('119279359', '111627893') AND %s = 'Administrativo') OR
+                              (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
+                              (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
+                              (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
+                              (lr.user_id IN ({",".join(["%s"] * len(ZARZAL_EMPLOYEES))}) AND %s = 'Administrativo')
                           )
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
@@ -1166,9 +1166,9 @@ def page_exceptions():
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
                     JOIN users_app ua ON lr.user_id = ua.username
-                    WHERE lr.approved_by_coord = ? 
+                    WHERE lr.approved_by_coord = %s 
                        OR (lr.status = 'REJECTED' AND (
-                              ? LIKE '%' || ua.emp_subarea || '%'
+                              %s LIKE '%' || ua.emp_subarea || '%'
                               {cond_serv_gen}
                               {cond_orientador}
                           ))
@@ -1182,12 +1182,12 @@ def page_exceptions():
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
                     JOIN users_app ua ON lr.user_id = ua.username
-                    WHERE lr.approved_by_jefe = ?
+                    WHERE lr.approved_by_jefe = %s
                        OR (lr.status = 'REJECTED' AND (
-                              ua.emp_area = ? OR 
-                              (ua.emp_subarea = 'Admisiones' AND ? = 'Financiera') OR
-                              (ua.emp_subarea = 'Auditor Médico' AND ? = 'Auditoria Médica') OR
-                              (ua.emp_subarea = 'Control Interno' AND ? = 'Control Interno')
+                              ua.emp_area = %s OR 
+                              (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
+                              (ua.emp_subarea = 'Auditor Médico' AND %s = 'Auditoria Médica') OR
+                              (ua.emp_subarea = 'Control Interno' AND %s = 'Control Interno')
                           ))
                     ORDER BY lr.id DESC
                 """
@@ -1905,7 +1905,7 @@ def page_exceptions():
                                             cur.execute(
                                                 """
                                                 INSERT INTO exceptions(user_id, date, type, notes, created_at)
-                                                VALUES(?,?,?,?,?)
+                                                VALUES(%s,%s,%s,%s,%s)
                                                 ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
                                             """,
                                                 (
@@ -1925,7 +1925,7 @@ def page_exceptions():
                                             and days_deducted > 0
                                         ):
                                             cur.execute(
-                                                "UPDATE users_app SET vacation_balance = vacation_balance - ? WHERE username = ?",
+                                                "UPDATE users_app SET vacation_balance = vacation_balance - %s WHERE username = %s",
                                                 (days_deducted, r["user_id"]),
                                             )
                                     log_audit(
@@ -2311,7 +2311,7 @@ def page_exceptions():
                                     # Obtener correo del empleado (usando el db_session global)
                                     with db_session() as conn:
                                         c = conn.cursor()
-                                        c.execute("SELECT email FROM users_app WHERE username = ?", (user_id,))
+                                        c.execute("SELECT email FROM users_app WHERE username = %s", (user_id,))
                                         res = c.fetchone()
                                         emp_email = res[0] if res else None
                                         

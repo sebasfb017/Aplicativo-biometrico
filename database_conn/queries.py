@@ -19,7 +19,7 @@ def db_create_session(username: str) -> str:
         cur.execute(
             """
             INSERT INTO user_sessions (token, username, created_at, expires_at)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
         """,
             (token, username, now.isoformat(), expires.isoformat()),
         )
@@ -36,7 +36,7 @@ def db_validate_session(token: str):
             SELECT u.username, u.full_name, u.role, u.active, u.emp_area, u.emp_subarea, u.managed_department, u.managed_area
             FROM user_sessions s
             JOIN users_app u ON s.username = u.username
-            WHERE s.token = ? AND s.expires_at > ? AND u.active = 1
+            WHERE s.token = %s AND s.expires_at > %s AND u.active = 1
         """,
             (token, now_str),
         )
@@ -60,7 +60,7 @@ def db_delete_session(token: str):
     """Elimina la sesión correspondiente al token para cerrar la sesión."""
     with db_session() as conn:
         cur = conn.cursor()
-        cur.execute("DELETE FROM user_sessions WHERE token = ?", (token,))
+        cur.execute("DELETE FROM user_sessions WHERE token = %s", (token,))
 
 
 # --- GESTIÓN DE USUARIOS (Corrección de Errores y Consultas) ---
@@ -71,7 +71,7 @@ def db_delete_session(token: str):
 def get_users_by_role(roles_list):
     """Obtiene usuarios filtrados por una lista de roles para las tablas de administración."""
     conn = db_conn()
-    roles_placeholders = ",".join(["?"] * len(roles_list))
+    roles_placeholders = ",".join(["%s"] * len(roles_list))
 
     # Si solo buscamos empleados, usamos una consulta optimizada para esa vista
     if "empleado" in roles_list and len(roles_list) == 1:
@@ -118,7 +118,7 @@ def upsert_employees_df(df: pd.DataFrame):
                 profile_val = r["profile_id"]
                 if isinstance(profile_val, str):
                     cur.execute(
-                        "SELECT profile_id FROM profiles WHERE name = ?",
+                        "SELECT profile_id FROM profiles WHERE name = %s",
                         (profile_val.strip(),),
                     )
                     profile_row = cur.fetchone()
@@ -130,7 +130,7 @@ def upsert_employees_df(df: pd.DataFrame):
             cur.execute(
                 """
                 INSERT INTO employees(user_id, full_name, email, department, profile_id, created_at)
-                VALUES(?,?,?,?,?,?)
+                VALUES(%s,%s,%s,%s,%s,%s)
                 ON CONFLICT(user_id) DO UPDATE SET
                     full_name = COALESCE(NULLIF(excluded.full_name, ''), employees.full_name),
                     email = COALESCE(NULLIF(excluded.email, ''), employees.email),
@@ -156,7 +156,7 @@ def is_holiday(date_obj: date) -> bool:
     """Verifica si una fecha existe en la tabla de festivos."""
     conn = db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM holidays WHERE date = ?", (date_obj.isoformat(),))
+    cur.execute("SELECT COUNT(*) FROM holidays WHERE date = %s", (date_obj.isoformat(),))
     count = cur.fetchone()[0]
     conn.close()
     return count > 0
@@ -180,7 +180,7 @@ def upsert_shift(name, start_time, grace_minutes, **kwargs):
             """
             INSERT INTO shifts(name, start_time, end_time, grace_minutes, has_break, 
                                break_start, break_end, is_overnight, shift_code, created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT(name) DO UPDATE SET
                 start_time=excluded.start_time, grace_minutes=excluded.grace_minutes,
                 shift_code=excluded.shift_code
@@ -199,7 +199,7 @@ def upsert_shift(name, start_time, grace_minutes, **kwargs):
             ),
         )
 
-        cur.execute("SELECT id FROM shifts WHERE name = ?", (name.strip(),))
+        cur.execute("SELECT id FROM shifts WHERE name = %s", (name.strip(),))
         row = cur.fetchone()
         shift_id = row[0] if row else None
     get_shifts_df.clear()
@@ -213,7 +213,7 @@ def assign_shift(user_id, week_start, dow, shift_id):
         cur.execute(
             """
             INSERT INTO shift_assignments(user_id, week_start, dow, shift_id, created_at)
-            VALUES(?,?,?,?,?)
+            VALUES(%s,%s,%s,%s,%s)
             ON CONFLICT(user_id, week_start, dow) DO UPDATE SET shift_id=excluded.shift_id
         """,
             (
@@ -236,7 +236,7 @@ def upsert_exception(user_id, date_str, exc_type, notes):
         cur.execute(
             """
             INSERT INTO exceptions(user_id, date, type, notes, created_at)
-            VALUES(?,?,?,?,?)
+            VALUES(%s,%s,%s,%s,%s)
             ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
         """,
             (
@@ -341,7 +341,7 @@ def db_create_leave_request(
     with db_session() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT role, emp_subarea FROM users_app WHERE username = ?", (user_id,)
+            "SELECT role, emp_subarea FROM users_app WHERE username = %s", (user_id,)
         )
         row = cur.fetchone()
         role = row[0] if row else "empleado"
@@ -398,7 +398,7 @@ def db_create_leave_request(
             INSERT INTO leave_requests (
                 user_id, request_date, leave_date_start, leave_date_end, start_time, end_time, 
                 total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status, attachment_path, specific_dates, approved_by_jefe
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
             (
                 user_id,
@@ -432,7 +432,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
 
         # Get requester details
         cur.execute(
-            "SELECT full_name, emp_area, emp_subarea, role, managed_department FROM users_app WHERE username = ?",
+            "SELECT full_name, emp_area, emp_subarea, role, managed_department FROM users_app WHERE username = %s",
             (requester_id,),
         )
         req_row = cur.fetchone()
@@ -442,7 +442,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
 
         # Get request details for notifications
         cur.execute(
-            "SELECT reason_type, reason_description FROM leave_requests WHERE id = ?",
+            "SELECT reason_type, reason_description FROM leave_requests WHERE id = %s",
             (req_id,),
         )
         req_info = cur.fetchone()
@@ -453,7 +453,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
         if status == "PENDING_COORD":
             msg = f"Tu solicitud #{req_id} ha sido radicada y está pendiente del visto bueno de tu Coordinador."
             cur.execute(
-                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                 (
                     requester_id,
                     "Solicitud Radicada",
@@ -467,7 +467,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             else:
                 msg = f"Tu solicitud #{req_id} ha sido radicada y pasó directo a validación de RRHH."
             cur.execute(
-                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                 (
                     requester_id,
                     "Paso a RRHH",
@@ -481,7 +481,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             else:
                 msg = f"Tu solicitud #{req_id} ha sido radicada y pasó a firma final del Jefe de Área."
             cur.execute(
-                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                 (
                     requester_id,
                     "Paso a Jefe de Área",
@@ -492,7 +492,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
         elif status == "APPROVED":
             msg = f"¡Felicidades! Tu solicitud #{req_id} ha sido APROBADA de forma definitiva."
             cur.execute(
-                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                 (
                     requester_id,
                     "Solicitud Aprobada",
@@ -503,7 +503,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
         elif status == "REJECTED":
             msg = f"Tu solicitud #{req_id} fue rechazada por {actor_name or 'un administrador'}."
             cur.execute(
-                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                 (
                     requester_id,
                     "Solicitud Rechazada",
@@ -514,7 +514,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
         elif status == "CANCELLED":
             msg = f"Tu solicitud #{req_id} ha sido cancelada."
             cur.execute(
-                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                 (
                     requester_id,
                     "Solicitud Cancelada",
@@ -528,7 +528,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             if str(requester_id) in ZARZAL_EMPLOYEES:
                 # Notify Angy Jaramillo (111644844) directly
                 cur.execute(
-                    "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                     (
                         "111644844",
                         "Permiso por Autorizar (Sede Zarzal)",
@@ -544,7 +544,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                 coords = cur.fetchall()
                 for c in coords:
                     cur.execute(
-                        "SELECT managed_department FROM users_app WHERE username = ?",
+                        "SELECT managed_department FROM users_app WHERE username = %s",
                         (c[0],),
                     )
                     m_dept = cur.fetchone()[0] or ""
@@ -557,7 +557,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
 
                     if target_subarea in m_dept or req_subarea in m_dept:
                         cur.execute(
-                            "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                            "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                             (
                                 c[0],
                                 "Permiso por Autorizar",
@@ -574,7 +574,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             admins = cur.fetchall()
             for a in admins:
                 cur.execute(
-                    "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                     (
                         a[0],
                         "Validación RRHH",
@@ -643,7 +643,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                 areas_to_notify.append("Control Interno")
 
             # Find Jefes of these areas
-            placeholders = ",".join(["?"] * len(areas_to_notify))
+            placeholders = ",".join(["%s"] * len(areas_to_notify))
             cur.execute(
                 f"SELECT username FROM users_app WHERE role = 'jefe_area' AND managed_area IN ({placeholders}) AND active = 1",
                 tuple(areas_to_notify),
@@ -651,7 +651,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             jefes = cur.fetchall()
             for j in jefes:
                 cur.execute(
-                    "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                     (
                         j[0],
                         "Firma de Jefe Requerida",
@@ -664,12 +664,12 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
 def db_approve_leave_request_coord(req_id, coord_username):
     with db_session() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT user_id FROM leave_requests WHERE id = ?", (req_id,))
+        cur.execute("SELECT user_id FROM leave_requests WHERE id = %s", (req_id,))
         uid_row = cur.fetchone()
         user_id = uid_row[0] if uid_row else None
 
         cur.execute(
-            "SELECT full_name FROM users_app WHERE username = ?", (coord_username,)
+            "SELECT full_name FROM users_app WHERE username = %s", (coord_username,)
         )
         coord_row = cur.fetchone()
         coord_name = coord_row[0] if coord_row else coord_username
@@ -677,8 +677,8 @@ def db_approve_leave_request_coord(req_id, coord_username):
         cur.execute(
             """
             UPDATE leave_requests 
-            SET status = 'PENDING_RRHH', approved_by_coord = ?, coord_approval_date = ?
-            WHERE id = ? AND status = 'PENDING_COORD'
+            SET status = 'PENDING_RRHH', approved_by_coord = %s, coord_approval_date = %s
+            WHERE id = %s AND status = 'PENDING_COORD'
         """,
             (coord_username, datetime.now().isoformat(timespec="seconds"), req_id),
         )
@@ -692,12 +692,12 @@ def db_approve_leave_request_coord(req_id, coord_username):
 def db_approve_leave_request_jefe(req_id, jefe_username):
     with db_session() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT user_id FROM leave_requests WHERE id = ?", (req_id,))
+        cur.execute("SELECT user_id FROM leave_requests WHERE id = %s", (req_id,))
         uid_row = cur.fetchone()
         user_id = uid_row[0] if uid_row else None
 
         cur.execute(
-            "SELECT full_name FROM users_app WHERE username = ?", (jefe_username,)
+            "SELECT full_name FROM users_app WHERE username = %s", (jefe_username,)
         )
         j_row = cur.fetchone()
         jefe_name = j_row[0] if j_row else jefe_username
@@ -705,8 +705,8 @@ def db_approve_leave_request_jefe(req_id, jefe_username):
         cur.execute(
             """
             UPDATE leave_requests 
-            SET status = 'PENDING_RRHH', approved_by_jefe = ?, jefe_approval_date = ?
-            WHERE id = ? AND status = 'PENDING_JEFE'
+            SET status = 'PENDING_RRHH', approved_by_jefe = %s, jefe_approval_date = %s
+            WHERE id = %s AND status = 'PENDING_JEFE'
         """,
             (jefe_username, datetime.now().isoformat(timespec="seconds"), req_id),
         )
@@ -720,12 +720,12 @@ def db_approve_leave_request_jefe(req_id, jefe_username):
 def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
     with db_session() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT user_id FROM leave_requests WHERE id = ?", (req_id,))
+        cur.execute("SELECT user_id FROM leave_requests WHERE id = %s", (req_id,))
         uid_row = cur.fetchone()
         user_id = uid_row[0] if uid_row else None
 
         cur.execute(
-            "SELECT full_name FROM users_app WHERE username = ?", (approver_user,)
+            "SELECT full_name FROM users_app WHERE username = %s", (approver_user,)
         )
         a_row = cur.fetchone()
         approver_name = a_row[0] if a_row else approver_user
@@ -735,8 +735,8 @@ def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
         cur.execute(
             """
             UPDATE leave_requests 
-            SET status = ?, approved_by_rrhh = ?, rrhh_approval_date = ? 
-            WHERE id = ?
+            SET status = %s, approved_by_rrhh = %s, rrhh_approval_date = %s 
+            WHERE id = %s
         """,
             (status, approver_user, now, req_id),
         )
@@ -750,12 +750,12 @@ def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
 def db_reject_leave_request(req_id, rejected_by, rejection_reason):
     with db_session() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT user_id FROM leave_requests WHERE id = ?", (req_id,))
+        cur.execute("SELECT user_id FROM leave_requests WHERE id = %s", (req_id,))
         uid_row = cur.fetchone()
         user_id = uid_row[0] if uid_row else None
 
         cur.execute(
-            "SELECT full_name FROM users_app WHERE username = ?", (rejected_by,)
+            "SELECT full_name FROM users_app WHERE username = %s", (rejected_by,)
         )
         r_row = cur.fetchone()
         rejecter_name = r_row[0] if r_row else rejected_by
@@ -763,8 +763,8 @@ def db_reject_leave_request(req_id, rejected_by, rejection_reason):
         cur.execute(
             """
             UPDATE leave_requests 
-            SET status = 'REJECTED', rejection_reason = ?
-            WHERE id = ?
+            SET status = 'REJECTED', rejection_reason = %s
+            WHERE id = %s
         """,
             (
                 rejection_reason,
@@ -778,7 +778,7 @@ def db_reject_leave_request(req_id, rejected_by, rejection_reason):
         cur.execute(
             """
             INSERT INTO audit_logs (user_id, action, details, timestamp)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
         """,
             (
                 rejected_by,
@@ -803,7 +803,7 @@ def db_revert_leave_request(req_id, admin_user):
         cur = conn.cursor()
 
         cur.execute(
-            "SELECT user_id, status, reason_type, leave_date_start, leave_date_end, specific_dates FROM leave_requests WHERE id = ?",
+            "SELECT user_id, status, reason_type, leave_date_start, leave_date_end, specific_dates FROM leave_requests WHERE id = %s",
             (req_id,),
         )
         req_row = cur.fetchone()
@@ -821,20 +821,20 @@ def db_revert_leave_request(req_id, admin_user):
                 dates_list = specific_dates.split(",")
                 for d in dates_list:
                     cur.execute(
-                        "DELETE FROM exceptions WHERE user_id = ? AND date = ? AND notes LIKE 'Aprobado de Portal%'",
+                        "DELETE FROM exceptions WHERE user_id = %s AND date = %s AND notes LIKE 'Aprobado de Portal%'",
                         (user_id, d),
                     )
                     days_refunded += cur.rowcount
             else:
                 cur.execute(
-                    "DELETE FROM exceptions WHERE user_id = ? AND date >= ? AND date <= ? AND notes LIKE 'Aprobado de Portal%'",
+                    "DELETE FROM exceptions WHERE user_id = %s AND date >= %s AND date <= %s AND notes LIKE 'Aprobado de Portal%'",
                     (user_id, start_date, end_date),
                 )
                 days_refunded += cur.rowcount
 
             if reason_type == "Vacaciones" and days_refunded > 0:
                 cur.execute(
-                    "UPDATE users_app SET vacation_balance = vacation_balance + ? WHERE username = ?",
+                    "UPDATE users_app SET vacation_balance = vacation_balance + %s WHERE username = %s",
                     (days_refunded, user_id),
                 )
 
@@ -846,7 +846,7 @@ def db_revert_leave_request(req_id, admin_user):
                 approved_by_jefe = NULL, jefe_approval_date = NULL,
                 approved_by_coord = NULL, coord_approval_date = NULL,
                 rejection_reason = NULL, cancellation_reason = NULL
-            WHERE id = ?
+            WHERE id = %s
         """,
             (req_id,),
         )
@@ -855,7 +855,7 @@ def db_revert_leave_request(req_id, admin_user):
         cur.execute(
             """
             INSERT INTO audit_logs (user_id, action, details, timestamp)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
         """,
             (
                 admin_user,
@@ -868,7 +868,7 @@ def db_revert_leave_request(req_id, admin_user):
         cur.execute(
             """
             INSERT INTO notifications (user_id, title, message, created_at)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
         """,
             (
                 user_id,
@@ -890,15 +890,15 @@ def db_cancel_leave_request(req_id, user_id, reason):
         cur = conn.cursor()
 
         # Obtener el estado actual antes de cancelar para saber a quién notificar
-        cur.execute("SELECT status FROM leave_requests WHERE id = ?", (req_id,))
+        cur.execute("SELECT status FROM leave_requests WHERE id = %s", (req_id,))
         status_row = cur.fetchone()
         prev_status = status_row[0] if status_row else None
 
         cur.execute(
             """
             UPDATE leave_requests 
-            SET status = 'CANCELLED', cancellation_reason = ?
-            WHERE id = ? AND user_id = ? AND status IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')
+            SET status = 'CANCELLED', cancellation_reason = %s
+            WHERE id = %s AND user_id = %s AND status IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')
         """,
             (reason, req_id, user_id),
         )
@@ -908,7 +908,7 @@ def db_cancel_leave_request(req_id, user_id, reason):
             cur.execute(
                 """
                 INSERT INTO audit_logs (user_id, action, details, timestamp)
-                VALUES (?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s)
             """,
                 (
                     user_id,
@@ -920,13 +920,13 @@ def db_cancel_leave_request(req_id, user_id, reason):
 
             # Notificar al revisor/jefe actual de la cancelación
             cur.execute(
-                "SELECT full_name FROM users_app WHERE username = ?", (user_id,)
+                "SELECT full_name FROM users_app WHERE username = %s", (user_id,)
             )
             u_row = cur.fetchone()
             emp_name = u_row[0] if u_row else user_id
 
             cur.execute(
-                "SELECT emp_subarea, emp_area FROM users_app WHERE username = ?",
+                "SELECT emp_subarea, emp_area FROM users_app WHERE username = %s",
                 (user_id,),
             )
             sub_row = cur.fetchone()
@@ -940,14 +940,14 @@ def db_cancel_leave_request(req_id, user_id, reason):
                 coords = cur.fetchall()
                 for c in coords:
                     cur.execute(
-                        "SELECT managed_department FROM users_app WHERE username = ?",
+                        "SELECT managed_department FROM users_app WHERE username = %s",
                         (c[0],),
                     )
                     m_dept = cur.fetchone()[0] or ""
                     depts = [d.strip() for d in m_dept.split(",") if d.strip()]
                     if emp_subarea in depts:
                         cur.execute(
-                            "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                            "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                             (
                                 c[0],
                                 "Solicitud Cancelada",
@@ -962,7 +962,7 @@ def db_cancel_leave_request(req_id, user_id, reason):
                 admins = cur.fetchall()
                 for a in admins:
                     cur.execute(
-                        "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                        "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                         (
                             a[0],
                             "Solicitud Cancelada",
@@ -989,13 +989,13 @@ def db_cancel_leave_request(req_id, user_id, reason):
                     target_jefe_area = "Control Interno"
 
                 cur.execute(
-                    "SELECT username FROM users_app WHERE role = 'jefe_area' AND managed_area = ? AND active = 1",
+                    "SELECT username FROM users_app WHERE role = 'jefe_area' AND managed_area = %s AND active = 1",
                     (target_jefe_area,),
                 )
                 jefes = cur.fetchall()
                 for j in jefes:
                     cur.execute(
-                        "INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, ?)",
+                        "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                         (
                             j[0],
                             "Solicitud Cancelada",
@@ -1027,7 +1027,7 @@ def db_hide_leave_request(req_id, user_id):
             """
             UPDATE leave_requests 
             SET hidden_by_employee = 1
-            WHERE id = ? AND user_id = ? AND status NOT IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')
+            WHERE id = %s AND user_id = %s AND status NOT IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')
         """,
             (req_id, user_id),
         )
@@ -1043,7 +1043,7 @@ def get_profile_by_name(name: str):
     """Obtiene los detalles de un perfil por su nombre."""
     conn = db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT name, works_holidays FROM profiles WHERE name = ?", (name,))
+    cur.execute("SELECT name, works_holidays FROM profiles WHERE name = %s", (name,))
     row = cur.fetchone()
     conn.close()
     if row:
@@ -1071,7 +1071,7 @@ def db_create_notification(user_id, title, message):
         cur.execute(
             """
             INSERT INTO notifications (user_id, title, message, is_read, created_at)
-            VALUES (?, ?, ?, 0, ?)
+            VALUES (%s, %s, %s, 0, %s)
         """,
             (user_id, title, message, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
@@ -1081,7 +1081,7 @@ def db_get_unread_notifications_count(user_id):
     with db_session() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0",
+            "SELECT COUNT(*) FROM notifications WHERE user_id = %s AND is_read = 0",
             (user_id,),
         )
         res = cur.fetchone()
@@ -1095,8 +1095,8 @@ def db_get_recent_notifications(user_id, limit=5):
             """
             SELECT id, title, message, is_read, created_at 
             FROM notifications 
-            WHERE user_id = ? 
-            ORDER BY id DESC LIMIT ?
+            WHERE user_id = %s 
+            ORDER BY id DESC LIMIT %s
         """,
             (user_id, limit),
         )
@@ -1117,7 +1117,7 @@ def db_mark_all_notifications_read(user_id):
     with db_session() as conn:
         cur = conn.cursor()
         cur.execute(
-            "UPDATE notifications SET is_read = 1 WHERE user_id = ?", (user_id,)
+            "UPDATE notifications SET is_read = 1 WHERE user_id = %s", (user_id,)
         )
 
 
@@ -1196,7 +1196,7 @@ def db_run_vacation_accruals():
 
             if updates_made:
                 cur.execute(
-                    "UPDATE users_app SET vacation_balance = ?, last_anniversary_year = ? WHERE username = ?",
+                    "UPDATE users_app SET vacation_balance = %s, last_anniversary_year = %s WHERE username = %s",
                     (bal, last_year, username),
                 )
 
@@ -1207,7 +1207,7 @@ def db_create_hr_procedure(user_id, procedure_type, details, attachment_path):
         cur.execute(
             """
             INSERT INTO hr_procedures (user_id, procedure_type, details, attachment_path, status, created_at)
-            VALUES (?, ?, ?, ?, 'PENDING', ?)
+            VALUES (%s, %s, %s, %s, 'PENDING', %s)
             """,
             (user_id, procedure_type, details, attachment_path, now_str),
         )
@@ -1221,7 +1221,7 @@ def db_get_employee_procedures(user_id):
             """
             SELECT id, procedure_type, details, attachment_path, status, created_at
             FROM hr_procedures
-            WHERE user_id = ?
+            WHERE user_id = %s
             ORDER BY created_at DESC
             """,
             (user_id,),
@@ -1260,8 +1260,8 @@ def db_update_hr_procedure_status(procedure_id, status, notes=""):
         cur.execute(
             """
             UPDATE hr_procedures
-            SET status = ?
-            WHERE id = ?
+            SET status = %s
+            WHERE id = %s
             """,
             (status, procedure_id),
         )

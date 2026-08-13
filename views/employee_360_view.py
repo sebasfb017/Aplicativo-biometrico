@@ -14,7 +14,7 @@ def get_employee_exceptions(year, month, user_id):
     start_date = date(year, month, 1).isoformat()
     end_date = date(year, month, calendar.monthrange(year, month)[1]).isoformat()
     df = pd.read_sql_query(
-        "SELECT date as fecha, type as tipo, notes as notas FROM exceptions WHERE user_id = ? AND date >= ? AND date <= ?",
+        "SELECT date as fecha, type as tipo, notes as notas FROM exceptions WHERE user_id = %s AND date >= %s AND date <= %s",
         conn,
         params=(str(user_id), start_date, end_date),
     )

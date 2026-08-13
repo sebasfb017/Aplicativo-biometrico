@@ -48,7 +48,7 @@ def test_user_lifecycle():
     pw = "foo123"
     pw_hash = app.bcrypt.hashpw(pw.encode(), app.bcrypt.gensalt())
     cur.execute(
-        "INSERT INTO users_app(username,full_name,role,password_hash,active,created_at) VALUES(?,?,?,?,1,?)",
+        "INSERT INTO users_app(username,full_name,role,password_hash,active,created_at) VALUES(%s,%s,%s,%s,1,%s)",
         ("u1", "User One", "nomina", pw_hash, datetime.now().isoformat()),
     )
     conn.commit()
@@ -200,7 +200,7 @@ def test_employees_lifecycle():
     conn = app.db_conn()
     cur = conn.cursor()
     cur.execute(
-        "SELECT full_name, email, department FROM employees WHERE user_id = ?",
+        "SELECT full_name, email, department FROM employees WHERE user_id = %s",
         ("emp001",),
     )
     row = cur.fetchone()
@@ -238,7 +238,7 @@ def test_attendance_with_employee_join():
         SELECT a.user_id, COALESCE(e.full_name, 'Sin registrar') as employee_name
         FROM attendance_raw a
         LEFT JOIN employees e ON a.user_id = e.user_id
-        WHERE a.user_id = ?
+        WHERE a.user_id = %s
     """
     cur = conn.cursor()
     cur.execute(query, ("emp001",))
@@ -378,7 +378,7 @@ def test_auto_assign_shifts():
     # Verificar que la asignación existe mediante consulta interna
     conn = app.db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM shift_assignments WHERE user_id = ?", ("e1",))
+    cur.execute("SELECT COUNT(*) FROM shift_assignments WHERE user_id = %s", ("e1",))
     assert cur.fetchone()[0] == 1
     conn.close()
 
@@ -401,7 +401,7 @@ def test_holidays_initialized():
     conn = app.db_conn()
     cur = conn.cursor()
     cur.execute(
-        "SELECT COUNT(*) FROM holidays WHERE description IN ('Navidad', 'Christmas Day') AND date LIKE ?",
+        "SELECT COUNT(*) FROM holidays WHERE description IN ('Navidad', 'Christmas Day') AND date LIKE %s",
         (f"{date.today().year}%",),
     )
     count = cur.fetchone()[0]
@@ -472,7 +472,7 @@ def test_resolve_shift_from_code():
     # Verificar que el turno es "M - Mañana (Enf)"
     conn = app.db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT name FROM shifts WHERE id = ?", (shift_id,))
+    cur.execute("SELECT name FROM shifts WHERE id = %s", (shift_id,))
     shift_name = cur.fetchone()[0]
     conn.close()
     assert shift_name == "M - Mañana (Enf)"
@@ -498,9 +498,9 @@ def test_resolve_shift_different_profiles():
     # Verificar nombres
     conn = app.db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT name FROM shifts WHERE id = ?", (shift_enf,))
+    cur.execute("SELECT name FROM shifts WHERE id = %s", (shift_enf,))
     name_enf = cur.fetchone()[0]
-    cur.execute("SELECT name FROM shifts WHERE id = ?", (shift_adm,))
+    cur.execute("SELECT name FROM shifts WHERE id = %s", (shift_adm,))
     name_adm = cur.fetchone()[0]
     conn.close()
 
@@ -602,7 +602,7 @@ def test_upsert_employees_with_profile():
     # Verificar que se cargó con perfil
     conn = app.db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT profile_id FROM employees WHERE user_id = ?", ("501",))
+    cur.execute("SELECT profile_id FROM employees WHERE user_id = %s", ("501",))
     row = cur.fetchone()
     conn.close()
 

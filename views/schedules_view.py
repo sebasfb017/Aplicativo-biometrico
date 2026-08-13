@@ -89,7 +89,7 @@ def upsert_schedule_df(df: pd.DataFrame):
         cur.executemany(
             """
             INSERT INTO schedules(week_start, dow, start_time, end_time, start_time_2, end_time_2, grace_minutes)
-            VALUES(?,?,?,?,?,?,?)
+            VALUES(%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT(week_start, dow) DO UPDATE SET
                 start_time=excluded.start_time,
                 end_time=excluded.end_time,
@@ -105,7 +105,7 @@ def resolve_shift_from_code(user_id: str, shift_code: str, week_start: str, dow:
     with db_session() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT profile_id FROM employees WHERE user_id = ?", (str(user_id),)
+            "SELECT profile_id FROM employees WHERE user_id = %s", (str(user_id),)
         )
         row = cur.fetchone()
 
@@ -134,7 +134,7 @@ def resolve_shift_from_code(user_id: str, shift_code: str, week_start: str, dow:
         if not shift_name:
             return None
 
-        cur.execute("SELECT id FROM shifts WHERE name = ?", (shift_name,))
+        cur.execute("SELECT id FROM shifts WHERE name = %s", (shift_name,))
         row = cur.fetchone()
         return row[0] if row else None
 
@@ -174,12 +174,12 @@ def upsert_shifts_from_code_csv(df: pd.DataFrame) -> dict:
                 with db_session() as conn:
                     cur = conn.cursor()
                     cur.execute(
-                        "SELECT profile_id FROM employees WHERE user_id = ?", (user_id,)
+                        "SELECT profile_id FROM employees WHERE user_id = %s", (user_id,)
                     )
                     emp_row = cur.fetchone()
                     if emp_row and emp_row[0]:
                         cur.execute(
-                            "SELECT works_holidays FROM profiles WHERE profile_id = ?",
+                            "SELECT works_holidays FROM profiles WHERE profile_id = %s",
                             (emp_row[0],),
                         )
                         prof_row = cur.fetchone()
@@ -295,7 +295,7 @@ def page_schedules():
             if not load_all:
                 cutoff = (date.today() - timedelta(weeks=52)).isoformat()
                 sch = pd.read_sql_query(
-                    "SELECT week_start,dow,start_time,end_time,start_time_2,end_time_2,grace_minutes FROM schedules WHERE week_start >= ? ORDER BY week_start,dow",
+                    "SELECT week_start,dow,start_time,end_time,start_time_2,end_time_2,grace_minutes FROM schedules WHERE week_start >= %s ORDER BY week_start,dow",
                     conn,
                     params=(cutoff,),
                 )
@@ -775,7 +775,7 @@ def page_assign_shifts():
         with db_session() as conn:
             cur = conn.cursor()
             cur.execute(
-                "SELECT user_id, dow, shift_id FROM shift_assignments WHERE week_start = ?",
+                "SELECT user_id, dow, shift_id FROM shift_assignments WHERE week_start = %s",
                 (ws_source_iso,),
             )
             source_assignments = cur.fetchall()
@@ -1227,7 +1227,7 @@ def process_bulk_shifts(df, year, month, num_days):
         cur = conn.cursor()
         # 1. Asegurar que los turnos base existen
         for code, info in SHIFT_CODES_MAP.items():
-            cur.execute("SELECT id FROM shifts WHERE name = ?", (info["name"],))
+            cur.execute("SELECT id FROM shifts WHERE name = %s", (info["name"],))
             row = cur.fetchone()
             if row:
                 shift_ids[code] = row[0]
@@ -1235,7 +1235,7 @@ def process_bulk_shifts(df, year, month, num_days):
                 cur.execute(
                     """
                     INSERT INTO shifts (name, start_time, end_time, grace_minutes, has_break, break_start, break_end, is_overnight, shift_code, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                     (
                         info["name"],
@@ -1289,11 +1289,11 @@ def process_bulk_shifts(df, year, month, num_days):
 
                     # Reset assignments for this day
                     cur.execute(
-                        "DELETE FROM shift_assignments WHERE user_id = ? AND week_start = ? AND dow = ?",
+                        "DELETE FROM shift_assignments WHERE user_id = %s AND week_start = %s AND dow = %s",
                         (uid, ws_iso, dow),
                     )
                     cur.execute(
-                        "DELETE FROM exceptions WHERE user_id = ? AND date = ?",
+                        "DELETE FROM exceptions WHERE user_id = %s AND date = %s",
                         (uid, current_date_iso),
                     )
 
@@ -1301,7 +1301,7 @@ def process_bulk_shifts(df, year, month, num_days):
                         cur.execute(
                             """
                             INSERT INTO shift_assignments (user_id, week_start, dow, shift_id, created_at)
-                            VALUES (?, ?, ?, ?, ?)
+                            VALUES (%s, %s, %s, %s, %s)
                         """,
                             (
                                 uid,
@@ -1316,7 +1316,7 @@ def process_bulk_shifts(df, year, month, num_days):
                         cur.execute(
                             """
                             INSERT INTO exceptions (user_id, date, type, created_at)
-                            VALUES (?, ?, ?, ?)
+                            VALUES (%s, %s, %s, %s)
                         """,
                             (
                                 uid,

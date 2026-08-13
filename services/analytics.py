@@ -22,7 +22,7 @@ def get_shift_for_user_date(user_id: str, d: date, conn=None):
         SELECT s.start_time, s.grace_minutes
         FROM shift_assignments sa
         JOIN shifts s ON sa.shift_id = s.id
-        WHERE sa.user_id = ? AND sa.week_start = ? AND sa.dow = ?
+        WHERE sa.user_id = %s AND sa.week_start = %s AND sa.dow = %s
         LIMIT 1
     """,
         (str(user_id), week_start, dow),
@@ -56,7 +56,7 @@ def schedule_for_date(d: date, conn=None):
         """
         SELECT start_time, grace_minutes
         FROM schedules
-        WHERE week_start = ? AND dow = ?
+        WHERE week_start = %s AND dow = %s
     """,
         (week_start.isoformat(), d.weekday()),
     )
@@ -137,7 +137,7 @@ def fetch_attendance_between(start_dt: datetime, end_dt: datetime):
         """
         SELECT device_name, device_ip, user_id, ts, status, punch, uid, downloaded_at
         FROM attendance_raw
-        WHERE ts >= ? AND ts < ? AND is_ignored = 0
+        WHERE ts >= %s AND ts < %s AND is_ignored = 0
         ORDER BY user_id, ts
     """,
         conn,
@@ -172,7 +172,7 @@ def compute_month_lateness(year: int, month: int):
     start_date_str = first_day.isoformat()
     end_date_str = last_day.isoformat()
     exc_df = pd.read_sql_query(
-        "SELECT user_id, date, type FROM exceptions WHERE date >= ? AND date <= ?",
+        "SELECT user_id, date, type FROM exceptions WHERE date >= %s AND date <= %s",
         conn,
         params=(start_date_str, end_date_str),
     )
@@ -191,7 +191,7 @@ def compute_month_lateness(year: int, month: int):
         SELECT sa.user_id, sa.week_start, sa.dow, s.start_time, s.grace_minutes, s.has_break, s.break_end
         FROM shift_assignments sa
         JOIN shifts s ON sa.shift_id = s.id
-        WHERE sa.week_start >= ? AND sa.week_start <= ?
+        WHERE sa.week_start >= %s AND sa.week_start <= %s
     """,
         conn,
         params=(start_week_str, end_week_str),
@@ -218,7 +218,7 @@ def compute_month_lateness(year: int, month: int):
         """
         SELECT week_start, dow, start_time, start_time_2, grace_minutes
         FROM schedules
-        WHERE week_start >= ? AND week_start <= ?
+        WHERE week_start >= %s AND week_start <= %s
     """,
         conn,
         params=(start_week_str, end_week_str),
@@ -362,7 +362,7 @@ def get_late_punch_ids(start_date: date, end_date: date) -> dict:
         """
         SELECT id, user_id, ts, punch, device_name, device_ip
         FROM attendance_raw
-        WHERE ts >= ? AND ts < ? AND is_ignored = 0
+        WHERE ts >= %s AND ts < %s AND is_ignored = 0
         ORDER BY user_id, ts
     """,
         conn,
@@ -384,7 +384,7 @@ def get_late_punch_ids(start_date: date, end_date: date) -> dict:
     start_date_str = start_date.isoformat()
     end_date_str = end_date.isoformat()
     exc_df = pd.read_sql_query(
-        "SELECT user_id, date FROM exceptions WHERE date >= ? AND date <= ?",
+        "SELECT user_id, date FROM exceptions WHERE date >= %s AND date <= %s",
         conn,
         params=(start_date_str, end_date_str),
     )
@@ -401,7 +401,7 @@ def get_late_punch_ids(start_date: date, end_date: date) -> dict:
         SELECT sa.user_id, sa.week_start, sa.dow, s.start_time, s.grace_minutes, s.has_break, s.break_end
         FROM shift_assignments sa
         JOIN shifts s ON sa.shift_id = s.id
-        WHERE sa.week_start >= ? AND sa.week_start <= ?
+        WHERE sa.week_start >= %s AND sa.week_start <= %s
     """,
         conn,
         params=(start_week_str, end_week_str),
@@ -427,7 +427,7 @@ def get_late_punch_ids(start_date: date, end_date: date) -> dict:
         """
         SELECT week_start, dow, start_time, start_time_2, grace_minutes
         FROM schedules
-        WHERE week_start >= ? AND week_start <= ?
+        WHERE week_start >= %s AND week_start <= %s
     """,
         conn,
         params=(start_week_str, end_week_str),

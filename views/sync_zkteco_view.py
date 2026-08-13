@@ -670,7 +670,7 @@ def page_sync():
 
                                 # Verificar cuántas existen
                                 cur.execute(
-                                    "SELECT COUNT(*) FROM attendance_raw WHERE user_id = ?",
+                                    "SELECT COUNT(*) FROM attendance_raw WHERE user_id = %s",
                                     (bad_id.strip(),),
                                 )
                                 records_count = cur.fetchone()[0]
@@ -682,7 +682,7 @@ def page_sync():
                                 else:
                                     # Ejecutar actualización
                                     cur.execute(
-                                        "UPDATE attendance_raw SET user_id = ? WHERE user_id = ?",
+                                        "UPDATE attendance_raw SET user_id = %s WHERE user_id = %s",
                                         (good_id.strip(), bad_id.strip()),
                                     )
 
@@ -692,7 +692,7 @@ def page_sync():
                                     )
                                     details = f"Traslado masivo: Movió {records_count} marcaciones de la cédula {bad_id.strip()} hacia {good_id.strip()}."
                                     cur.execute(
-                                        "INSERT INTO audit_logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)",
+                                        "INSERT INTO audit_logs (user_id, action, details, timestamp) VALUES (%s, %s, %s, %s)",
                                         (
                                             admin_user,
                                             "DATA_CORRECTION",
