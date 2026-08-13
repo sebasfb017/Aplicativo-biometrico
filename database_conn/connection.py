@@ -1,37 +1,23 @@
-import os
-import sqlite3
+import psycopg2
 from contextlib import contextmanager
-
 from config import APP_CONFIG, BASE_DIR
 
-# Definición de rutas base dinámicas basadas en config
-db_path_config = APP_CONFIG.get("database", {}).get("path", "data/app.db")
+POSTGRES_DSN = 'postgresql://nomina_user:nomina_password@localhost:5432/nomina_db'
 
-if not os.path.isabs(db_path_config):
-    DB_PATH = os.path.join(BASE_DIR, db_path_config)
-else:
-    DB_PATH = db_path_config
-
-DATA_DIR = os.path.dirname(DB_PATH)
-
+DATA_DIR = ""
+DB_PATH = ""
 
 def db_conn():
-    """Establece y retorna la conexión a la base de datos SQLite."""
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    """Establece y retorna la conexión a la base de datos PostgreSQL."""
+    conn = psycopg2.connect(POSTGRES_DSN)
     return conn
 
 
 @contextmanager
 def db_session():
-    """Context manager para la base de datos.
+    """Context manager para la base de datos PostgreSQL.
     Asegura commit automático y cierra de forma segura la conexión."""
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = psycopg2.connect(POSTGRES_DSN)
     try:
         yield conn
         conn.commit()
