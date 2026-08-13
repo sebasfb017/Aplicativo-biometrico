@@ -28,7 +28,7 @@ def create_status_tracker(current_status, reason_type):
     if solo_rrhh:
         steps = ["Enviado", "RRHH (Final)"]
         status_order = {
-            "PENDING_RRHH": 0,
+            "PENDING_RRHH": 1,
             "APPROVED": 2,
             "REJECTED": -2,
             "CANCELLED": -3,
@@ -40,9 +40,9 @@ def create_status_tracker(current_status, reason_type):
             else ["Enviado", "Coord.", "RRHH (Final)"]
         )
         status_order = {
-            "PENDING_COORD": 0,
-            "PENDING_RRHH": 1,
-            "PENDING_JEFE": 2 if requiere_jefe else -1,  # Ignorado si no requiere jefe
+            "PENDING_COORD": 1,
+            "PENDING_RRHH": 2,
+            "PENDING_JEFE": 3 if requiere_jefe else -1,
             "APPROVED": 4 if requiere_jefe else 3,
             "REJECTED": -2,  # Estado terminal de rechazo
             "CANCELLED": -3,  # Estado terminal de cancelación
@@ -1012,6 +1012,7 @@ def page_employee_portal():
                         if not req_df.empty:
                             target_status = req_df.iloc[0]["status"]
                             target_emails = []
+                            target_phones = []
 
                             if target_status == "PENDING_COORD":
                                 user_app_df = pd.read_sql_query(
@@ -1030,13 +1031,13 @@ def page_employee_portal():
                                 elif subarea == "Orientador":
                                     target_coord_dept = "Seguridad"
                                 coord_all = pd.read_sql_query(
-                                    "SELECT emp_email, managed_department FROM users_app WHERE role = 'coordinador' AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''",
+                                    "SELECT emp_email, emp_phone, managed_department FROM users_app WHERE role = 'coordinador' AND active = 1",
                                     conn,
                                 )
-                                target_emails = []
                                 for _, c_row in coord_all.iterrows():
                                     if target_coord_dept in c_row["managed_department"]:
-                                        target_emails.append(c_row["emp_email"])
+                                        if c_row["emp_email"]: target_emails.append(c_row["emp_email"])
+                                        if c_row["emp_phone"]: target_phones.append(c_row["emp_phone"])
                             elif target_status == "PENDING_JEFE":
                                 user_app_df = pd.read_sql_query(
                                     "SELECT role, emp_area, emp_subarea, managed_department FROM users_app WHERE username = ?",
@@ -1100,20 +1101,22 @@ def page_employee_portal():
                                     target_jefe_area = "Control Interno"
                                 jefe_df = pd.read_sql_query(
                                     """
-                                    SELECT emp_email FROM users_app 
-                                    WHERE role = 'jefe_area' AND active = 1 AND emp_email IS NOT NULL AND emp_email != '' 
+                                    SELECT emp_email, emp_phone FROM users_app 
+                                    WHERE role = 'jefe_area' AND active = 1 
                                     AND (managed_area = ? OR managed_area = 'Control Interno')
                                 """,
                                     conn,
                                     params=(target_jefe_area,),
                                 )
-                                target_emails = jefe_df["emp_email"].tolist()
+                                target_emails = [e for e in jefe_df["emp_email"].tolist() if e]
+                                target_phones = [p for p in jefe_df["emp_phone"].tolist() if p]
                             elif target_status == "PENDING_RRHH":
                                 admin_df = pd.read_sql_query(
-                                    "SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''",
+                                    "SELECT emp_email, emp_phone FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1",
                                     conn,
                                 )
-                                target_emails = admin_df["emp_email"].tolist()
+                                target_emails = [e for e in admin_df["emp_email"].tolist() if e]
+                                target_phones = [p for p in admin_df["emp_phone"].tolist() if p]
 
                             if target_emails:
                                 ok, msg = send_novedad_alert(
@@ -1125,33 +1128,34 @@ def page_employee_portal():
                                     d_start,
                                 )
                                 if not ok:
-                                    st.warning(
-                                        f"Solicitud creada, pero fallo la alerta: {msg}"
-                                    )
-                            else:
-                                st.info(
-                                    "Solicitud creada. (No se encontró correo para el aprobador)."
+                                    st.warning(f"Fallo envío de correo al aprobador: {msg}")
+                                    
+                            if target_phones:
+                                from services.whatsapp_service import send_novedad_alert_whatsapp
+                                send_novedad_alert_whatsapp(
+                                    target_phones, user["full_name"], reason_type, r_desc, total_time, d_start
                                 )
+                                
+                            if not target_emails and not target_phones:
+                                st.info("Solicitud creada. (No se encontró contacto del aprobador).")
                 except Exception as e:
                     st.warning(f"Error interno al enviar correo a aprobadores: {e}")
 
-                # Novedad: Enviar confirmación al propio empleado
-                try:
-                    from services.notifications import notify_employee_status
-
-                    notify_employee_status(
-                        user["username"],
-                        user["full_name"],
-                        req_id,
-                        reason_type,
-                        "RADICADA",
-                        "Tu solicitud ha sido radicada con éxito y está en la bandeja del aprobador correspondiente.",
-                    )
-                except Exception as e:
-                    print(f"Error enviando correo de radicación al empleado: {e}")
+                # Eliminado el envío redundante de "RADICADA" al propio empleado para no duplicar alertas en n8n
 
                 st.session_state.submit_success = True
+                
+                # Incrementar la llave para generar widgets nuevos
                 st.session_state.form_key += 1
+                new_fk = st.session_state.form_key
+                
+                # Forzar que la nueva sesión nazca completamente limpia
+                st.session_state[f"categoria_{new_fk}"] = None
+                st.session_state[f"is_paid_{new_fk}"] = "No"
+                st.session_state[f"duracion_permiso_{new_fk}"] = None
+                st.session_state[f"r_desc_{new_fk}"] = ""
+                st.session_state[f"specific_dates_list_{new_fk}"] = []
+                
                 st.rerun()
 
     with t2:
