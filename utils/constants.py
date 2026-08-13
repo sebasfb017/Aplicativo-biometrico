@@ -23,6 +23,7 @@ AREA_MAPPING = {
         "Archivo",
         "Control Interno",
         "Mantenimiento",
+        "Quimico Farmaceutico",
     ],
     "Financiera": [
         "Facturación",
