@@ -9,3 +9,8 @@ devices:
   port: 4370
   password: 1
   timeout: 10
+- name: ZARZAL
+  ip: 192.168.101.56
+  port: 4370
+  password: 890724
+  timeout: 20
