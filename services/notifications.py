@@ -23,18 +23,30 @@ def send_notification_email(to_email, subject, body):
 def notify_employee_status(
     user_id, full_name, req_id, reason_type, new_status, message, approver_name=None
 ):
-    """Busca el correo del empleado y le envía una notificación HTML de actualización de estado."""
+    """Busca el correo y teléfono del empleado y le envía una notificación por Email y WhatsApp."""
     conn = db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT emp_email FROM users_app WHERE username = ?", (user_id,))
+    cur.execute("SELECT emp_email, emp_phone FROM users_app WHERE username = ?", (user_id,))
     row = cur.fetchone()
     conn.close()
-    if row and row[0]:
-        from services.email_service import send_status_update_email
+    
+    if row:
+        emp_email = row[0]
+        emp_phone = row[1]
 
-        send_status_update_email(
-            row[0], full_name, req_id, reason_type, new_status, message, approver_name
-        )
+        # 1. Notificación por Correo Electrónico
+        if emp_email:
+            from services.email_service import send_status_update_email
+            send_status_update_email(
+                emp_email, full_name, req_id, reason_type, new_status, message, approver_name
+            )
+
+        # 2. Notificación por WhatsApp (vía n8n)
+        if emp_phone:
+            from services.whatsapp_service import send_status_update_whatsapp
+            send_status_update_whatsapp(
+                emp_phone, full_name, req_id, reason_type, new_status, message, approver_name
+            )
 
 
 def log_audit(action, details):
