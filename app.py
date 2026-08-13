@@ -91,10 +91,31 @@ def main():
         --glass-border: rgba(255, 255, 255, 0.15);
     }
     
-    /* Fondo Dinámico con Gradiente Premium */
+    /* Fondo Dinámico con Orbes Coloridos para resaltar el Cristal */
     .stApp {
-        background: radial-gradient(circle at top left, #1e1b4b 0%, #0f172a 40%, #020617 100%) !important;
+        background: radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.18), transparent 40%),
+                    radial-gradient(circle at 85% 30%, rgba(99, 102, 241, 0.18), transparent 40%),
+                    radial-gradient(circle at 50% 80%, rgba(236, 72, 153, 0.12), transparent 40%),
+                    linear-gradient(135deg, #020617 0%, #0f172a 100%) !important;
         background-attachment: fixed !important;
+    }
+    
+    /* Header Transparente con Glassmorphism */
+    header[data-testid="stHeader"] {
+        background: rgba(15, 23, 42, 0.4) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        border-bottom: 1px solid var(--glass-border) !important;
+    }
+
+    /* Modales (Ventanas Emergentes) de Cristal */
+    div[data-testid="stDialog"] > div {
+        background: rgba(15, 23, 42, 0.65) !important;
+        backdrop-filter: blur(24px) saturate(180%) !important;
+        -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 24px !important;
+        box-shadow: 0 30px 60px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1) !important;
     }
     
     /* Títulos y textos principales, cuidando de no sobreescribir íconos */
@@ -154,41 +175,52 @@ def main():
         animation: pulseGlow 1.5s infinite;
     }
     
-    /* Estilizar botones para efecto premium */
-    /* ATENCIÓN: Forzamos el color azul aquí (var(--primary-blue)) para los botones principales,
-       de modo que sigan siendo azules en el Modo Oscuro nativo de Streamlit en lugar de cambiar a rojo. */
-    button[kind="primary"] {
-        background-color: var(--primary-blue) !important;
+    /* Estilizar botones para efecto premium (Estilo Cristal Oscuro) */
+    button[kind="primary"], button[kind="primaryFormSubmit"], button[data-testid="baseButton-primary"], button[data-testid="baseButton-primaryFormSubmit"] {
+        background: rgba(59, 130, 246, 0.15) !important;
+        backdrop-filter: blur(10px) !important;
+        -webkit-backdrop-filter: blur(10px) !important;
+        border: 1px solid rgba(59, 130, 246, 0.4) !important;
         color: white !important;
-        border-color: var(--primary-blue) !important;
-        border-radius: 10px !important;
+        border-radius: 12px !important;
         font-weight: 600 !important;
         letter-spacing: 0.5px;
-        transition: all 0.3s ease !important;
+        padding: 0.5rem 1rem !important;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2), inset 0 0 10px rgba(59, 130, 246, 0.1) !important;
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
     }
-    button[kind="primary"]:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 6px 18px var(--glow-blue) !important;
+    button[kind="primary"]:hover, button[kind="primaryFormSubmit"]:hover, button[data-testid="baseButton-primary"]:hover, button[data-testid="baseButton-primaryFormSubmit"]:hover {
+        transform: translateY(-2px) !important;
+        background: rgba(59, 130, 246, 0.25) !important;
+        border-color: rgba(59, 130, 246, 0.8) !important;
+        box-shadow: 0 6px 20px rgba(59, 130, 246, 0.3), inset 0 0 15px rgba(59, 130, 246, 0.2) !important;
     }
     
-    /* Contenedores Expander con hover Premium */
+    /* Contenedores Expander con Glassmorphism */
     div[data-testid="stExpander"] {
-        border-radius: 14px !important;
-        background: var(--glass-bg);
+        border-radius: 16px !important;
+        background: rgba(255, 255, 255, 0.03) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
         border: 1px solid var(--glass-border);
-        transition: all 0.3s ease;
+        transition: all 0.4s ease;
         overflow: hidden;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1) !important;
     }
     div[data-testid="stExpander"]:hover {
-        border-color: var(--primary-blue);
-        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        border-color: rgba(255, 255, 255, 0.3);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.2) !important;
+        background: rgba(255, 255, 255, 0.05) !important;
     }
     
-    /* Sombras y bordes redondeados para Tablas y Dataframes */
+    /* Tablas y Dataframes con Glassmorphism */
     div[data-testid="stDataFrame"] > div, div[data-testid="stTable"] > div {
-        border-radius: 14px !important;
+        border-radius: 16px !important;
+        background: rgba(255, 255, 255, 0.02) !important;
+        backdrop-filter: blur(12px) !important;
+        -webkit-backdrop-filter: blur(12px) !important;
         overflow: hidden !important;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.06) !important;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1) !important;
         border: 1px solid var(--glass-border) !important;
     }
     
@@ -208,21 +240,23 @@ def main():
         border-color: var(--primary-blue) !important;
     }
     
-    /* Estilizar los Formularios como Tarjetas (Cards) */
+    /* Formularios con Full Glassmorphism */
     div[data-testid="stForm"] {
-        background-color: var(--glass-bg);
-        border-radius: 16px !important;
+        background: rgba(255, 255, 255, 0.03) !important;
+        backdrop-filter: blur(20px) saturate(160%) !important;
+        -webkit-backdrop-filter: blur(20px) saturate(160%) !important;
+        border-radius: 20px !important;
         padding: 24px !important;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.04) !important;
-        border: 1px solid var(--glass-border) !important;
+        box-shadow: 0 12px 40px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.1) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
     }
     
-    /* Estilizar la barra lateral (Sidebar) con Neumorphism */
+    /* Barra Lateral (Sidebar) de Cristal Esmerilado */
     section[data-testid="stSidebar"] {
-        background: rgba(15, 23, 42, 0.7) !important;
-        backdrop-filter: blur(20px) !important;
-        -webkit-backdrop-filter: blur(20px) !important;
-        box-shadow: 4px 0 25px rgba(0,0,0,0.5) !important;
+        background: rgba(15, 23, 42, 0.45) !important;
+        backdrop-filter: blur(28px) saturate(180%) !important;
+        -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+        box-shadow: 4px 0 30px rgba(0,0,0,0.3) !important;
         border-right: 1px solid rgba(255,255,255,0.08) !important;
     }
     
@@ -247,7 +281,7 @@ def main():
     }
 
     /* Rediseño de los Tabs (Pestañas nativas de Streamlit) */
-    div[data-testid="stTabs"] button {
+    div[data-testid="stTabs"] > div[data-baseweb="tablist"] button {
         background-color: transparent !important;
         border: none !important;
         border-bottom: 3px solid transparent !important;
@@ -256,12 +290,12 @@ def main():
         padding: 10px 20px !important;
         transition: all 0.3s ease !important;
     }
-    div[data-testid="stTabs"] button[aria-selected="true"] {
+    div[data-testid="stTabs"] > div[data-baseweb="tablist"] button[aria-selected="true"] {
         color: var(--primary-blue) !important;
         border-bottom-color: var(--primary-blue) !important;
         background: linear-gradient(0deg, rgba(59, 130, 246, 0.1) 0%, transparent 100%) !important;
     }
-    div[data-testid="stTabs"] button:hover {
+    div[data-testid="stTabs"] > div[data-baseweb="tablist"] button:hover {
         color: white !important;
     }
 
@@ -284,7 +318,6 @@ def main():
     /* White-Labeling (Ocultar branding de Streamlit) */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header[data-testid="stHeader"] {background: transparent; box-shadow: none;}
     
     /* Pestañas (Tabs) estilo "Pill" modernas */
     button[data-baseweb="tab"] {
