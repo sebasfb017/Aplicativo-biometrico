@@ -10,3 +10,21 @@ services:
     environment:
       - TZ=America/Bogota
     restart: unless-stopped
+    depends_on:
+      - postgres_db
+
+  postgres_db:
+    image: postgres:15
+    container_name: postgres_nomina
+    environment:
+      POSTGRES_USER: nomina_user
+      POSTGRES_PASSWORD: nomina_password
+      POSTGRES_DB: nomina_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

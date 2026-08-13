@@ -13,4 +13,5 @@ fpdf2>=2.7.0
 google-generativeai==0.8.2
 streamlit-lottie>=0.0.3
 PyPDF2>=3.0.1
-PyPDF2>=3.0.1
+streamlit-calendar>=1.4.0
+psycopg2-binary>=2.9.9
