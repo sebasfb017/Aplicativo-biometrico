@@ -262,7 +262,7 @@ def migrate():
             
             pg_cur.executemany(insert_query, converted_rows)
             
-            # Update sequences for SERIAL columns (ID) so next inserts don't fail
+            # Actualizar secuencias para columnas SERIAL (ID) para que las próximas inserciones no fallen
             if 'id' in columns or 'profile_id' in columns or 'holiday_id' in columns or 'log_id' in columns:
                 id_col = 'id'
                 if 'profile_id' in columns: id_col = 'profile_id'

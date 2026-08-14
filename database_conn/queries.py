@@ -440,7 +440,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             return
         req_name, req_area, req_subarea, req_role, req_managed = req_row
 
-        # Get request details for notifications
+        # Obtener detalles de la solicitud para las notificaciones
         cur.execute(
             "SELECT reason_type, reason_description FROM leave_requests WHERE id = %s",
             (req_id,),
@@ -449,7 +449,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
         req_type = req_info[0] if req_info else "Permiso"
         req_desc = req_info[1] if (req_info and req_info[1]) else "Sin justificación."
 
-        # 1. Notify the requester of the status change
+        # 1. Notificar al solicitante sobre el cambio de estado
         if status == "PENDING_COORD":
             msg = f"Tu solicitud #{req_id} ha sido radicada y está pendiente del visto bueno de tu Coordinador."
             cur.execute(
@@ -523,7 +523,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                 ),
             )
 
-        # 2. Notify the approvers
+        # 2. Notificar a los aprobadores correspondientes
         if status == "PENDING_COORD":
             if str(requester_id) in ZARZAL_EMPLOYEES:
                 # Notify Angy Jaramillo (111644844) directly
@@ -821,13 +821,13 @@ def db_revert_leave_request(req_id, admin_user):
                 dates_list = specific_dates.split(",")
                 for d in dates_list:
                     cur.execute(
-                        "DELETE FROM exceptions WHERE user_id = %s AND date = %s AND notes LIKE 'Aprobado de Portal%'",
+                        "DELETE FROM exceptions WHERE user_id = %s AND date = %s AND notes LIKE 'Aprobado de Portal%%'",
                         (user_id, d),
                     )
                     days_refunded += cur.rowcount
             else:
                 cur.execute(
-                    "DELETE FROM exceptions WHERE user_id = %s AND date >= %s AND date <= %s AND notes LIKE 'Aprobado de Portal%'",
+                    "DELETE FROM exceptions WHERE user_id = %s AND date >= %s AND date <= %s AND notes LIKE 'Aprobado de Portal%%'",
                     (user_id, start_date, end_date),
                 )
                 days_refunded += cur.rowcount

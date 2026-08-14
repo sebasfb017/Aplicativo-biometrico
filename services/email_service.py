@@ -7,7 +7,7 @@ import yaml
 
 from database_conn.connection import BASE_DIR
 
-SMTP_YAML = os.path.join(BASE_DIR, "smtp_config.yaml")
+SMTP_YAML = os.path.join(BASE_DIR, "configs", "smtp_config.yaml")
 
 
 def load_smtp_config():

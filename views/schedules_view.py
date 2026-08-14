@@ -916,7 +916,7 @@ def page_bulk_assign_shifts():
 
 
 def process_bulk_shifts(df, year, month, num_days):
-    # Flexible validation: must contain Cedula and columns 1 to num_days
+    # Validación flexible: debe contener Cedula y columnas de 1 a num_days
     str_cols = [str(c) for c in df.columns]
 
     # Buscar columna Cedula ignorando mayúsculas
@@ -1287,7 +1287,7 @@ def process_bulk_shifts(df, year, month, num_days):
                     ).isoformat()
                     dow = current_date.weekday()
 
-                    # Reset assignments for this day
+                    # Limpiar asignaciones para este día
                     cur.execute(
                         "DELETE FROM shift_assignments WHERE user_id = %s AND week_start = %s AND dow = %s",
                         (uid, ws_iso, dow),

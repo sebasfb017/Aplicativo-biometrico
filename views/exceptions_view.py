@@ -234,7 +234,7 @@ def show_exception_details(exc_id: int):
                 SELECT a.user_id, a.action, a.timestamp, u.full_name, a.details, u.role
                 FROM audit_logs a
                 LEFT JOIN users_app u ON a.user_id = u.username
-                WHERE a.details LIKE %s AND a.action LIKE 'APPROVE_%'
+                WHERE a.details LIKE %s AND a.action LIKE 'APPROVE_%%'
                 ORDER BY a.timestamp ASC
             """,
                 conn,
@@ -562,7 +562,7 @@ def render_absence_calendar(user):
             WHERE lr.status IN {status_filter}
               AND lr.leave_date_start <= %s AND lr.leave_date_end >= %s
               AND (
-                  %s LIKE '%' || ua.emp_subarea || '%'
+                  %s LIKE '%%' || ua.emp_subarea || '%%'
                   {cond_serv_gen}
                   {cond_orientador}
                   {cond_zarzal}
@@ -880,7 +880,7 @@ def page_exceptions():
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_COORD' AND 
                           (
-                              %s LIKE '%' || ua.emp_subarea || '%'
+                              %s LIKE '%%' || ua.emp_subarea || '%%'
                               {cond_serv_gen}
                               {cond_orientador}
                               {cond_zarzal}
@@ -1168,7 +1168,7 @@ def page_exceptions():
                     JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.approved_by_coord = %s 
                        OR (lr.status = 'REJECTED' AND (
-                              %s LIKE '%' || ua.emp_subarea || '%'
+                              %s LIKE '%%' || ua.emp_subarea || '%%'
                               {cond_serv_gen}
                               {cond_orientador}
                           ))
@@ -1878,7 +1878,7 @@ def page_exceptions():
                                         st.session_state["user"]["username"],
                                         is_final=False,
                                     )
-                                    # ... skip email for this demo
+                                    # ... omitir correo para esta demo
                                 else:
                                     db_approve_leave_request_rrhh(
                                         r["id"],
@@ -2056,7 +2056,7 @@ def page_exceptions():
                     conn,
                 )
 
-                # Fetch active coordinators and jefes for dynamic name mapping
+                # Obtener coordinadores y jefes activos para mapeo dinámico de nombres
                 cur = conn.cursor()
                 cur.execute(
                     "SELECT full_name, managed_department FROM users_app WHERE role = 'coordinador' AND active = 1"
@@ -2300,7 +2300,7 @@ def page_exceptions():
                         
                         with col_actions:
                             st.markdown("### Acciones")
-                            # Add a form for approval/rejection to avoid immediate rerun issues
+                            # Agregar un formulario para aprobación/rechazo y evitar recargas inmediatas
                             with st.form(f"hr_action_{proc_id}"):
                                 action_opt = st.radio("Acción a tomar", ["Aprobar/Completar", "Rechazar"])
                                 notes = st.text_area("Observaciones (Opcional)")

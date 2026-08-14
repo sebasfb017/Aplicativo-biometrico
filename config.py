@@ -3,7 +3,7 @@ import os
 import yaml
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "settings.yaml")
+CONFIG_PATH = os.path.join(BASE_DIR, "configs", "settings.yaml")
 
 
 def load_config():

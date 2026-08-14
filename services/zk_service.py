@@ -12,7 +12,7 @@ DEFAULT_PORT = APP_CONFIG.get("zkteco", {}).get("default_port", 4370)
 DEFAULT_TIMEOUT = APP_CONFIG.get("zkteco", {}).get("timeout", 10)
 
 # Apuntamos dinámicamente al archivo de configuración de los relojes
-DEVICES_YAML = os.path.join(BASE_DIR, "devices.yaml")
+DEVICES_YAML = os.path.join(BASE_DIR, "configs", "devices.yaml")
 
 
 def connect_with_retry(zk: ZK, max_retries=1, delay=1.0):
@@ -84,6 +84,13 @@ def download_attendance_from_device(device: dict):
     downloaded_at = datetime.now().isoformat(timespec="seconds")
     last_error = None
 
+    import socket
+    try:
+        with socket.create_connection((ip, port), timeout=1.5):
+            pass
+    except Exception:
+        return [], "El equipo está apagado o sin red."
+
     # Implementar 3 intentos con estrategia adaptativa
     for attempt in range(3):
         conn = None
@@ -149,7 +156,10 @@ def download_attendance_from_device(device: dict):
             return out, None
         except Exception as e:
             last_error = str(e)
-            # Quitamos el sleep(2) redundante para que falle o avance inmediatamente
+            if "Unauthenticated" in last_error:
+                return [], "Contraseña incorrecta."
+            if "timed out" in last_error and attempt == 0:
+                pass # Try again
         finally:
             try:
                 if conn:
@@ -343,6 +353,13 @@ def upload_user_to_device(device: dict, user_id: str, name: str, privilege: int 
         timeout = DEFAULT_TIMEOUT
 
     last_error = None
+
+    import socket
+    try:
+        with socket.create_connection((ip, port), timeout=1.5):
+            pass
+    except Exception:
+        return False, "El equipo está apagado o sin red."
     for attempt in range(3):
         conn = None
         zk_kwargs = {

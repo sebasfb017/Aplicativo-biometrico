@@ -141,7 +141,7 @@ def show_leave_request_details(req_id: int):
         SELECT a.user_id, a.action, a.timestamp, u.full_name, a.details, u.role
         FROM audit_logs a
         LEFT JOIN users_app u ON a.user_id = u.username
-        WHERE a.details LIKE %s AND (a.action LIKE 'APPROVE_%' OR a.action LIKE 'REJECT_%')
+        WHERE a.details LIKE %s AND (a.action LIKE 'APPROVE_%%' OR a.action LIKE 'REJECT_%%')
         ORDER BY a.timestamp ASC
     """,
         conn,
@@ -1035,7 +1035,8 @@ def page_employee_portal():
                                     conn,
                                 )
                                 for _, c_row in coord_all.iterrows():
-                                    if target_coord_dept in c_row["managed_department"]:
+                                    m_dept = c_row.get("managed_department") or ""
+                                    if target_coord_dept in str(m_dept):
                                         if c_row["emp_email"]: target_emails.append(c_row["emp_email"])
                                         if c_row["emp_phone"]: target_phones.append(c_row["emp_phone"])
                             elif target_status == "PENDING_JEFE":

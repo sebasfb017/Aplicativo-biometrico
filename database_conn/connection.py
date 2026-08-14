@@ -1,11 +1,12 @@
+import os
 import psycopg2
 from contextlib import contextmanager
 from config import APP_CONFIG, BASE_DIR
 
 POSTGRES_DSN = 'postgresql://nomina_user:nomina_password@localhost:5432/nomina_db'
 
-DATA_DIR = ""
-DB_PATH = ""
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DB_PATH = os.path.join(DATA_DIR, "app.db")
 
 def db_conn():
     """Establece y retorna la conexión a la base de datos PostgreSQL."""
