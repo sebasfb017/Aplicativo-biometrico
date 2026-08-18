@@ -14,6 +14,7 @@ from services.zk_service import (
     upsert_attendance,
 )
 from utils.auth import require_role
+from database_conn.connection import db_session
 
 
 @st.dialog("⚙️ Editar Reloj Biométrico")
@@ -585,52 +586,71 @@ def page_sync():
             with c2:
                 st.subheader("Crear Remotamente")
                 st.write(
-                    "Inscribe un nuevo empleado en **TODOS** los relojes de la red."
+                    "Inscribe un empleado de la base de datos en los relojes biométricos seleccionados."
                 )
+                
+                with db_session() as conn:
+                    emp_df = pd.read_sql_query("SELECT user_id, full_name FROM employees ORDER BY full_name", conn)
+                
+                emp_options = {}
+                for _, row in emp_df.iterrows():
+                    emp_options[f"{row['full_name']} ({row['user_id']})"] = (row['user_id'], row['full_name'])
+
+                # Preparar opciones de dispositivos
+                online_devices = [d["name"] for d in devices_config if statuses.get(d["ip"], False)]
+                all_device_names = [d.get("name", d["ip"]) for d in devices_config]
+
                 with st.form("new_user_zk_form"):
-                    new_uid_str = st.text_input("Cédula (user_id)")
-                    new_name_str = st.text_input("Nombre Corto (Ej. J. PEREZ)")
+                    selected_emp_label = st.selectbox("Selecciona un Empleado", list(emp_options.keys()))
+                    target_devices_names = st.multiselect(
+                        "Selecciona los Relojes Destino",
+                        options=all_device_names,
+                        default=online_devices,
+                        help="Por defecto se seleccionan solo los relojes que están En Línea."
+                    )
+                    
                     sub_new = st.form_submit_button(
-                        "🚀 Transmitir a Toda la Red",
+                        "🚀 Transmitir a Relojes Seleccionados",
                         type="primary",
                         use_container_width=True,
                     )
 
                     if sub_new:
-                        if not new_uid_str.strip() or not new_name_str.strip():
-                            st.error("Debes llenar la Cédula y el Nombre.")
+                        if not selected_emp_label:
+                            st.error("Debes seleccionar un empleado.")
+                        elif not target_devices_names:
+                            st.warning("Debes seleccionar al menos un reloj destino.")
                         else:
-                            with st.spinner(
-                                "Escribiendo en la memoria de todos los dispositivos..."
-                            ):
+                            uid_str, name_str = emp_options[selected_emp_label]
+                            # Limitar el nombre a 24 caracteres (límite de algunos ZKTeco)
+                            name_str = name_str[:24]
+                            
+                            target_devices = [d for d in devices_config if d.get("name", d["ip"]) in target_devices_names]
+                            
+                            with st.spinner("Escribiendo en la memoria de los dispositivos seleccionados..."):
                                 success_count = 0
-                                for d in devices_config:
+                                for d in target_devices:
                                     ok, err2 = upload_user_to_device(
-                                        d, new_uid_str.strip(), new_name_str.strip()
+                                        d, uid_str, name_str
                                     )
                                     if ok:
                                         success_count += 1
                                     else:
                                         st.error(
-                                            f"Error inscribiendo en {d['ip']}: {err2}"
+                                            f"Error inscribiendo en {d.get('name', d['ip'])}: {err2}"
                                         )
 
-                                if success_count == len(devices_config):
+                                if success_count == len(target_devices) and len(target_devices) > 0:
                                     st.success(
-                                        f"¡Usuario {new_name_str} inscrito exitosamente en todos los equipos! Ahora debe enrolar su huella en CUALQUIER reloj."
+                                        f"¡{name_str} inscrito exitosamente en los equipos seleccionados! Ahora debe ir al reloj físico y enrolar su huella."
                                     )
-                                else:
+                                elif success_count > 0:
                                     st.warning(
-                                        f"Inscrito en {success_count} de {len(devices_config)} equipos."
+                                        f"Inscrito parcialmente en {success_count} de {len(target_devices)} equipos seleccionados."
                                     )
 
-                                if (
-                                    "dev_users_" + selected_dev["ip"]
-                                    in st.session_state
-                                ):
-                                    del st.session_state[
-                                        "dev_users_" + selected_dev["ip"]
-                                    ]
+                                if "dev_users_" + selected_dev["ip"] in st.session_state:
+                                    del st.session_state["dev_users_" + selected_dev["ip"]]
 
             # --- HERRAMIENTA AVANZADA: REASIGNACIÓN DE MARCACIONES ---
             # Este módulo permite corregir errores humanos de enrolamiento en el biométrico.
