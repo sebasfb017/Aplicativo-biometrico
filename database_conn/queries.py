@@ -374,7 +374,7 @@ def db_create_leave_request(
                 with db_session() as conn:
                     cur = conn.cursor()
                     cur.execute(
-                        "SELECT managed_department FROM users_app WHERE role = 'coordinador' AND active = 1"
+                        "SELECT managed_department FROM users_app WHERE role IN ('coordinador', 'nomina') AND active = 1"
                     )
                     coordinators = cur.fetchall()
                     for c_row in coordinators:
@@ -539,7 +539,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             elif req_subarea:
                 # Find coordinators managing this subarea
                 cur.execute(
-                    "SELECT username FROM users_app WHERE role = 'coordinador' AND active = 1"
+                    "SELECT username FROM users_app WHERE role IN ('coordinador', 'nomina') AND active = 1"
                 )
                 coords = cur.fetchall()
                 for c in coords:
@@ -935,7 +935,7 @@ def db_cancel_leave_request(req_id, user_id, reason):
 
             if prev_status == "PENDING_COORD" and emp_subarea:
                 cur.execute(
-                    "SELECT username FROM users_app WHERE role = 'coordinador' AND active = 1"
+                    "SELECT username FROM users_app WHERE role IN ('coordinador', 'nomina') AND active = 1"
                 )
                 coords = cur.fetchall()
                 for c in coords:

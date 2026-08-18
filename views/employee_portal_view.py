@@ -1031,7 +1031,7 @@ def page_employee_portal():
                                 elif subarea == "Orientador":
                                     target_coord_dept = "Seguridad"
                                 coord_all = pd.read_sql_query(
-                                    "SELECT emp_email, emp_phone, managed_department FROM users_app WHERE role = 'coordinador' AND active = 1",
+                                    "SELECT emp_email, emp_phone, managed_department FROM users_app WHERE role IN ('coordinador', 'nomina') AND active = 1",
                                     conn,
                                 )
                                 for _, c_row in coord_all.iterrows():

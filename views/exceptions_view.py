@@ -2059,7 +2059,7 @@ def page_exceptions():
                 # Obtener coordinadores y jefes activos para mapeo dinámico de nombres
                 cur = conn.cursor()
                 cur.execute(
-                    "SELECT full_name, managed_department FROM users_app WHERE role = 'coordinador' AND active = 1"
+                    "SELECT full_name, managed_department FROM users_app WHERE role IN ('coordinador', 'nomina') AND active = 1"
                 )
                 coordinators = cur.fetchall()
                 cur.execute(
