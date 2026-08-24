@@ -267,16 +267,24 @@ def page_employees():
         st.info(
             "Utiliza este formulario para crear un registro individual en la base de datos de manera inmediata."
         )
+
+        if "emp_success" in st.session_state:
+            st.success(st.session_state.emp_success)
+            del st.session_state.emp_success
+
+        if "emp_form_key" not in st.session_state:
+            st.session_state.emp_form_key = 0
+
         c1, c2 = st.columns(2)
         with c1:
             e_id = st.text_input(
-                "Número de Documento (DNI)*", placeholder="Ej: 100123456"
+                "Número de Documento (DNI)*", placeholder="Ej: 100123456", key=f"e_id_val_{st.session_state.emp_form_key}"
             )
             e_name = st.text_input(
-                "Nombre Completo*", placeholder="Apellidos y Nombres"
+                "Nombre Completo*", placeholder="Apellidos y Nombres", key=f"e_name_val_{st.session_state.emp_form_key}"
             )
             e_email = st.text_input(
-                "Correo Electrónico (Opcional)", placeholder="usuario@dolormed.com"
+                "Correo Electrónico (Opcional)", placeholder="usuario@dolormed.com", key=f"e_email_val_{st.session_state.emp_form_key}"
             )
         with c2:
             e_area_main = st.selectbox(
@@ -311,7 +319,9 @@ def page_employees():
                     )
                     upsert_employees_df(df_new)
                     get_all_employees.clear()
-                    st.success(f"✅ Empleado {e_name} creado exitosamente.")
+                    st.session_state.emp_success = f"✅ Empleado {e_name} creado exitosamente."
+                    st.session_state.emp_form_key += 1
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Fallo al registrar empleado: {e}")
 
