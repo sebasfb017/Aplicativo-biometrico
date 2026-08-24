@@ -11,6 +11,7 @@ DB_PATH = os.path.join(DATA_DIR, "app.db")
 def db_conn():
     """Establece y retorna la conexión a la base de datos PostgreSQL."""
     conn = psycopg2.connect(POSTGRES_DSN)
+    conn.autocommit = True
     return conn
 
 

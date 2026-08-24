@@ -399,6 +399,7 @@ def db_create_leave_request(
                 user_id, request_date, leave_date_start, leave_date_end, start_time, end_time, 
                 total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status, attachment_path, specific_dates, approved_by_jefe
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
         """,
             (
                 user_id,
@@ -420,7 +421,7 @@ def db_create_leave_request(
             ),
         )
 
-        req_id = cur.lastrowid
+        req_id = cur.fetchone()[0]
 
     db_notify_next_approvers(req_id, user_id, target_status)
     return req_id
