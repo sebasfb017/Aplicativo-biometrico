@@ -169,72 +169,73 @@ def register_employee_dialog():
         )
         st.info("Paso 2: Datos de Contacto, Área y Seguridad")
 
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            st.text_input("Teléfono Móvil", key="reg_phone")
-        with col_c2:
-            st.text_input("Correo Electrónico", key="reg_email")
+        with st.form("reg_form", border=False):
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                st.text_input("Teléfono Móvil", key="reg_phone")
+            with col_c2:
+                st.text_input("Correo Electrónico", key="reg_email")
 
-        st.markdown("---")
-        st.selectbox(
-            "Área a la que perteneces", list(AREA_MAPPING.keys()), key="reg_sel_area"
-        )
-
-        selected_a = st.session_state.get("reg_sel_area", "Administrativo")
-        if selected_a not in AREA_MAPPING:
-            selected_a = "Administrativo"
-
-        st.selectbox(
-            "Sub-área / Cargo", AREA_MAPPING[selected_a], key="reg_sel_subarea"
-        )
-
-        st.markdown("---")
-        rol_options = {
-            "empleado": "Auxiliar",
-            "coordinador": "Coordinador de Departamento",
-            "jefe_area": "Jefe de Área",
-        }
-        selected_role = st.selectbox(
-            "Rol en el Sistema",
-            list(rol_options.keys()),
-            format_func=lambda x: rol_options[x],
-            key="reg_role",
-        )
-
-        if selected_role == "coordinador":
-            all_subareas = []
-            for subs in AREA_MAPPING.values():
-                all_subareas.extend(subs)
-            depts = sorted(list(set(all_subareas)))
-            st.multiselect(
-                "¿Qué Departamentos coordinas?", options=depts, key="reg_managed_depts"
-            )
-
-        elif selected_role == "jefe_area":
-            areas = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
+            st.markdown("---")
             st.selectbox(
-                "¿Qué Área tienes a cargo?",
-                [""] + sorted(areas),
-                key="reg_managed_area",
+                "Área a la que perteneces", list(AREA_MAPPING.keys()), key="reg_sel_area"
             )
 
-        st.markdown("---")
-        st.text_input("Ingresa una Contraseña nueva", type="password", key="reg_pass1")
-        st.text_input("Confirma tu Contraseña", type="password", key="reg_pass2")
+            selected_a = st.session_state.get("reg_sel_area", "Administrativo")
+            if selected_a not in AREA_MAPPING:
+                selected_a = "Administrativo"
 
-        if st.session_state["reg_error"]:
-            st.error(st.session_state["reg_error"])
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.button(
-                "Crear mi Cuenta",
-                type="primary",
-                use_container_width=True,
-                on_click=create_account,
+            st.selectbox(
+                "Sub-área / Cargo", AREA_MAPPING[selected_a], key="reg_sel_subarea"
             )
-        with col2:
-            st.button("Volver atrás", use_container_width=True, on_click=go_back)
+
+            st.markdown("---")
+            rol_options = {
+                "empleado": "Auxiliar",
+                "coordinador": "Coordinador de Departamento",
+                "jefe_area": "Jefe de Área",
+            }
+            selected_role = st.selectbox(
+                "Rol en el Sistema",
+                list(rol_options.keys()),
+                format_func=lambda x: rol_options[x],
+                key="reg_role",
+            )
+
+            if selected_role == "coordinador":
+                all_subareas = []
+                for subs in AREA_MAPPING.values():
+                    all_subareas.extend(subs)
+                depts = sorted(list(set(all_subareas)))
+                st.multiselect(
+                    "¿Qué Departamentos coordinas?", options=depts, key="reg_managed_depts"
+                )
+
+            elif selected_role == "jefe_area":
+                areas = list(AREA_MAPPING.keys()) + ["Auditoria Médica", "Control Interno"]
+                st.selectbox(
+                    "¿Qué Área tienes a cargo?",
+                    [""] + sorted(areas),
+                    key="reg_managed_area",
+                )
+
+            st.markdown("---")
+            st.text_input("Ingresa una Contraseña nueva", type="password", key="reg_pass1")
+            st.text_input("Confirma tu Contraseña", type="password", key="reg_pass2")
+
+            if st.session_state["reg_error"]:
+                st.error(st.session_state["reg_error"])
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.form_submit_button(
+                    "Crear mi Cuenta",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=create_account,
+                )
+            with col2:
+                st.form_submit_button("Volver atrás", use_container_width=True, on_click=go_back)
 
     elif st.session_state["reg_step"] == 3:
         st.success(f"🎉 ¡Cuenta creada con éxito para {st.session_state['reg_name']}!")
@@ -421,24 +422,26 @@ def forgot_password_dialog():
         st.warning(
             "Hemos enviado un PIN de 6 dígitos a tu correo. Revisa también la carpeta de SPAM o Correos no deseados. El PIN expira en 5 minutos."
         )
-        st.text_input("PIN de 6 dígitos", key="fp_pin_input")
-        st.text_input("Nueva Contraseña", type="password", key="fp_pw1")
-        st.text_input("Confirmar Nueva Contraseña", type="password", key="fp_pw2")
-        if st.session_state["fp_error"]:
-            st.error(st.session_state["fp_error"])
+        with st.form("reset_form", border=False):
+            st.text_input("PIN de 6 dígitos", key="fp_pin_input")
+            st.text_input("Nueva Contraseña", type="password", key="fp_pw1")
+            st.text_input("Confirmar Nueva Contraseña", type="password", key="fp_pw2")
+            if st.session_state["fp_error"]:
+                st.error(st.session_state["fp_error"])
 
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            st.button(
-                "Cambiar Contraseña",
-                type="primary",
-                use_container_width=True,
-                on_click=reset_pw,
-            )
-        with col_btn2:
-            if st.button("Volver a solicitar PIN", use_container_width=True):
-                st.session_state["fp_step"] = 1
-                st.rerun()
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                st.form_submit_button(
+                    "Cambiar Contraseña",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=reset_pw,
+                )
+            with col_btn2:
+                def fp_go_back():
+                    st.session_state["fp_step"] = 1
+                    st.session_state["fp_error"] = ""
+                st.form_submit_button("Volver a solicitar PIN", use_container_width=True, on_click=fp_go_back)
 
     elif st.session_state["fp_step"] == 3:
         st.success("🎉 ¡Tu contraseña ha sido cambiada exitosamente!")
