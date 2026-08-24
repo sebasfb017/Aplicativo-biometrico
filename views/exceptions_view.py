@@ -1615,7 +1615,7 @@ def page_exceptions():
                 st.rerun()
 
         with db_session() as conn:
-            df_pend = pd.read_sql_query(
+            df_pend_active = pd.read_sql_query(
                 """
                 SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                        lr.start_time, lr.end_time, lr.total_time,
@@ -1624,12 +1624,29 @@ def page_exceptions():
                        (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
                 FROM leave_requests lr
                 JOIN employees e ON lr.user_id = e.user_id
-                WHERE lr.status IN ('PENDING_RRHH', 'PENDING_COORD', 'PENDING_JEFE', 'APPROVED', 'REJECTED')
+                WHERE lr.status IN ('PENDING_RRHH', 'PENDING_COORD', 'PENDING_JEFE')
+                ORDER BY lr.id DESC
+            """,
+                conn,
+            )
+            df_pend_done = pd.read_sql_query(
+                """
+                SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                       lr.start_time, lr.end_time, lr.total_time,
+                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.specific_dates, lr.how_to_makeup,
+                       (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
+                       (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
+                FROM leave_requests lr
+                JOIN employees e ON lr.user_id = e.user_id
+                WHERE lr.status IN ('APPROVED', 'REJECTED')
                 ORDER BY lr.id DESC
                 LIMIT 150
             """,
                 conn,
             )
+            df_pend = pd.concat([df_pend_active, df_pend_done], ignore_index=True)
+            if not df_pend.empty:
+                df_pend = df_pend.sort_values(by="id", ascending=False)
 
         if df_pend.empty:
             st.success("No hay solicitudes pendientes de revisión final.")
