@@ -347,7 +347,7 @@ def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
                     f"Tu permiso fue rechazado por la jefatura/RRHH. Motivo: {reason}",
                     st.session_state["user"]["full_name"],
                 )
-                st.success("Solicitud rechazada y empleado notificado.")
+                st.toast("Solicitud rechazada y empleado notificado.")
                 st.rerun()
             else:
                 st.error("El motivo de rechazo no puede estar vacío.")
@@ -939,7 +939,7 @@ def page_exceptions():
                 df_pend = pd.read_sql_query(query, conn, params=params)
 
             if df_pend.empty:
-                st.success("No hay solicitudes pendientes de revisión para tu área.")
+                st.toast("No hay solicitudes pendientes de revisión para tu área.")
             else:
                 # --- Filtros Interactivos para Coordinadores/Jefes ---
                 with st.expander("🔍 Buscar y Filtrar Pendientes", expanded=False):
@@ -1389,7 +1389,7 @@ def page_exceptions():
                 for i in range(delta.days + 1):
                     day_to_log = (d_start + timedelta(days=i)).isoformat()
                     upsert_exception(selected_emp, day_to_log, exc_type, notes)
-                st.success(
+                st.toast(
                     f"Novedad registrada del {d_start} al {d_end} para el usuario {selected_emp}."
                 )
 
@@ -1649,7 +1649,7 @@ def page_exceptions():
                 df_pend = df_pend.sort_values(by="id", ascending=False)
 
         if df_pend.empty:
-            st.success("No hay solicitudes pendientes de revisión final.")
+            st.toast("No hay solicitudes pendientes de revisión final.")
         else:
             # --- Buscador Inteligente Siempre Visible ---
             st.markdown(
@@ -2004,7 +2004,7 @@ def page_exceptions():
                                         r["id"], st.session_state["user"]["username"]
                                     )
                                     if success:
-                                        st.success(
+                                        st.toast(
                                             f"Permiso #{r['id']} devuelto a estado Pendiente."
                                         )
                                         st.rerun()
@@ -2085,7 +2085,7 @@ def page_exceptions():
                 jefes = cur.fetchall()
 
             if df_g.empty:
-                st.success(
+                st.toast(
                     "Toda la tubería está limpia. No hay solicitudes estancadas."
                 )
             else:
@@ -2283,7 +2283,7 @@ def page_exceptions():
             pending_df = db_get_pending_hr_procedures()
             
             if pending_df.empty:
-                st.success("🎉 ¡No hay trámites pendientes por gestionar!")
+                st.toast("🎉 ¡No hay trámites pendientes por gestionar!")
             else:
                 for idx, row in pending_df.iterrows():
                     proc_id = row["id"]
@@ -2334,7 +2334,7 @@ def page_exceptions():
                                         
                                     send_hr_procedure_status_update(emp_email, emp_name, proc_type, new_status)
                                     
-                                    st.success("✅ Trámite actualizado correctamente.")
+                                    st.toast("✅ Trámite actualizado correctamente.")
                                     st.rerun()
         else:
             st.warning("No tienes permisos para acceder a la bandeja de Trámites.")

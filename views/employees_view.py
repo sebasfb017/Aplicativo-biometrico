@@ -104,7 +104,7 @@ def edit_employee_dialog(user_id):
                 )
 
             get_all_employees.clear()
-            st.success("✅ Cambios guardados correctamente.")
+            st.toast("✅ Cambios guardados correctamente.")
             st.rerun()
         except Exception as exc:
             st.error(f"Error al guardar los cambios: {exc}")
@@ -138,7 +138,7 @@ def edit_employee_dialog(user_id):
                 if "employees_table" in st.session_state:
                     del st.session_state["employees_table"]
 
-                st.success("🗑️ Empleado eliminado. Cerrando...")
+                st.toast("🗑️ Empleado eliminado. Cerrando...")
                 import time
 
                 time.sleep(0.75)
@@ -269,7 +269,7 @@ def page_employees():
         )
 
         if "emp_success" in st.session_state:
-            st.success(st.session_state.emp_success)
+            st.toast(st.session_state.emp_success)
             del st.session_state.emp_success
 
         if "emp_form_key" not in st.session_state:
@@ -338,7 +338,7 @@ def page_employees():
             try:
                 upsert_employees_df(df)
                 get_all_employees.clear()
-                st.success(
+                st.toast(
                     "✅ Base de datos de empleados actualizada satisfactoriamente."
                 )
             except Exception as e:

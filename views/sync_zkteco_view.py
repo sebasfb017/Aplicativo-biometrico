@@ -73,7 +73,7 @@ def edit_device_dialog(device_idx, devices_list):
                     conn = None
                     try:
                         conn = zk.connect()
-                        st.success(
+                        st.toast(
                             "✅ ¡Conexión exitosa! El biométrico responde correctamente."
                         )
                     except Exception as ex:
@@ -120,7 +120,7 @@ def edit_device_dialog(device_idx, devices_list):
                 devices_list[device_idx] = updated_d
 
             if save_devices(devices_list):
-                st.success("✅ Dispositivo guardado correctamente. Cerrando...")
+                st.toast("✅ Dispositivo guardado correctamente. Cerrando...")
                 import time
 
                 time.sleep(0.75)
@@ -144,7 +144,7 @@ def edit_device_dialog(device_idx, devices_list):
             ):
                 devices_list.pop(device_idx)
                 if save_devices(devices_list):
-                    st.success("🗑️ Dispositivo eliminado. Cerrando...")
+                    st.toast("🗑️ Dispositivo eliminado. Cerrando...")
                     import time
 
                     time.sleep(0.75)
@@ -212,7 +212,7 @@ def edit_remote_user_dialog(user_data, device, devices_list):
                             del st.session_state["dev_users_" + d["ip"]]
 
             if success_count > 0:
-                st.success(f"✅ Usuario modificado en {success_count} relojes.")
+                st.toast(f"✅ Usuario modificado en {success_count} relojes.")
                 import time
 
                 time.sleep(0.75)
@@ -245,7 +245,7 @@ def edit_remote_user_dialog(user_data, device, devices_list):
                                 break
 
             if success_count > 0:
-                st.success(f"🗑️ Usuario eliminado en {success_count} relojes.")
+                st.toast(f"🗑️ Usuario eliminado en {success_count} relojes.")
                 import time
 
                 time.sleep(0.75)
