@@ -238,7 +238,7 @@ def register_employee_dialog():
                 st.form_submit_button("Volver atrás", use_container_width=True, on_click=go_back)
 
     elif st.session_state["reg_step"] == 3:
-        st.success(f"🎉 ¡Cuenta creada con éxito para {st.session_state['reg_name']}!")
+        st.toast(f"🎉 ¡Cuenta creada con éxito para {st.session_state['reg_name']}!")
         st.write(
             "Tu usuario es tu número de cédula. Ya puedes cerrar esta ventana y utilizar tus nuevas credenciales para iniciar sesión en el Portal de Empleados."
         )
@@ -419,8 +419,8 @@ def forgot_password_dialog():
 
     elif st.session_state["fp_step"] == 2:
         st.info("Paso 2: Digita el PIN y la Nueva Clave")
-        st.warning(
-            "Hemos enviado un PIN de 6 dígitos a tu correo. Revisa también la carpeta de SPAM o Correos no deseados. El PIN expira en 5 minutos."
+        st.toast(
+            "✅ Documento validado correctamente. Puedes continuar con el paso 2. Revisa también la carpeta de SPAM o Correos no deseados. El PIN expira en 5 minutos."
         )
         with st.form("reset_form", border=False):
             st.text_input("PIN de 6 dígitos", key="fp_pin_input")
@@ -444,7 +444,7 @@ def forgot_password_dialog():
                 st.form_submit_button("Volver a solicitar PIN", use_container_width=True, on_click=fp_go_back)
 
     elif st.session_state["fp_step"] == 3:
-        st.success("🎉 ¡Tu contraseña ha sido cambiada exitosamente!")
+        st.toast("🎉 ¡Tu contraseña ha sido cambiada exitosamente!")
         st.write(
             "Ya puedes cerrar esta ventana e iniciar sesión con tu nueva clave en la pantalla principal."
         )
@@ -594,7 +594,7 @@ def page_login():
                         token = db_create_session(user["username"])
                         st.session_state["session_token"] = token
                         st.query_params["session_token"] = token
-                        st.success(f"¡Bienvenido, {user['full_name']}!")
+                        st.toast(f"¡Bienvenido, {user['full_name']}!", icon="👋")
                         import time
                         time.sleep(0.5)
                         st.rerun()
@@ -621,7 +621,7 @@ def page_login():
                             token = db_create_session(user["username"])
                             st.session_state["session_token"] = token
                             st.query_params["session_token"] = token
-                            st.success(f"Acceso exitoso: {user['full_name']}")
+                            st.toast(f"Acceso exitoso: {user['full_name']}", icon="👋")
                             import time
                             time.sleep(0.5)
                             st.rerun()
