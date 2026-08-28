@@ -124,6 +124,7 @@ from database_conn.queries import (
     db_create_leave_request,
     db_create_hr_procedure,
     db_get_employee_procedures,
+    get_cached_dataframe,
 )
 from services.email_service import send_novedad_alert
 from services.notifications import generate_fth012_pdf
@@ -1160,20 +1161,18 @@ def page_employee_portal():
                 st.rerun()
 
     with t2:
-        with db_conn() as conn:
-            df_reqs = pd.read_sql_query(
-                """
-                SELECT id as "Radicado", request_date as "Fecha_Solicitud", leave_date_start, 
-                       leave_date_end, total_time as "Duración", reason_type as "Motivo", status as "Estado",
-                       full_name
-                FROM leave_requests lr
-                JOIN users_app ua ON lr.user_id = ua.username
-                WHERE lr.user_id = %s AND (lr.hidden_by_employee IS NULL OR lr.hidden_by_employee = 0)
-                ORDER BY id DESC
-            """,
-                conn,
-                params=(user["username"],),
-            )
+        df_reqs = get_cached_dataframe(
+            """
+            SELECT id as "Radicado", request_date as "Fecha_Solicitud", leave_date_start, 
+                   leave_date_end, total_time as "Duración", reason_type as "Motivo", status as "Estado",
+                   full_name
+            FROM leave_requests lr
+            JOIN users_app ua ON lr.user_id = ua.username
+            WHERE lr.user_id = %s AND (lr.hidden_by_employee IS NULL OR lr.hidden_by_employee = 0)
+            ORDER BY id DESC
+        """,
+            params=(user["username"],),
+        )
 
         if df_reqs.empty:
             st.info("No tienes solicitudes históricas radicas.")
