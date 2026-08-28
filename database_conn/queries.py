@@ -265,6 +265,7 @@ def get_exceptions_df():
 
     if df.empty:
         df["date_end"] = pd.Series(dtype="object")
+        df["total_days"] = pd.Series(dtype="int")
         return df[
             [
                 "id",
@@ -272,6 +273,7 @@ def get_exceptions_df():
                 "full_name",
                 "date",
                 "date_end",
+                "total_days",
                 "type",
                 "notes",
                 "created_at",
@@ -283,7 +285,11 @@ def get_exceptions_df():
     df["grp"] = (
         (df["user_id"] != df["user_id"].shift())
         | (df["type"] != df["type"].shift())
-        | (df["date_obj"].diff().dt.days > 1)
+        | ((df["notes"] != df["notes"].shift()) & (df["type"] != "Vacaciones"))
+        | (
+            (df["date_obj"].diff().dt.days > 1)
+            & ~((df["type"] == "Vacaciones") & (df["date_obj"].diff().dt.days <= 5))
+        )
         | (df["date_obj"].diff().dt.days <= 0)
     ).cumsum()
 
@@ -293,6 +299,7 @@ def get_exceptions_df():
             id=("id", "first"),
             date=("date", "min"),
             date_end=("date", "max"),
+            total_days=("date", "count"),
             notes=(
                 "notes",
                 lambda x: (
@@ -313,6 +320,7 @@ def get_exceptions_df():
             "full_name",
             "date",
             "date_end",
+            "total_days",
             "type",
             "notes",
             "created_at",
@@ -424,6 +432,7 @@ def db_create_leave_request(
         req_id = cur.fetchone()[0]
 
     db_notify_next_approvers(req_id, user_id, target_status)
+    get_cached_dataframe.clear()
     return req_id
 
 
@@ -684,10 +693,13 @@ def db_approve_leave_request_coord(req_id, coord_username):
             (coord_username, datetime.now().isoformat(timespec="seconds"), req_id),
         )
 
-        notify = cur.rowcount > 0 and user_id
+        update_success = cur.rowcount > 0
+        notify = update_success and user_id
 
     if notify:
         db_notify_next_approvers(req_id, user_id, "PENDING_RRHH", coord_name)
+    get_cached_dataframe.clear()
+    return update_success
 
 
 def db_approve_leave_request_jefe(req_id, jefe_username):
@@ -712,10 +724,13 @@ def db_approve_leave_request_jefe(req_id, jefe_username):
             (jefe_username, datetime.now().isoformat(timespec="seconds"), req_id),
         )
 
-        notify = cur.rowcount > 0 and user_id
+        update_success = cur.rowcount > 0
+        notify = update_success and user_id
 
     if notify:
         db_notify_next_approvers(req_id, user_id, "PENDING_RRHH", jefe_name)
+    get_cached_dataframe.clear()
+    return update_success
 
 
 def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
@@ -742,10 +757,13 @@ def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
             (status, approver_user, now, req_id),
         )
 
-        notify = cur.rowcount > 0 and user_id
+        update_success = cur.rowcount > 0
+        notify = update_success and user_id
 
     if notify:
         db_notify_next_approvers(req_id, user_id, status, approver_name)
+    get_cached_dataframe.clear()
+    return update_success
 
 
 def db_reject_leave_request(req_id, rejected_by, rejection_reason):
@@ -793,6 +811,8 @@ def db_reject_leave_request(req_id, rejected_by, rejection_reason):
 
     if notify:
         db_notify_next_approvers(req_id, user_id, "REJECTED", rejecter_name)
+    get_cached_dataframe.clear()
+    return update_success
 
 
 def db_revert_leave_request(req_id, admin_user):
@@ -879,6 +899,7 @@ def db_revert_leave_request(req_id, admin_user):
             ),
         )
 
+        get_cached_dataframe.clear()
         return True
 
 
@@ -1267,3 +1288,26 @@ def db_update_hr_procedure_status(procedure_id, status, notes=""):
             (status, procedure_id),
         )
         conn.commit()
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_dataframe(query: str, params: tuple = None):
+    """
+    Ejecuta una consulta SQL y retorna un DataFrame cacheado.
+    Expira a los 60 segundos o cuando se limpia manualmente.
+    """
+    conn = db_conn()
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
+
+
+def db_update_theme(username: str, theme: str):
+    """Actualiza la preferencia de tema visual del usuario."""
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users_app SET theme_preference = %s WHERE username = %s",
+        (theme, username)
+    )
+    conn.commit()
+    conn.close()
