@@ -10,6 +10,7 @@ from database_conn.queries import (
     db_approve_leave_request_jefe,
     db_reject_leave_request,
     get_exceptions_df,
+    get_cached_dataframe,
     is_holiday,
     upsert_exception,
 )
@@ -91,7 +92,7 @@ def check_schedule_conflicts(
         params.append(f"{managed_entity} - %")
 
     with db_conn() as conn:
-        conflicts_df = pd.read_sql_query(query, conn, params=params)
+        conflicts_df = get_cached_dataframe(query, params=params)
 
     if not conflicts_df.empty:
         names = ", ".join(conflicts_df["full_name"].tolist())
@@ -107,15 +108,13 @@ def check_schedule_conflicts(
 @st.dialog("Detalles Completos de la Novedad/Permiso")
 def show_exception_details(exc_id: int):
     with db_session() as conn:
-        df_exc = pd.read_sql_query(
+        df_exc = get_cached_dataframe(
             """
             SELECT ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
             FROM exceptions ex
             LEFT JOIN employees e ON ex.user_id = e.user_id
             WHERE ex.id = %s
-        """,
-            conn,
-            params=(exc_id,),
+        """, params=(exc_id,),
         )
 
         if df_exc.empty:
@@ -131,16 +130,14 @@ def show_exception_details(exc_id: int):
         st.divider()
 
         # Buscar si existe una solicitud digital de portal asociada
-        df_req = pd.read_sql_query(
+        df_req = get_cached_dataframe(
             """
             SELECT *
             FROM leave_requests
             WHERE user_id = %s AND status = 'APPROVED'
               AND leave_date_start <= %s AND leave_date_end >= %s
             ORDER BY id DESC LIMIT 1
-        """,
-            conn,
-            params=(exc["user_id"], exc["date"], exc["date"]),
+        """, params=(exc["user_id"], exc["date"], exc["date"]),
         )
 
     if not df_req.empty:
@@ -229,16 +226,14 @@ def show_exception_details(exc_id: int):
                     )
 
         with db_session() as conn:
-            df_audit = pd.read_sql_query(
+            df_audit = get_cached_dataframe(
                 """
                 SELECT a.user_id, a.action, a.timestamp, u.full_name, a.details, u.role
                 FROM audit_logs a
                 LEFT JOIN users_app u ON a.user_id = u.username
                 WHERE a.details LIKE %s AND a.action LIKE 'APPROVE_%%'
                 ORDER BY a.timestamp ASC
-            """,
-                conn,
-                params=(f"%Permiso #{req['id']} %",),
+            """, params=(f"%Permiso #{req['id']} %",),
             )
 
         if not df_audit.empty:
@@ -365,14 +360,16 @@ def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
 # al mismo tiempo que la página se reiniciaba con st.rerun().
 def handle_approve_callback(r_dict, user):
     if user["role"] == "coordinador":
-        db_approve_leave_request_coord(r_dict["id"], user["username"])
+        success = db_approve_leave_request_coord(r_dict["id"], user["username"])
+        if not success:
+            st.toast("La solicitud ya fue procesada o no se encontró.", icon="⚠️")
+            return
+
         next_status = "PENDING_RRHH"
 
         with db_session() as conn:
-            admin_df = pd.read_sql_query(
-                "SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''",
-                conn,
-            )
+            admin_df = get_cached_dataframe(
+                "SELECT emp_email FROM users_app WHERE role IN ('admin', 'nomina') AND active = 1 AND emp_email IS NOT NULL AND emp_email != ''")
             if not admin_df.empty:
                 target_emails = admin_df["emp_email"].tolist()
                 from services.email_service import send_novedad_alert
@@ -402,54 +399,24 @@ def handle_approve_callback(r_dict, user):
         )
 
     else:
-        db_approve_leave_request_jefe(r_dict["id"], user["username"])
-        next_status = "APPROVED"
+        success = db_approve_leave_request_jefe(r_dict["id"], user["username"])
+        if not success:
+            st.toast("La solicitud ya fue procesada o no se encontró.", icon="⚠️")
+            return
 
-        with db_session() as conn:
-            cur = conn.cursor()
-            d_start = date.fromisoformat(r_dict["leave_date_start"])
-            d_end = date.fromisoformat(r_dict["leave_date_end"])
-            delta = d_end - d_start
-            days_deducted = 0
-            for i in range(delta.days + 1):
-                curr_date = d_start + timedelta(days=i)
-                if r_dict["reason_type"] == "Vacaciones":
-                    if curr_date.weekday() == 6 or is_holiday(curr_date):
-                        continue
-                day_to_log = curr_date.isoformat()
-                cur.execute(
-                    """
-                    INSERT INTO exceptions(user_id, date, type, notes, created_at)
-                    VALUES(%s,%s,%s,%s,%s)
-                    ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes
-                """,
-                    (
-                        r_dict["user_id"],
-                        day_to_log,
-                        r_dict["reason_type"],
-                        f"Aprobado de Portal: {r_dict['reason_description']}",
-                        datetime.now().isoformat(timespec="seconds"),
-                    ),
-                )
-                days_deducted += 1
-
-            if r_dict["reason_type"] == "Vacaciones" and days_deducted > 0:
-                cur.execute(
-                    "UPDATE users_app SET vacation_balance = vacation_balance - %s WHERE username = %s",
-                    (days_deducted, r_dict["user_id"]),
-                )
+        next_status = "PENDING_RRHH"
 
         log_audit(
-            "APPROVE_LEAVE_FINAL",
-            f"Permiso #{r_dict['id']} ({r_dict['reason_type']}) de {r_dict['full_name']} APROBADO FINAL por Jefe de Área.",
+            "APPROVE_LEAVE_L1",
+            f"Permiso #{r_dict['id']} ({r_dict['reason_type']}) de {r_dict['full_name']} aprobado por Jefe de Área. Pasa a {next_status}",
         )
         notify_employee_status(
             r_dict["user_id"],
             r_dict["full_name"],
             r_dict["id"],
             r_dict["reason_type"],
-            "APROBACIÓN FINAL",
-            "Tu solicitud fue completamente aprobada por tu Jefatura y registrada oficialmente en el sistema.",
+            "PRE-APROBADA",
+            f"Tu solicitud avanzó en el flujo de firmas hacia RRHH para su revisión y aplicación final.",
             user["full_name"],
         )
 
@@ -616,7 +583,7 @@ def render_absence_calendar(user):
             params = tuple(params)
 
     with db_session() as conn:
-        df_reqs = pd.read_sql_query(query, conn, params=params)
+        df_reqs = get_cached_dataframe(query, params=params)
 
     # Agrupar eventos por día
     events_by_day = {}
@@ -936,7 +903,7 @@ def page_exceptions():
                 params += (user.get("managed_area", ""),)
 
             with db_session() as conn:
-                df_pend = pd.read_sql_query(query, conn, params=params)
+                df_pend = get_cached_dataframe(query, params=params)
 
             if df_pend.empty:
                 st.toast("No hay solicitudes pendientes de revisión para tu área.")
@@ -1200,7 +1167,7 @@ def page_exceptions():
                 )
 
             with db_session() as conn:
-                df_hist = pd.read_sql_query(query_hist, conn, params=params_hist)
+                df_hist = get_cached_dataframe(query_hist, params=params_hist)
 
             if df_hist.empty:
                 st.info("Aún no has procesado ninguna solicitud.")
@@ -1419,18 +1386,13 @@ def page_exceptions():
                 "Nombre",
                 "Fecha Inicio",
                 "Fecha Fin",
+                "Total Días",
                 "Tipo",
                 "Observaciones",
                 "Registrado El",
             ]
 
-            # Calcular Total Días (sumando 1 para que sea inclusivo)
-            df_exc["Total Días"] = (
-                pd.to_datetime(df_exc["Fecha Fin"])
-                - pd.to_datetime(df_exc["Fecha Inicio"])
-            ).dt.days + 1
-
-            # Reorganizar columnas para que Total Días quede junto a las fechas
+            # Reorganizar columnas para que Total Días quede junto a las fechas (Ya viene así de queries)
             df_exc = df_exc[
                 [
                     "ID",
@@ -1615,38 +1577,37 @@ def page_exceptions():
                 st.rerun()
 
         with db_session() as conn:
-            df_pend_active = pd.read_sql_query(
-                """
-                SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
-                       lr.start_time, lr.end_time, lr.total_time,
-                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.specific_dates, lr.how_to_makeup,
-                       (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
-                       (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
-                FROM leave_requests lr
-                JOIN employees e ON lr.user_id = e.user_id
-                WHERE lr.status IN ('PENDING_RRHH', 'PENDING_COORD', 'PENDING_JEFE')
-                ORDER BY lr.id DESC
-            """,
-                conn,
-            )
-            df_pend_done = pd.read_sql_query(
-                """
-                SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
-                       lr.start_time, lr.end_time, lr.total_time,
-                       lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.specific_dates, lr.how_to_makeup,
-                       (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
-                       (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
-                FROM leave_requests lr
-                JOIN employees e ON lr.user_id = e.user_id
-                WHERE lr.status IN ('APPROVED', 'REJECTED')
-                ORDER BY lr.id DESC
-                LIMIT 150
-            """,
-                conn,
-            )
-            df_pend = pd.concat([df_pend_active, df_pend_done], ignore_index=True)
-            if not df_pend.empty:
-                df_pend = df_pend.sort_values(by="id", ascending=False)
+            pass # Keep block valid if needed, or remove later
+        df_pend_active = get_cached_dataframe(
+            """
+            SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                   lr.start_time, lr.end_time, lr.total_time,
+                   lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.specific_dates, lr.how_to_makeup,
+                   (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
+                   (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
+            FROM leave_requests lr
+            JOIN employees e ON lr.user_id = e.user_id
+            WHERE lr.status IN ('PENDING_RRHH', 'PENDING_COORD', 'PENDING_JEFE')
+            ORDER BY lr.id DESC
+        """
+        )
+        df_pend_done = get_cached_dataframe(
+            """
+            SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
+                   lr.start_time, lr.end_time, lr.total_time,
+                   lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.specific_dates, lr.how_to_makeup,
+                   (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
+                   (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
+            FROM leave_requests lr
+            JOIN employees e ON lr.user_id = e.user_id
+            WHERE lr.status IN ('APPROVED', 'REJECTED')
+            ORDER BY lr.id DESC
+            LIMIT 150
+        """
+        )
+        df_pend = pd.concat([df_pend_active, df_pend_done], ignore_index=True)
+        if not df_pend.empty:
+            df_pend = df_pend.sort_values(by="id", ascending=False)
 
         if df_pend.empty:
             st.toast("No hay solicitudes pendientes de revisión final.")
@@ -1890,28 +1851,39 @@ def page_exceptions():
                                 )
 
                                 if requiere_jefe:
-                                    db_approve_leave_request_rrhh(
+                                    success = db_approve_leave_request_rrhh(
                                         r["id"],
                                         st.session_state["user"]["username"],
                                         is_final=False,
                                     )
+                                    if not success:
+                                        st.toast("La solicitud ya fue procesada.", icon="⚠️")
+                                        st.rerun()
                                     # ... omitir correo para esta demo
                                 else:
-                                    db_approve_leave_request_rrhh(
+                                    success = db_approve_leave_request_rrhh(
                                         r["id"],
                                         st.session_state["user"]["username"],
                                         is_final=True,
                                     )
+                                    if not success:
+                                        st.toast("La solicitud ya fue procesada.", icon="⚠️")
+                                        st.rerun()
+                                        
                                     with db_session() as conn:
                                         cur = conn.cursor()
-                                        d_start = date.fromisoformat(
-                                            r["leave_date_start"]
-                                        )
+                                        d_start = date.fromisoformat(r["leave_date_start"])
                                         d_end = date.fromisoformat(r["leave_date_end"])
-                                        delta = d_end - d_start
+                                        
+                                        dates_to_process = []
+                                        if "specific_dates" in r and pd.notna(r["specific_dates"]) and str(r["specific_dates"]).strip() not in ["None", ""]:
+                                            dates_to_process = [date.fromisoformat(d.strip()) for d in str(r["specific_dates"]).split(",") if d.strip()]
+                                        else:
+                                            delta = d_end - d_start
+                                            dates_to_process = [d_start + timedelta(days=i) for i in range(delta.days + 1)]
+                                            
                                         days_deducted = 0
-                                        for i in range(delta.days + 1):
-                                            curr_date = d_start + timedelta(days=i)
+                                        for curr_date in dates_to_process:
                                             if r["reason_type"] == "Vacaciones":
                                                 if (
                                                     curr_date.weekday() == 6
@@ -2057,22 +2029,21 @@ def page_exceptions():
                 "Vista exclusiva para directivos. Aquí observas el estado de **todas** las solicitudes en curso en toda la empresa."
             )
 
-            with db_session() as conn:
-                df_g = pd.read_sql_query(
-                    """
-                    SELECT lr.id, lr.user_id, e.full_name, e.department, 
-                           lr.leave_date_start, lr.leave_date_end,
-                           lr.reason_type, lr.status, lr.request_date,
-                           ua.emp_area, ua.emp_subarea, ua.role as user_role, ua.managed_department as user_managed_dept
-                    FROM leave_requests lr
-                    JOIN employees e ON lr.user_id = e.user_id
-                    LEFT JOIN users_app ua ON lr.user_id = ua.username
-                    WHERE lr.status LIKE 'PENDING_%'
-                    ORDER BY lr.request_date DESC
-                """,
-                    conn,
-                )
+            df_g = get_cached_dataframe(
+                """
+                SELECT lr.id, lr.user_id, e.full_name, e.department, 
+                       lr.leave_date_start, lr.leave_date_end,
+                       lr.reason_type, lr.status, lr.request_date,
+                       ua.emp_area, ua.emp_subarea, ua.role as user_role, ua.managed_department as user_managed_dept
+                FROM leave_requests lr
+                JOIN employees e ON lr.user_id = e.user_id
+                LEFT JOIN users_app ua ON lr.user_id = ua.username
+                WHERE lr.status LIKE 'PENDING_%'
+                ORDER BY lr.request_date DESC
+            """
+            )
 
+            with db_session() as conn:
                 # Obtener coordinadores y jefes activos para mapeo dinámico de nombres
                 cur = conn.cursor()
                 cur.execute(
