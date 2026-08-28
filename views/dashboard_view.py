@@ -5,6 +5,7 @@ import plotly.express as px
 import streamlit as st
 
 from database_conn.connection import db_conn
+from database_conn.queries import get_cached_dataframe
 from services.analytics import compute_month_lateness
 
 
@@ -218,16 +219,14 @@ def page_dashboard():
 
     # Gráfico de Marcaciones Recientes (Últimos 7 días)
     st.subheader("📈 Actividad del Biométrico (Últimos 7 Días)")
-    df_act = pd.read_sql_query(
-        """
+    query_act = """
         SELECT CAST(ts AS date) as fecha, COUNT(*) as cantidad 
         FROM attendance_raw 
         WHERE CAST(ts AS date) >= CURRENT_DATE - INTERVAL '7 days' AND is_ignored = 0
         GROUP BY CAST(ts AS date)
         ORDER BY CAST(ts AS date)
-    """,
-        conn,
-    )
+    """
+    df_act = get_cached_dataframe(query_act)
 
     if not df_act.empty:
         fig = px.bar(
@@ -248,8 +247,7 @@ def page_dashboard():
     st.subheader("📋 Solicitudes Pendientes de Acción")
     st.write("Los permisos más recientes que esperan aprobación.")
 
-    df_pendientes = pd.read_sql_query(
-        """
+    query_pend = """
         SELECT lr.id as "Radicado", lr.request_date as "Fecha", u.full_name as "Empleado", 
                e.department as "Departamento", lr.reason_type as "Motivo", lr.status as "Estado"
         FROM leave_requests lr
@@ -257,9 +255,8 @@ def page_dashboard():
         LEFT JOIN employees e ON u.username = e.user_id
         WHERE lr.status LIKE 'PENDING_%'
         ORDER BY lr.id DESC LIMIT 10
-    """,
-        conn,
-    )
+    """
+    df_pendientes = get_cached_dataframe(query_pend)
 
     if not df_pendientes.empty:
         html_table = (
@@ -288,6 +285,7 @@ def page_dashboard():
     with col_a1:
         st.markdown("**🚨 Posibles Faltas de Ayer**")
         yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday_str = (date.today() - timedelta(days=1)).isoformat()
 
         missing_query = """
             SELECT e.full_name as "Empleado", sa.user_id as "ID"
@@ -305,8 +303,8 @@ def page_dashboard():
         y_ws = (y_date - timedelta(days=y_date.weekday())).isoformat()
         y_dow = y_date.weekday()
 
-        miss_df = pd.read_sql_query(
-            missing_query, conn, params=(y_ws, y_dow, yesterday, yesterday)
+        miss_df = get_cached_dataframe(
+            missing_query, params=(y_ws, y_dow, yesterday_str, yesterday_str)
         )
 
         if miss_df.empty:
@@ -328,7 +326,7 @@ def page_dashboard():
                 SELECT DISTINCT user_id FROM shift_assignments WHERE week_start = %s
             )
         """
-        no_sch_df = pd.read_sql_query(no_shift_query, conn, params=(this_week_start,))
+        no_sch_df = get_cached_dataframe(no_shift_query, params=(this_week_start,))
         conn.close()
 
         if no_sch_df.empty:
