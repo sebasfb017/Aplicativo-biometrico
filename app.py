@@ -498,6 +498,16 @@ def main():
         unsafe_allow_html=True,
     )
 
+    # --- INYECCIÓN DINÁMICA DE TEMA (CLARO / OSCURO) ---
+    user = st.session_state.get("user")
+    if user:
+        theme_pref = user.get("theme_preference", "Oscuro")
+        from utils.theme import get_theme_css
+        st.markdown(get_theme_css(theme_pref), unsafe_allow_html=True)
+
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
+
     # --- INICIO BACKGROUND SCHEDULER ---
     @st.cache_resource
     def init_scheduler():
@@ -748,9 +758,33 @@ def main():
             },
         )
         st.session_state["menu_selection"] = sel
-        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-        if st.button("Cerrar Sesión", type="primary", use_container_width=True):
+        # --- TEMA VISUAL ---
+        from database_conn.queries import db_update_theme
+        
+        current_theme = user.get("theme_preference", "Oscuro")
+        st.markdown("<p style='font-size: 0.9rem; font-weight: 600; margin-bottom: 5px; color: #94a3b8;'>🎨 Tema Visual</p>", unsafe_allow_html=True)
+        
+        theme_options = ["Oscuro", "Claro"]
+        theme_index = 0 if current_theme == "Oscuro" else 1
+        
+        selected_theme = st.selectbox(
+            "Selecciona tu preferencia", 
+            options=theme_options, 
+            index=theme_index,
+            label_visibility="collapsed",
+            key="theme_selector"
+        )
+        
+        if selected_theme != current_theme:
+            db_update_theme(user["username"], selected_theme)
+            st.session_state["user"]["theme_preference"] = selected_theme
+            st.rerun()
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        if st.button("🚪 Cerrar Sesión", type="primary", use_container_width=True):
             token = st.session_state.get("session_token")
             if token:
                 try:
