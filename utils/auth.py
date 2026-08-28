@@ -13,7 +13,7 @@ def get_user(username: str):
     try:
         cur.execute(
             """
-            SELECT username, full_name, role, password_hash, active, managed_department, failed_attempts, locked_until, managed_area, emp_area, emp_subarea
+            SELECT username, full_name, role, password_hash, active, managed_department, failed_attempts, locked_until, managed_area, emp_area, emp_subarea, theme_preference
             FROM users_app WHERE username = %s
         """,
             (username,),
@@ -23,13 +23,13 @@ def get_user(username: str):
         # Fallback por si no han migrado la tabla aún
         cur.execute(
             """
-            SELECT username, full_name, role, password_hash, active, managed_department, NULL, NULL, NULL, NULL, NULL
+            SELECT username, full_name, role, password_hash, active, managed_department, NULL, NULL, NULL, NULL, NULL, 'Oscuro'
             FROM users_app WHERE username = %s
         """,
             (username,),
         )
         r = cur.fetchone()
-        row = (*r, 0, None, None, None, None) if r else None
+        row = (*r, 0, None, None, None, None, 'Oscuro') if r else None
     conn.close()
     return row
 
@@ -61,6 +61,7 @@ def verify_login(username: str, password: str):
             managed_area,
             emp_area,
             emp_subarea,
+            theme_preference,
         ) = row
     else:
         (
@@ -76,6 +77,7 @@ def verify_login(username: str, password: str):
         managed_area = None
         emp_area = None
         emp_subarea = None
+        theme_preference = "Oscuro"
 
     if active != 1:
         return None if is_pytest else {"error": "Tu cuenta está inactiva."}
@@ -116,6 +118,7 @@ def verify_login(username: str, password: str):
             "managed_area": managed_area,
             "emp_area": emp_area,
             "emp_subarea": emp_subarea,
+            "theme_preference": theme_preference,
         }
     else:
         # Login fallido
