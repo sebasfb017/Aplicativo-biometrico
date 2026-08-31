@@ -120,3 +120,12 @@ def page_lateness_report():
             mime="application/octet-stream",
             use_container_width=True,
         )
+        
+        csv_bytes = summary_df.to_csv(index=False, sep=";").encode("utf-8-sig")
+        st.download_button(
+            "📥 Descargar Resumen (CSV)",
+            data=csv_bytes,
+            file_name=f"Resumen_Mensual_Dolormed_{year}_{month:02d}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
