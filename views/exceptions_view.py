@@ -1533,6 +1533,16 @@ def page_exceptions():
                         st.error(
                             f"No se pudo generar Excel. Requiere openpyxl. (Error: {e})"
                         )
+                        
+                    # CSV Export
+                    csv_data = filtered_df.to_csv(index=False, sep=";").encode("utf-8-sig")
+                    st.download_button(
+                        label="📥 Descargar a CSV (.csv)",
+                        data=csv_data,
+                        file_name=f"Listado_Novedades_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
 
                 # =========================================================================
                 # PREVENCIÓN ANTIGUOS POPUPS FANTASMAS (BUG "DOBLE CLIC")
