@@ -16,6 +16,73 @@ from services.zk_service import (
 from utils.auth import require_role
 from database_conn.connection import db_session
 
+import threading
+import json
+import os
+from datetime import datetime
+
+SYNC_STATE_FILE = "/tmp/sync_state.json"
+
+def get_sync_state():
+    if os.path.exists(SYNC_STATE_FILE):
+        try:
+            with open(SYNC_STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"is_running": False, "message": "", "logs": []}
+
+def set_sync_state(is_running: bool, message: str, logs: list = None):
+    if logs is None:
+        logs = []
+    state = {"is_running": is_running, "message": message, "logs": logs, "updated_at": datetime.now().isoformat()}
+    with open(SYNC_STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+def bg_download_attendance(selected_devices):
+    set_sync_state(True, "Iniciando descarga de marcaciones...")
+    try:
+        total_inserted = 0
+        total_skipped = 0
+        results = {}
+        logs = []
+        
+        for d in selected_devices:
+            label = f"{d.get('name', d['ip'])} ({d['ip']})"
+            set_sync_state(True, f"Descargando desde {label}...", logs)
+            try:
+                rows, err = download_attendance_from_device(d)
+                results[d["ip"]] = (rows, err)
+            except Exception as e:
+                results[d["ip"]] = ([], f"Fallo en la descarga: {e}")
+                
+        set_sync_state(True, "Procesando y guardando marcaciones en base de datos...", logs)
+        
+        for d in selected_devices:
+            label = f"{d.get('name', d['ip'])} ({d['ip']})"
+            rows, err = results.get(d["ip"], ([], "Error desconocido"))
+            if err:
+                logs.append(f"❌ {label}: {err}")
+                continue
+                
+            ins, skp = upsert_attendance(rows)
+            total_inserted += ins
+            total_skipped += skp
+            logs.append(f"✅ {label}: (Nuevos: {ins} | Ignorados: {skp} | Leídos: {len(rows)})")
+            
+        logs.append(f"**RESUMEN TOTAL** -> Nuevas marcaciones: {total_inserted} | Ignoradas: {total_skipped}")
+        set_sync_state(False, "Descarga completada.", logs)
+    except Exception as e:
+        set_sync_state(False, f"Error fatal en segundo plano: {e}")
+
+def bg_sync_all_devices(devices_config):
+    set_sync_state(True, "Analizando y clonando memorias (Modo Espejo)...")
+    try:
+        logs = sync_all_devices(devices_config)
+        set_sync_state(False, "Sincronización espejo completada.", logs)
+    except Exception as e:
+        set_sync_state(False, f"Error fatal en modo espejo: {e}")
+
 
 @st.dialog("⚙️ Editar Reloj Biométrico")
 def edit_device_dialog(device_idx, devices_list):
@@ -258,6 +325,19 @@ def page_sync():
     require_role("admin", "nomina")
     st.title("🔄 Sincronización Biométrica")
 
+    sync_state = get_sync_state()
+    if sync_state.get("is_running", False):
+        st.info(f"⏳ **Tarea en Segundo Plano:** {sync_state.get('message', 'Sincronizando...')}")
+        if st.button("🔄 Actualizar Estado", use_container_width=True):
+            st.rerun()
+    elif sync_state.get("logs", []):
+        with st.expander("✅ Resultados de la Última Sincronización", expanded=True):
+            for log in sync_state["logs"]:
+                st.markdown(log)
+            if st.button("Limpiar Notificación"):
+                set_sync_state(False, "")
+                st.rerun()
+
     devices_config = load_devices()
     if devices_config:
         # Lógica Síncrona para Comprobar el estado de los relojes (Evita cuelgues de estado de Streamlit)
@@ -357,51 +437,17 @@ def page_sync():
                         "Debes dejar marcado al menos un reloj para hacer la descarga."
                     )
                 else:
-                    total_inserted = 0
-                    total_skipped = 0
+                    sync_state = get_sync_state()
+                    if sync_state.get("is_running", False):
+                        st.warning("⚠️ Ya hay una sincronización en curso. Por favor espera.")
+                    else:
+                        st.toast("🚀 Iniciando descarga en segundo plano...", icon="⏳")
+                        t = threading.Thread(target=bg_download_attendance, args=(selected_devices,))
+                        t.start()
+                        import time
+                        time.sleep(0.5)
+                        st.rerun()
 
-                    progress_bar = st.progress(
-                        0,
-                        "Iniciando descarga secuencial de los relojes (Evitando saturar la red Docker)...",
-                    )
-
-                    # 1. Ejecutar las descargas de los relojes uno por uno (Secuencialmente para mayor estabilidad)
-                    results = {}
-                    for idx, d in enumerate(selected_devices):
-                        progress_bar.progress(
-                            (idx) / len(selected_devices),
-                            f"Descargando desde {d.get('name', d['ip'])}...",
-                        )
-                        try:
-                            rows, err = download_attendance_from_device(d)
-                            results[d["ip"]] = (rows, err)
-                        except Exception as e:
-                            results[d["ip"]] = ([], f"Fallo en la descarga: {e}")
-
-                    progress_bar.progress(
-                        1.0, text="Procesando y guardando marcaciones..."
-                    )
-
-                    # 2. Guardar los resultados en la BD de forma secuencial en el hilo principal
-                    for d in selected_devices:
-                        label = f"{d.get('name', d['ip'])} ({d['ip']})"
-                        rows, err = results.get(d["ip"], ([], "Error desconocido"))
-
-                        if err:
-                            st.error(f"{label} ❌ Error de conexión: {err}")
-                            continue
-
-                        ins, skp = upsert_attendance(rows)
-                        total_inserted += ins
-                        total_skipped += skp
-                        st.success(
-                            f"{label} ✅ Correcto (Nuevos: {ins} | Duplicados ignorados: {skp} | Total leídos: {len(rows)})"
-                        )
-
-                    progress_bar.empty()
-                    st.info(
-                        f"**RESUMEN TOTAL** -> Nuevas marcaciones: **{total_inserted}** | Ignoradas: **{total_skipped}**"
-                    )
 
     with tab_conf:
         st.write("Agrega, edita o elimina los relojes biométricos de tu red.")
@@ -509,15 +555,16 @@ def page_sync():
                 type="primary",
                 use_container_width=True,
             ):
-                with st.spinner(
-                    "Analizando y clonando memorias (Esto puede tardar varios segundos)..."
-                ):
-                    logs = sync_all_devices(devices_config)
-                    for log in logs:
-                        if log.startswith("✅") or log.startswith("🚀"):
-                            st.success(log)
-                        else:
-                            st.error(log)
+                sync_state = get_sync_state()
+                if sync_state.get("is_running", False):
+                    st.warning("⚠️ Ya hay una sincronización en curso. Por favor espera.")
+                else:
+                    st.toast("🚀 Iniciando Modo Espejo en segundo plano...", icon="⏳")
+                    t = threading.Thread(target=bg_sync_all_devices, args=(devices_config,))
+                    t.start()
+                    import time
+                    time.sleep(0.5)
+                    st.rerun()
 
             st.markdown("---")
 
