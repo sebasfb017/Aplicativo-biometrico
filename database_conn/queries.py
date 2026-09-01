@@ -375,6 +375,9 @@ def db_create_leave_request(
         # Override Sede Zarzal
         elif str(user_id) in ZARZAL_EMPLOYEES:
             target_status = "PENDING_COORD"
+        # Override para Lina Cardona: Va directo a los Jefes de Área (Jhon y Andres), saltando el Coordinador.
+        elif str(user_id) == "111623881":
+            target_status = "PENDING_JEFE"
         else:
             # Si es empleado, pero no tiene coordinador activo para su subárea, pasa directo a RRHH
             has_coordinator = False
