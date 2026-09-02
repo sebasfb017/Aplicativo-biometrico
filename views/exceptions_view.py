@@ -1441,17 +1441,21 @@ def page_exceptions():
                         help="Filtrar novedades que ocurran dentro de este periodo.",
                     )
 
+                # Callback para limpiar filtros de forma segura en Streamlit
+                def clear_filters():
+                    st.session_state.filter_exc_name = ""
+                    st.session_state.filter_exc_type = []
+                    if "filter_exc_dates" in st.session_state:
+                        del st.session_state["filter_exc_dates"]
+
                 # Botón para limpiar filtros
                 col_clear, _ = st.columns([1, 2])
                 with col_clear:
-                    if st.button("🧹 Limpiar Filtros", use_container_width=True):
-                        st.session_state.filter_exc_name = ""
-                        st.session_state.filter_exc_type = []
-                        st.session_state.filter_exc_dates = [
-                            date.today() - timedelta(days=30),
-                            date.today(),
-                        ]
-                        st.rerun()
+                    st.button(
+                        "🧹 Limpiar Filtros", 
+                        use_container_width=True, 
+                        on_click=clear_filters
+                    )
 
             # Aplicar filtros dinámicos en el DataFrame
             filtered_df = df_exc.copy()
