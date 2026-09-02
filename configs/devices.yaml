@@ -14,3 +14,8 @@ devices:
   port: 4370
   password: 890724
   timeout: 20
+- name: CESPEDES
+  ip: 192.168.10.69
+  port: 4370
+  password: 0
+  timeout: 10
