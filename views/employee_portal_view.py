@@ -60,13 +60,11 @@ def create_status_tracker(current_status, reason_type):
 
     current_step = status_order.get(current_status, -1)
 
-    # Si es un estado de rechazo, muestra una barra simple en rojo
+    # Si es un estado de rechazo (o evaluado como -1), muestra una barra simple
     if current_step == -1:
-        return f"""
-        <div style="text-align: center; background-color: #ffcdd2; color: #c62828; padding: 10px; border-radius: 8px; font-weight: bold;">
-            {status_labels.get(current_status, "Estado Desconocido")}
-        </div>
-        """
+        return f"""<div style="text-align: center; background-color: #ffcdd2; color: #c62828; padding: 10px; border-radius: 8px; font-weight: bold;">
+{status_labels.get(current_status, "Estado Desconocido")}
+</div>"""
 
     # Construcción de la barra de progreso con HTML y CSS (Responsive)
     css = """
@@ -1239,19 +1237,17 @@ def page_employee_portal():
                         icon = "⏳"
                         status_text = "PENDIENTE"
 
-                    card_html = f"""
-                    <div style="background: linear-gradient(135deg, {bg_color}, rgba(0,0,0,0)); border: 1px solid {border_color}; border-radius: 16px; padding: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.05); margin-bottom: 5px; transition: transform 0.3s ease;">
-                        <h4 style="margin-top:0; color: {title_color}; display: flex; justify-content: space-between; align-items: center;">
-                            <span>{icon} {status_text}</span>
-                            <span style="font-size: 0.7em; color: gray;">Radicado #{r["Radicado"]}</span>
-                        </h4>
-                        <p style="margin: 5px 0;"><strong>🗓️ {r["Fechas"]}</strong></p>
-                        <p style="margin: 5px 0;"><strong>Motivo:</strong> {r["Motivo"]} | <strong>Duración:</strong> {r["Duración"]}</p>
-                        <div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
-                            {create_status_tracker(r["Estado"], r["Motivo"])}
-                        </div>
-                    </div>
-                    """
+                    card_html = f"""<div style="background: linear-gradient(135deg, {bg_color}, rgba(0,0,0,0)); border: 1px solid {border_color}; border-radius: 16px; padding: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.05); margin-bottom: 5px; transition: transform 0.3s ease;">
+<h4 style="margin-top:0; color: {title_color}; display: flex; justify-content: space-between; align-items: center;">
+<span>{icon} {status_text}</span>
+<span style="font-size: 0.7em; color: gray;">Radicado #{r["Radicado"]}</span>
+</h4>
+<p style="margin: 5px 0;"><strong>🗓️ {r["Fechas"]}</strong></p>
+<p style="margin: 5px 0;"><strong>Motivo:</strong> {r["Motivo"]} | <strong>Duración:</strong> {r["Duración"]}</p>
+<div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
+{create_status_tracker(r["Estado"], r["Motivo"])}
+</div>
+</div>"""
 
                     with st.container(border=False):
                         cols = st.columns([7, 3])
