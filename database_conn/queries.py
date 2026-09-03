@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from database_conn.connection import db_conn, db_session
-from utils.constants import ZARZAL_EMPLOYEES
+from typing import List
 
 
 def db_create_session(username: str) -> str:
@@ -349,17 +349,25 @@ def db_create_leave_request(
     with db_session() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT role, emp_subarea FROM users_app WHERE username = %s", (user_id,)
+            "SELECT role, emp_subarea, direct_routing FROM users_app WHERE username = %s", (user_id,)
         )
         row = cur.fetchone()
         role = row[0] if row else "empleado"
         subarea = row[1] if row else ""
+        direct_routing = row[2] if row else None
 
     # Por defecto inicia en el nivel más bajo (Coordinador)
     target_status = "PENDING_COORD"
 
     if r_type == "Incapacidad":
         target_status = "PENDING_RRHH"
+    elif direct_routing:
+        if direct_routing == 'RRHH':
+            target_status = "PENDING_RRHH"
+        elif direct_routing == 'JEFE':
+            target_status = "PENDING_JEFE"
+        elif direct_routing == 'COORD':
+            target_status = "PENDING_COORD"
     elif role == "coordinador":
         # Salta la aprobación de coordinador (ya que él es uno), va a RRHH
         target_status = "PENDING_RRHH"
@@ -370,15 +378,6 @@ def db_create_leave_request(
         # Si radica el Jefe, se auto-aprueba por él mismo, pero DEBE pasar por RRHH
         target_status = "PENDING_RRHH"
     elif role == "empleado":
-        if str(user_id) in ["119279359", "111627893"]:
-            target_status = "PENDING_RRHH"
-        # Override Sede Zarzal
-        elif str(user_id) in ZARZAL_EMPLOYEES:
-            target_status = "PENDING_COORD"
-        # Override para Lina Cardona: Va directo a los Jefes de Área (Jhon y Andres), saltando el Coordinador.
-        elif str(user_id) == "111623881":
-            target_status = "PENDING_JEFE"
-        else:
             # Si es empleado, pero no tiene coordinador activo para su subárea, pasa directo a RRHH
             has_coordinator = False
             if subarea:
@@ -538,7 +537,12 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
 
         # 2. Notificar a los aprobadores correspondientes
         if status == "PENDING_COORD":
-            if str(requester_id) in ZARZAL_EMPLOYEES:
+            # Retrieve direct_routing
+            cur.execute("SELECT direct_routing FROM users_app WHERE username = %s", (requester_id,))
+            dr_row = cur.fetchone()
+            direct_routing = dr_row[0] if dr_row else None
+
+            if direct_routing == 'COORD':
                 # Notify Angy Jaramillo (111644844) directly
                 cur.execute(
                     "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
@@ -549,6 +553,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     ),
                 )
+
             elif req_subarea:
                 # Find coordinators managing this subarea
                 cur.execute(
