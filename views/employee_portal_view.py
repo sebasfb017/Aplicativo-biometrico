@@ -67,18 +67,16 @@ def create_status_tracker(current_status, reason_type):
 </div>"""
 
     # Construcción de la barra de progreso con HTML y CSS (Responsive)
-    css = """
-    <style>
-    .tracker-container { display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; margin-top: 10px; }
-    .tracker-step { padding: 5px 10px; border-radius: 15px; font-weight: bold; text-align: center; z-index: 2; }
-    .tracker-line { flex-grow: 1; height: 2px; margin: 0 -5px; z-index: 1; }
-    @media (max-width: 600px) {
-        .tracker-container { flex-direction: column; align-items: flex-start; gap: 8px; }
-        .tracker-line { display: none; }
-        .tracker-step { width: 100%; text-align: left; padding: 8px 15px; }
-    }
-    </style>
-    """
+    css = """<style>
+.tracker-container { display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; margin-top: 10px; }
+.tracker-step { padding: 5px 10px; border-radius: 15px; font-weight: bold; text-align: center; z-index: 2; }
+.tracker-line { flex-grow: 1; height: 2px; margin: 0 -5px; z-index: 1; }
+@media (max-width: 600px) {
+    .tracker-container { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .tracker-line { display: none; }
+    .tracker-step { width: 100%; text-align: left; padding: 8px 15px; }
+}
+</style>"""
     html = css + '<div class="tracker-container">'
     if requiere_jefe:
         steps = ["Enviado", "Coord.", "RRHH", "Jefe Área"]
