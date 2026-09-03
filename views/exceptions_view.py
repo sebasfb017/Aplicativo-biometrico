@@ -16,7 +16,7 @@ from database_conn.queries import (
 )
 from services.notifications import log_audit, notify_employee_status
 from utils.auth import require_role
-from utils.constants import ZARZAL_EMPLOYEES
+from utils.constants import AREA_MAPPING
 from views.employee_portal_view import show_leave_request_details
 
 
@@ -515,7 +515,7 @@ def render_absence_calendar(user):
             else ""
         )
         cond_zarzal = (
-            f"OR (lr.user_id IN ({','.join(['%s'] * len(ZARZAL_EMPLOYEES))}))"
+            f"OR ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD')"
             if user["username"] == "111644844"
             else ""
         )
@@ -537,8 +537,6 @@ def render_absence_calendar(user):
             ORDER BY lr.leave_date_start ASC
         """
         params = [last_day_str, first_day_str, managed_dept_str]
-        if user["username"] == "111644844":
-            params += ZARZAL_EMPLOYEES
         params = tuple(params)
     elif effective_role == "jefe_area":
         if user.get("managed_area", "") == "Control Interno":
@@ -567,7 +565,7 @@ def render_absence_calendar(user):
                       (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
                       (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
                       (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
-                      (lr.user_id IN ({",".join(["%s"] * len(ZARZAL_EMPLOYEES))}) AND %s = 'Administrativo')
+                      ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD' AND %s = 'Administrativo')
                   )
                 ORDER BY lr.leave_date_start ASC
             """
@@ -578,7 +576,6 @@ def render_absence_calendar(user):
                 user.get("managed_area", ""),
                 user.get("managed_area", ""),
             ]
-            params.extend(ZARZAL_EMPLOYEES)
             params.append(user.get("managed_area", ""))
             params = tuple(params)
 
@@ -833,7 +830,7 @@ def page_exceptions():
                     else ""
                 )
                 cond_zarzal = (
-                    f"OR (lr.user_id IN ({','.join(['%s'] * len(ZARZAL_EMPLOYEES))}))"
+                    f"OR ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD')"
                     if user["username"] == "111644844"
                     else ""
                 )
@@ -889,7 +886,7 @@ def page_exceptions():
                               (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
                               (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
                               (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
-                              (lr.user_id IN ({",".join(["%s"] * len(ZARZAL_EMPLOYEES))}) AND %s = 'Administrativo')
+                              ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD' AND %s = 'Administrativo')
                           )
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
@@ -898,9 +895,8 @@ def page_exceptions():
                     user.get("managed_area", ""),
                     user.get("managed_area", ""),
                     user.get("managed_area", ""),
+                    user.get("managed_area", ""),
                 )
-                params += tuple(ZARZAL_EMPLOYEES)
-                params += (user.get("managed_area", ""),)
 
             with db_session() as conn:
                 df_pend = get_cached_dataframe(query, params=params)
@@ -1598,7 +1594,8 @@ def page_exceptions():
                    lr.start_time, lr.end_time, lr.total_time,
                    lr.reason_type, lr.reason_description, lr.is_paid, lr.status, lr.attachment_path, lr.specific_dates, lr.how_to_makeup,
                    (SELECT full_name FROM users_app WHERE username = lr.approved_by_coord) as coord_name,
-                   (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name
+                   (SELECT full_name FROM users_app WHERE username = lr.approved_by_jefe) as jefe_name,
+                   (SELECT role FROM users_app WHERE username = lr.user_id) as requester_role
             FROM leave_requests lr
             JOIN employees e ON lr.user_id = e.user_id
             WHERE lr.status IN ('PENDING_RRHH', 'PENDING_COORD', 'PENDING_JEFE')
@@ -1838,6 +1835,8 @@ def page_exceptions():
                                 "Permiso Personal",
                                 "Permiso Laboral",
                             ]:
+                                requiere_jefe = False
+                            elif r.get("requester_role") == "juridico":
                                 requiere_jefe = False
                             else:
                                 requiere_jefe = requiere_jefe_tipo or (
