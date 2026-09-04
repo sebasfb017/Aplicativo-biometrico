@@ -738,3 +738,72 @@ def check_all_devices_online(devices: list, timeout: float = 2.0) -> dict:
     with ThreadPoolExecutor(max_workers=len(devices)) as executor:
         results = executor.map(test_one, devices)
     return dict(results)
+
+def clear_device_attendance_safe(device: dict) -> tuple[bool, str]:
+    """
+    Descarga todas las marcaciones, las inserta en PostgreSQL, y solo si ambos procesos
+    son exitosos, borra la memoria física del dispositivo ZKTeco.
+    """
+    ip = device.get("ip")
+    if not ip:
+        return False, "El dispositivo no tiene una IP configurada."
+
+    # Paso A: Descargar
+    try:
+        rows, err = download_attendance_from_device(device)
+        if err:
+            return False, f"Fallo al descargar respaldos previos: {err}"
+    except Exception as e:
+        return False, f"Fallo inesperado al descargar: {str(e)}"
+
+    # Paso B: Guardar
+    try:
+        inserted, skipped = upsert_attendance(rows)
+    except Exception as e:
+        return False, f"Fallo al guardar en base de datos. No se borrará nada. Error: {str(e)}"
+
+    # Paso C: Borrar memoria
+    try:
+        port = int(device.get("port", DEFAULT_PORT))
+    except:
+        port = DEFAULT_PORT
+    try:
+        password = int(device.get("password", 0))
+    except:
+        password = 0
+    try:
+        timeout = int(device.get("timeout", DEFAULT_TIMEOUT))
+    except:
+        timeout = DEFAULT_TIMEOUT
+
+    last_error = None
+    for attempt in range(3):
+        conn = None
+        zk_kwargs = {
+            "ip": ip,
+            "port": port,
+            "timeout": timeout,
+            "password": password,
+            "ommit_ping": True,
+        }
+        if attempt == 1:
+            zk_kwargs["force_udp"] = True
+        elif attempt == 2:
+            zk_kwargs["password"] = 0
+            zk_kwargs.pop("force_udp", None)
+
+        try:
+            zk_client = ZK(**zk_kwargs)
+            conn = connect_with_retry(zk_client)
+            conn.clear_attendance()
+            return True, f"Memoria de {ip} limpiada. {inserted} nuevas guardadas y {skipped} ya existían."
+        except Exception as e:
+            last_error = e
+        finally:
+            if conn:
+                try:
+                    conn.disconnect()
+                except Exception:
+                    pass
+
+    return False, f"Error final al limpiar el reloj (respaldo completado con éxito): {last_error}"

@@ -224,6 +224,22 @@ def edit_device_dialog(device_idx, devices_list):
                 else:
                     st.error("Error al guardar en devices.yaml.")
 
+    # --- BOTÓN DE LIMPIEZA DE MEMORIA ---
+    if not is_new:
+        st.markdown("<hr style='border: 1px solid rgba(220, 53, 69, 0.3);'>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color: #ef4444; font-size: 1.1rem;'>⚠️ Zona de Peligro</h4>", unsafe_allow_html=True)
+        st.write("Esta acción borrará todas las marcaciones físicas almacenadas en el reloj para liberar espacio.")
+        
+        clear_confirm = st.checkbox("Entiendo que se formateará la memoria del equipo", key=f"clear_chk_{device_idx}")
+        if st.button("🧹 Resguardar y Limpiar Marcaciones", type="primary", disabled=not clear_confirm, use_container_width=True):
+            with st.spinner("Descargando respaldo y formateando memoria... (Esto puede tomar unos segundos)"):
+                from services.zk_service import clear_device_attendance_safe
+                success, msg = clear_device_attendance_safe(d)
+                if success:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+
 
 @st.dialog("✏️ Editar Usuario Biométrico")
 def edit_remote_user_dialog(user_data, device, devices_list):
