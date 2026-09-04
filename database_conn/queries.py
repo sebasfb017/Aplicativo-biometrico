@@ -348,6 +348,28 @@ def db_create_leave_request(
     """Crea una solicitud digital y define el flujo de aprobación inicial."""
     with db_session() as conn:
         cur = conn.cursor()
+        
+        # --- Prevenir solicitudes duplicadas ---
+        # Comprueba si ya existe una solicitud idéntica creada en los últimos 5 minutos
+        cur.execute(
+            """
+            SELECT id FROM leave_requests 
+            WHERE user_id = %s 
+              AND leave_date_start = %s 
+              AND leave_date_end = %s 
+              AND reason_type = %s
+              AND created_at >= (NOW() - INTERVAL '5 minutes')::text
+            LIMIT 1
+            """,
+            (user_id, leave_start.isoformat(), leave_end.isoformat(), r_type)
+        )
+        dup = cur.fetchone()
+        if dup:
+            # Si hay un duplicado en los últimos 5 minutos, devolvemos el ID existente 
+            # para no insertar otro y evitar que salgan múltiples solicitudes en la bandeja
+            return dup[0]
+        # ----------------------------------------
+
         cur.execute(
             "SELECT role, emp_subarea, direct_routing FROM users_app WHERE username = %s", (user_id,)
         )
@@ -1233,6 +1255,22 @@ def db_run_vacation_accruals():
 def db_create_hr_procedure(user_id, procedure_type, details, attachment_path):
     with db_session() as conn:
         cur = conn.cursor()
+        
+        # --- Prevenir solicitudes duplicadas ---
+        cur.execute(
+            """
+            SELECT id FROM hr_procedures 
+            WHERE user_id = %s 
+              AND procedure_type = %s
+              AND created_at >= (NOW() - INTERVAL '5 minutes')::text
+            LIMIT 1
+            """,
+            (user_id, procedure_type)
+        )
+        if cur.fetchone():
+            return  # Si ya hay una en los últimos 5 mins, no hacemos nada
+        # ----------------------------------------
+        
         now_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         cur.execute(
             """
