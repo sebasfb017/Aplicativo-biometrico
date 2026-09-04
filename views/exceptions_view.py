@@ -285,22 +285,31 @@ def preview_attachment_dialog(attachment_path, employee_name):
     if ext in [".png", ".jpg", ".jpeg", ".webp"]:
         st.image(file_path, use_container_width=True)
     elif ext == ".pdf":
+        import base64
         try:
-            import shutil
-
-            # Streamlit >= 1.18 permite servir archivos estáticos desde ./static
-            static_dir = os.path.join(os.getcwd(), "static")
-            os.makedirs(static_dir, exist_ok=True)
-            static_file_path = os.path.join(static_dir, str(attachment_path))
-
-            if not os.path.exists(static_file_path):
-                shutil.copy2(file_path, static_file_path)
-
-            pdf_url = f"/app/static/{attachment_path}"
-            pdf_display = f'<iframe src="{pdf_url}" width="100%" height="600" style="border: none;"></iframe>'
+            with open(file_path, "rb") as f:
+                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf" style="border: none; border-radius: 8px;"></iframe>'
             st.markdown(pdf_display, unsafe_allow_html=True)
         except Exception as e:
             st.error(f"No se pudo cargar el PDF: {e}")
+    elif ext == ".zip":
+        import zipfile
+        try:
+            with zipfile.ZipFile(file_path, "r") as zf:
+                file_names = zf.namelist()
+                st.write(f"📂 **Contiene {len(file_names)} archivos:**")
+                for fn in file_names:
+                    inner_ext = os.path.splitext(fn)[1].lower()
+                    if inner_ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                        st.image(zf.read(fn), caption=fn, use_container_width=True)
+                    elif inner_ext == ".pdf":
+                        import base64
+                        base64_pdf = base64.b64encode(zf.read(fn)).decode('utf-8')
+                        pdf_display = f'<div style="margin-top: 10px; margin-bottom: 5px; font-weight: bold;">📄 {fn}</div><iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf" style="border: none; border-radius: 8px;"></iframe>'
+                        st.markdown(pdf_display, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"No se pudo leer el contenido del ZIP: {e}")
     else:
         st.info("Vista previa no disponible en pantalla para este tipo de archivo.")
 
@@ -1804,17 +1813,18 @@ def page_exceptions():
                             unsafe_allow_html=True,
                         )
 
-                        # Botón para ver info detallada
-                        if st.button(
-                            "🔍 Ver Soportes",
-                            key=f"k_det_{r['id']}",
-                            use_container_width=True,
-                        ):
-                            from views.employee_portal_view import (
-                                show_leave_request_details,
-                            )
-
-                            show_leave_request_details(r["id"])
+                        # Botones para ver info o soporte
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            if pd.notna(r.get("attachment_path")) and r["attachment_path"]:
+                                if st.button("🔍 Ver Soportes", key=f"k_sop_{r['id']}", use_container_width=True):
+                                    preview_attachment_dialog(r["attachment_path"], r["full_name"])
+                            else:
+                                st.button("🔍 Sin Soportes", key=f"k_sop_{r['id']}", disabled=True, use_container_width=True)
+                        with col_btn2:
+                            if st.button("📋 Ver Detalles", key=f"k_det_{r['id']}", use_container_width=True):
+                                from views.employee_portal_view import show_leave_request_details
+                                show_leave_request_details(r["id"])
 
                         if mode == "rrhh":
                             requiere_jefe_tipo = r["reason_type"] in [
