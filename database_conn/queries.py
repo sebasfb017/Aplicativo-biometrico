@@ -105,6 +105,34 @@ def get_all_employees():
     return df
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def get_cached_full_employees():
+    conn = db_conn()
+    df = pd.read_sql_query("SELECT * FROM employees ORDER BY full_name", conn)
+    conn.close()
+    return df
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def get_cached_full_users():
+    conn = db_conn()
+    df = pd.read_sql_query("SELECT * FROM users_app ORDER BY full_name", conn)
+    conn.close()
+    return df
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def get_cached_profiles():
+    conn = db_conn()
+    df = pd.read_sql_query("SELECT * FROM role_profiles", conn)
+    conn.close()
+    return df
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def get_cached_shifts():
+    conn = db_conn()
+    df = pd.read_sql_query("SELECT * FROM shifts", conn)
+    conn.close()
+    return df
+
 # --- GESTIÓN DE EMPLEADOS Y PERFILES ---
 
 
@@ -147,6 +175,7 @@ def upsert_employees_df(df: pd.DataFrame):
                 ),
             )
     get_all_employees.clear()
+    get_cached_full_employees.clear()
 
 
 # --- GESTIÓN DE TURNOS Y ASIGNACIONES ---
