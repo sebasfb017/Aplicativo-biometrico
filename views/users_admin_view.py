@@ -18,11 +18,9 @@ from utils.constants import AREA_MAPPING
 
 @st.dialog("✏️ Editar Usuario", width="large")
 def edit_user_dialog(username: str, emp_df: pd.DataFrame):
-    conn = db_conn()
-    df_u = pd.read_sql_query(
-        "SELECT * FROM users_app WHERE username = %s", conn, params=(username,)
-    )
-    conn.close()
+    from database_conn.queries import get_cached_full_users
+    df_u_full = get_cached_full_users()
+    df_u = df_u_full[df_u_full['username'] == str(username)]
 
     if df_u.empty:
         st.error("Usuario no encontrado.")

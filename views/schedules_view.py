@@ -254,7 +254,8 @@ def auto_assign_shifts_from_schedules():
         sched_df = pd.read_sql_query(
             "SELECT week_start,dow,start_time,grace_minutes FROM schedules", conn
         )
-        emp_df = pd.read_sql_query("SELECT user_id FROM employees", conn)
+        from database_conn.queries import get_cached_full_employees
+        emp_df = get_cached_full_employees()[["user_id"]]
     if sched_df.empty or emp_df.empty:
         return 0
 

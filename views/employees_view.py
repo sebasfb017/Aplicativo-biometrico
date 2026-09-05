@@ -9,15 +9,10 @@ from utils.constants import AREA_MAPPING
 
 @st.dialog("✏️ Editar Empleado", width="large")
 def edit_employee_dialog(user_id):
-    with db_session() as conn:
-        emp_df = pd.read_sql_query(
-            "SELECT full_name, department, profile_id FROM employees WHERE user_id = %s",
-            conn,
-            params=(user_id,),
-        )
-        profiles_df = pd.read_sql_query(
-            "SELECT profile_id, name FROM profiles ORDER BY name", conn
-        )
+    from database_conn.queries import get_cached_full_employees, get_cached_profiles
+    emp_full = get_cached_full_employees()
+    emp_df = emp_full[emp_full['user_id'] == str(user_id)]
+    profiles_df = get_cached_profiles()
 
     if emp_df.empty:
         st.error("No se encontró el empleado.")
@@ -152,12 +147,8 @@ def page_employees():
     st.title("👨‍💼 Directorio de Empleados")
     st.write("Administra la plantilla de personal y asocia los perfiles de Dolormed.")
 
-    # Mostrar perfiles disponibles
-    with db_session() as conn:
-        profiles_df = pd.read_sql_query(
-            "SELECT profile_id, name, description, works_holidays FROM profiles ORDER BY name",
-            conn,
-        )
+    from database_conn.queries import get_cached_full_employees, get_cached_profiles
+    profiles_df = get_cached_profiles()
 
     with st.expander("ℹ️ Ver Perfiles y Reglas Base Creados en el Sistema"):
         if not profiles_df.empty:
@@ -182,16 +173,18 @@ def page_employees():
     with tab1:
         st.subheader("Directorio Actual")
         st.write("Selecciona una fila para editar la información del empleado.")
-        with db_session() as conn:
-            emp = pd.read_sql_query(
-                """
-                SELECT e.user_id, e.full_name, e.department, COALESCE(p.name, 'Sin asignar') as profile, e.created_at
-                FROM employees e
-                LEFT JOIN profiles p ON e.profile_id = p.profile_id
-                ORDER BY e.full_name ASC
-            """,
-                conn,
-            )
+        emp_full = get_cached_full_employees()
+        if not emp_full.empty and not profiles_df.empty:
+            emp = pd.merge(emp_full, profiles_df, on='profile_id', how='left')
+            emp['profile'] = emp['name'].fillna('Sin asignar')
+        elif not emp_full.empty:
+            emp = emp_full.copy()
+            emp['profile'] = 'Sin asignar'
+        else:
+            emp = pd.DataFrame()
+        
+        if not emp.empty:
+            emp = emp[['user_id', 'full_name', 'department', 'profile', 'created_at']].sort_values('full_name')
 
         if emp.empty:
             st.warning("El directorio está vacío.")
