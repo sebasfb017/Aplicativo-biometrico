@@ -8,6 +8,22 @@ from database_conn.connection import db_conn
 from database_conn.queries import get_cached_dataframe
 from services.analytics import compute_month_lateness
 
+@st.cache_data(ttl=300, show_spinner=False)
+def get_dashboard_kpis():
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM employees")
+    total_empleados = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM leave_requests WHERE status LIKE 'PENDING%'")
+    novedades_pend = cur.fetchone()[0]
+
+    cur.execute(
+        "SELECT COUNT(*) FROM attendance_raw WHERE CAST(ts AS date) = CURRENT_DATE AND is_ignored = 0"
+    )
+    marcaciones_hoy = cur.fetchone()[0]
+    conn.close()
+    return total_empleados, novedades_pend, marcaciones_hoy
 
 def page_dashboard():
     st.markdown(
@@ -33,20 +49,7 @@ def page_dashboard():
     st.title("📊 Panel Principal - Dolormed")
     st.write("Resumen rápido y visual del sistema de Recursos Humanos.")
 
-    conn = db_conn()
-    cur = conn.cursor()
-
-    # KPIs
-    cur.execute("SELECT COUNT(*) FROM employees")
-    total_empleados = cur.fetchone()[0]
-
-    cur.execute("SELECT COUNT(*) FROM leave_requests WHERE status LIKE 'PENDING%'")
-    novedades_pend = cur.fetchone()[0]
-
-    cur.execute(
-        "SELECT COUNT(*) FROM attendance_raw WHERE CAST(ts AS date) = CURRENT_DATE AND is_ignored = 0"
-    )
-    marcaciones_hoy = cur.fetchone()[0]
+    total_empleados, novedades_pend, marcaciones_hoy = get_dashboard_kpis()
 
     col1, col2, col3 = st.columns(3)
 

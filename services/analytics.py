@@ -3,6 +3,7 @@ import io
 from datetime import date, datetime, time, timedelta
 
 import pandas as pd
+import streamlit as st
 
 from database_conn.connection import db_conn
 
@@ -153,6 +154,7 @@ def fetch_attendance_between(start_dt: datetime, end_dt: datetime):
     return df
 
 
+@st.cache_data(ttl=600, show_spinner=False)
 def compute_month_lateness(year: int, month: int):
     """Cálculo maestro: Cruza horarios, marcaciones y novedades para consolidar tardanzas."""
     first_day = date(year, month, 1)
