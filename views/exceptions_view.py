@@ -1482,16 +1482,18 @@ def page_exceptions():
                 start_f = filter_dates[0]
                 end_f = filter_dates[1] if len(filter_dates) > 1 else start_f
 
-                # Convertir la columna Fecha a datetime.date para comparar correctamente
-                filtered_df["temp_date"] = pd.to_datetime(
+                # Convertir las columnas Fecha a datetime.date para comparar correctamente
+                filtered_df["temp_start"] = pd.to_datetime(
                     filtered_df["Fecha Inicio"]
                 ).dt.date
+                filtered_df["temp_end"] = pd.to_datetime(
+                    filtered_df["Fecha Fin"]
+                ).dt.date
                 filtered_df = filtered_df[
-                    (filtered_df["temp_date"] >= start_f)
-                    & (filtered_df["temp_date"] <= end_f)
+                    (filtered_df["temp_start"] <= end_f)
+                    & (filtered_df["temp_end"] >= start_f)
                 ]
-                filtered_df = filtered_df.drop(columns=["temp_date"])
-
+                filtered_df = filtered_df.drop(columns=["temp_start", "temp_end"])
             # Mostrar la tabla filtrada
             if filtered_df.empty:
                 st.warning(
