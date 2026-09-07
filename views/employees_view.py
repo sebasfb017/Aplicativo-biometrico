@@ -152,16 +152,17 @@ def page_employees():
 
     with st.expander("ℹ️ Ver Perfiles y Reglas Base Creados en el Sistema"):
         if not profiles_df.empty:
-            profiles_df["works_holidays"] = profiles_df["works_holidays"].apply(
+            display_df = profiles_df.copy()
+            display_df["works_holidays"] = display_df["works_holidays"].apply(
                 lambda x: "✅ Sí" if x == 1 else "❌ No"
             )
-            profiles_df.columns = [
+            display_df.columns = [
                 "ID",
                 "Nombre Perfil",
                 "Descripción",
                 "¿Trabaja Festivos?",
             ]
-            st.dataframe(profiles_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
         else:
             st.info("No hay perfiles configurados.")
 
@@ -288,7 +289,7 @@ def page_employees():
             )
             e_prof = st.selectbox(
                 "Perfil Asignado*",
-                options=[p for p in profiles_df["Nombre Perfil"].tolist()],
+                options=[p for p in profiles_df["name"].tolist()],
             )
 
         submitted = st.button("Crear Empleado", type="primary")
