@@ -1386,3 +1386,211 @@ def db_update_theme(username: str, theme: str):
     )
     conn.commit()
     conn.close()
+
+
+# =========================================================================
+# MÓDULO BUZÓN DE SUGERENCIAS / PQRS INTERNO ANÓNIMO
+# =========================================================================
+
+def ensure_pqrs_table():
+    """Crea la tabla hr_pqrs si no existe en la base de datos."""
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hr_pqrs (
+                id SERIAL PRIMARY KEY,
+                ticket_code TEXT UNIQUE NOT NULL,
+                category TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                description TEXT NOT NULL,
+                sede TEXT,
+                target_area TEXT,
+                is_anonymous BOOLEAN DEFAULT TRUE,
+                user_id TEXT,
+                full_name TEXT,
+                attachment_path TEXT,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                admin_response TEXT,
+                responded_by TEXT,
+                responded_at TEXT,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        conn.commit()
+
+
+def db_create_pqrs(
+    ticket_code: str,
+    category: str,
+    subject: str,
+    description: str,
+    sede: str = None,
+    target_area: str = None,
+    is_anonymous: bool = True,
+    user_id: str = None,
+    full_name: str = None,
+    attachment_path: str = None,
+):
+    """Inserta una nueva PQRS / sugerencia en la base de datos."""
+    ensure_pqrs_table()
+    now_str = datetime.now().isoformat(timespec="seconds")
+    clean_user_id = None if is_anonymous else user_id
+    clean_full_name = None if is_anonymous else full_name
+
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO hr_pqrs (
+                ticket_code, category, subject, description, sede, target_area,
+                is_anonymous, user_id, full_name, attachment_path, status, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s)
+            """,
+            (
+                ticket_code,
+                category,
+                subject,
+                description,
+                sede,
+                target_area,
+                is_anonymous,
+                clean_user_id,
+                clean_full_name,
+                attachment_path,
+                now_str,
+            ),
+        )
+        conn.commit()
+
+
+def db_get_pqrs_by_code(ticket_code: str):
+    """Obtiene una PQRS por su código único de radicado."""
+    ensure_pqrs_table()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, ticket_code, category, subject, description, sede, target_area,
+                   is_anonymous, full_name, attachment_path, status, admin_response,
+                   responded_by, responded_at, created_at
+            FROM hr_pqrs
+            WHERE UPPER(ticket_code) = UPPER(%s)
+            """,
+            (ticket_code.strip(),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "ticket_code": row[1],
+            "category": row[2],
+            "subject": row[3],
+            "description": row[4],
+            "sede": row[5],
+            "target_area": row[6],
+            "is_anonymous": row[7],
+            "full_name": row[8],
+            "attachment_path": row[9],
+            "status": row[10],
+            "admin_response": row[11],
+            "responded_by": row[12],
+            "responded_at": row[13],
+            "created_at": row[14],
+        }
+
+
+def db_get_pqrs_by_user(user_id: str):
+    """Obtiene las PQRS radicadas de forma identificada por un usuario."""
+    ensure_pqrs_table()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, ticket_code, category, subject, description, sede, target_area,
+                   attachment_path, status, admin_response, responded_by, responded_at, created_at
+            FROM hr_pqrs
+            WHERE user_id = %s AND is_anonymous = FALSE
+            ORDER BY id DESC
+            """,
+            (str(user_id),),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "ticket_code": r[1],
+                "category": r[2],
+                "subject": r[3],
+                "description": r[4],
+                "sede": r[5],
+                "target_area": r[6],
+                "attachment_path": r[7],
+                "status": r[8],
+                "admin_response": r[9],
+                "responded_by": r[10],
+                "responded_at": r[11],
+                "created_at": r[12],
+            }
+            for r in rows
+        ]
+
+
+def db_get_all_pqrs(status_filter: str = None, category_filter: str = None):
+    """Obtiene todas las PQRS para el panel de Talento Humano con filtros opcionales."""
+    ensure_pqrs_table()
+    with db_session() as conn:
+        query = """
+            SELECT id, ticket_code, category, subject, description, sede, target_area,
+                   is_anonymous, user_id, full_name, attachment_path, status,
+                   admin_response, responded_by, responded_at, created_at
+            FROM hr_pqrs
+            WHERE 1=1
+        """
+        params = []
+        if status_filter and status_filter != "Todas":
+            query += " AND status = %s"
+            params.append(status_filter)
+        if category_filter and category_filter != "Todas":
+            query += " AND category = %s"
+            params.append(category_filter)
+
+        query += " ORDER BY id DESC"
+        import pandas as pd
+        return pd.read_sql_query(query, conn, params=tuple(params) if params else None)
+
+
+def db_update_pqrs_response(pqrs_id: int, new_status: str, response_text: str, responded_by: str):
+    """Actualiza el estado y registra la respuesta de RRHH para una PQRS."""
+    ensure_pqrs_table()
+    now_str = datetime.now().isoformat(timespec="seconds")
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE hr_pqrs
+            SET status = %s,
+                admin_response = %s,
+                responded_by = %s,
+                responded_at = %s
+            WHERE id = %s
+            """,
+            (new_status, response_text, responded_by, now_str, pqrs_id),
+        )
+
+        # Si la PQRS tenía usuario identificado, enviarle notificación interna
+        cur.execute("SELECT user_id, ticket_code, category FROM hr_pqrs WHERE id = %s", (pqrs_id,))
+        row = cur.fetchone()
+        if row and row[0]:
+            user_target = row[0]
+            ticket = row[1]
+            cat = row[2]
+            db_create_notification(
+                user_target,
+                f"Respuesta a tu {cat} (#{ticket})",
+                f"Talento Humano ha respondido a tu radicado {ticket}. Estado: {new_status}."
+            )
+        conn.commit()
+
