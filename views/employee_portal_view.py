@@ -425,11 +425,12 @@ def page_employee_portal():
 
     st.write("")  # Espaciador
 
-    t1, t2, t3 = st.tabs(
+    t1, t2, t3, t4 = st.tabs(
         [
             "📝 Radicar Nuevo Permiso",
             "🗂️ Mis Solicitudes",
             "🏢 Mis Trámites en Línea",
+            "💬 Buzón PQRS & Sugerencias",
         ]
     )
 
@@ -1501,3 +1502,133 @@ def page_employee_portal():
                             st.write(f"- **Detalles:** {tram['details']}")
                     if tram["attachment_path"]:
                         st.write(f"📎 **Soporte adjunto:** `{tram['attachment_path'].split('/')[-1]}`")
+
+    with t4:
+        st.subheader("💬 Buzón de Sugerencias y PQRS")
+        st.info("Tu voz es importante para mejorar en Dolormed. Puedes radicar tu solicitud de manera 100% anónima o identificada.")
+
+        t4_1, t4_2, t4_3 = st.tabs(["✍️ Radicar Nueva PQRS", "🔍 Consultar Estado (Radicado)", "📋 Mis PQRS Identificadas"])
+
+        with t4_1:
+            if "pqrs_success" in st.session_state:
+                st.success(f"✅ PQRS enviada exitosamente. Tu código de radicado es: **{st.session_state['pqrs_success_code']}**. Por favor, guárdalo para poder consultar el estado más adelante.")
+                del st.session_state["pqrs_success"]
+                del st.session_state["pqrs_success_code"]
+
+            if "pqrs_form_key" not in st.session_state:
+                st.session_state.pqrs_form_key = 0
+
+            pqrs_fk = st.session_state.pqrs_form_key
+
+            with st.form(f"form_pqrs_{pqrs_fk}"):
+                is_anonymous = st.checkbox("🔒 Radicar de forma 100% Anónima", value=True, help="Si marcas esta opción, no se guardará ni tu nombre ni tu usuario en el sistema.")
+                if is_anonymous:
+                    st.caption("ℹ️ *Ni tu nombre ni tu cédula serán guardados en el sistema ni serán visibles para los directivos.*")
+                else:
+                    st.caption("ℹ️ *Se guardará tu nombre de usuario para que Talento Humano pueda contactarte o ver tu PQRS en tu historial personal.*")
+
+                col_c1, col_c2 = st.columns(2)
+                with col_c1:
+                    pqrs_category = st.selectbox(
+                        "Tipo de Comunicación",
+                        ["💡 Sugerencia de Mejora", "❓ Petición o Consulta", "⚠️ Queja o Inquietud", "👏 Reconocimiento o Felicitación"]
+                    )
+                    pqrs_sede = st.selectbox("Sede Involucrada (Opcional)", ["Todas / No aplica", "Sede Principal", "Sede Zarzal"])
+                with col_c2:
+                    pqrs_area = st.selectbox(
+                        "Área Relacionada",
+                        ["Ninguna en particular", "Infraestructura y Equipos", "Clima Laboral / Bienestar", "Nómina y Beneficios", "Atención / Asistencial", "Supervisión / Liderazgo", "Otro"]
+                    )
+
+                pqrs_subject = st.text_input("Asunto / Título Breve", max_chars=100)
+                pqrs_desc = st.text_area("Mensaje Detallado", height=150)
+                pqrs_file = st.file_uploader("Soporte opcional (Imagen o PDF)", type=["pdf", "png", "jpg", "jpeg"])
+
+                submitted_pqrs = st.form_submit_button("Enviar PQRS", type="primary", use_container_width=True)
+
+                if submitted_pqrs:
+                    if not pqrs_subject.strip() or not pqrs_desc.strip():
+                        st.error("❌ El asunto y el mensaje son obligatorios.")
+                    else:
+                        import secrets
+                        ticket_code = f"PQRS-{datetime.now().strftime('%Y%m')}-{secrets.token_hex(3).upper()}"
+                        
+                        file_path = None
+                        if pqrs_file:
+                            import os
+                            os.makedirs("data/attachments/pqrs", exist_ok=True)
+                            file_ext = pqrs_file.name.split('.')[-1]
+                            file_path = f"data/attachments/pqrs/{ticket_code}.{file_ext}"
+                            with open(file_path, "wb") as f:
+                                f.write(pqrs_file.getbuffer())
+
+                        from database_conn.queries import db_create_pqrs
+                        cat_clean = pqrs_category.split(" ", 1)[1] if " " in pqrs_category else pqrs_category
+                        db_create_pqrs(
+                            ticket_code=ticket_code,
+                            category=cat_clean,
+                            subject=pqrs_subject,
+                            description=pqrs_desc,
+                            sede=pqrs_sede,
+                            target_area=pqrs_area,
+                            is_anonymous=is_anonymous,
+                            user_id=user["username"],
+                            full_name=user["full_name"],
+                            attachment_path=file_path
+                        )
+                        st.session_state.pqrs_success = True
+                        st.session_state.pqrs_success_code = ticket_code
+                        st.session_state.pqrs_form_key += 1
+                        st.rerun()
+
+        with t4_2:
+            st.markdown("### 🔍 Consultar Estado de Radicado")
+            search_code = st.text_input("Ingresa tu código de radicado (Ej: PQRS-2026-A1B2C3)")
+            if st.button("Buscar PQRS"):
+                if search_code.strip():
+                    from database_conn.queries import db_get_pqrs_by_code
+                    pqrs_data = db_get_pqrs_by_code(search_code.strip())
+                    if not pqrs_data:
+                        st.error("❌ No se encontró ninguna PQRS con ese código.")
+                    else:
+                        st.success("✅ Radicado encontrado.")
+                        st.write(f"**Asunto:** {pqrs_data['subject']}")
+                        st.write(f"**Categoría:** {pqrs_data['category']}")
+                        st.write(f"**Fecha Radicado:** {pqrs_data['created_at'].split('T')[0]}")
+                        status = pqrs_data['status']
+                        if status == "PENDING":
+                            status_badge = "<span class='badge-modern badge-amber'>🕒 Pendiente</span>"
+                        elif status == "IN_PROGRESS":
+                            status_badge = "<span class='badge-modern badge-amber' style='background:#fef3c7; color:#d97706'>⚙️ En Proceso</span>"
+                        elif status == "RESOLVED":
+                            status_badge = "<span class='badge-modern badge-emerald' style='background:#dcfce7; color:#166534'>✅ Resuelto</span>"
+                        else:
+                            status_badge = "<span class='badge-modern badge-gray' style='background:#f3f4f6; color:#374151'>🔒 Cerrado</span>"
+
+                        st.markdown(f"**Estado:** {status_badge}", unsafe_allow_html=True)
+                        st.markdown("---")
+                        st.write(f"**Mensaje Original:**\n{pqrs_data['description']}")
+                        if pqrs_data['admin_response']:
+                            st.info(f"**Respuesta de Talento Humano ({pqrs_data['responded_at'].split('T')[0]}):**\n\n{pqrs_data['admin_response']}")
+                        else:
+                            st.warning("Aún no hay respuesta de Talento Humano.")
+                else:
+                    st.warning("Por favor, ingresa un código válido.")
+
+        with t4_3:
+            st.markdown("### 📋 Mis PQRS Identificadas")
+            from database_conn.queries import db_get_pqrs_by_user
+            mis_pqrs = db_get_pqrs_by_user(user["username"])
+            if not mis_pqrs:
+                st.info("No tienes PQRS radicadas con tu usuario. (Las PQRS anónimas no aparecen aquí).")
+            else:
+                for p in mis_pqrs:
+                    status = p['status']
+                    icon_status = "🕒" if status == "PENDING" else "⚙️" if status == "IN_PROGRESS" else "✅" if status == "RESOLVED" else "🔒"
+                    with st.expander(f"{icon_status} {p['ticket_code']} - {p['category']} | {status}"):
+                        st.write(f"**Asunto:** {p['subject']}")
+                        st.write(f"**Enviado el:** {p['created_at'].split('T')[0]}")
+                        if p['admin_response']:
+                            st.info(f"**Respuesta ({p['responded_at'].split('T')[0]}):**\n{p['admin_response']}")
+                        else:
+                            st.write("Sin respuesta aún.")
