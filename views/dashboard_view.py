@@ -212,6 +212,16 @@ def page_dashboard():
                         html_t5 += f"<tr><td><b>{r['full_name']}</b></td><td><span class='badge-modern badge-amber'>⏱️ {r['minutos_tarde_total']} min</span></td></tr>"
                     html_t5 += "</tbody></table></div>"
                     st.markdown(html_t5, unsafe_allow_html=True)
+                    
+                    csv_t5 = top5_df[["full_name", "minutos_tarde_total"]].rename(columns={"full_name": "Empleado", "minutos_tarde_total": "Minutos"}).to_csv(index=False, sep=";").encode("utf-8-sig")
+                    st.download_button(
+                        label="📥 Exportar Retrasos",
+                        data=csv_t5,
+                        file_name=f"Top_Retrasos_{sel_month}_{sel_year}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="btn_dl_top5"
+                    )
                 else:
                     st.info("No hay retrasos registrados.")
 
@@ -316,6 +326,8 @@ def page_dashboard():
             st.warning(f"Se detectaron {len(miss_df)} posibles faltas.")
             with st.expander("Ver lista de empleados con posibles faltas"):
                 st.dataframe(miss_df, hide_index=True, use_container_width=True)
+                csv_mf = miss_df.to_csv(index=False, sep=";").encode("utf-8-sig")
+                st.download_button("📥 Descargar Reporte (CSV)", data=csv_mf, file_name=f"posibles_faltas_{yesterday_str}.csv", mime="text/csv", use_container_width=True, key="dl_mf")
 
     with col_a2:
         st.markdown("**⚠️ Empleados sin Turno Asignado**")
@@ -330,7 +342,6 @@ def page_dashboard():
             )
         """
         no_sch_df = get_cached_dataframe(no_shift_query, params=(this_week_start,))
-        conn.close()
 
         if no_sch_df.empty:
             st.success("Toda la planilla tiene turnos asignados esta semana.")
@@ -340,3 +351,5 @@ def page_dashboard():
             )
             with st.expander("Ver lista de empleados sin turno"):
                 st.dataframe(no_sch_df, hide_index=True, use_container_width=True)
+                csv_ns = no_sch_df.to_csv(index=False, sep=";").encode("utf-8-sig")
+                st.download_button("📥 Descargar Reporte (CSV)", data=csv_ns, file_name="sin_turno.csv", mime="text/csv", use_container_width=True, key="dl_ns")
