@@ -1280,11 +1280,12 @@ def page_exceptions():
         "📅 Calendario de Ausencias",
         "🌐 Monitoreo Global",
         "🏢 Trámites en Línea",
+        "💬 Buzón PQRS",
     ]
     sel_tab = option_menu(
         menu_title=None,
         options=tab_options,
-        icons=["pencil", "list-task", "download", "calendar", "globe", "file-earmark-pdf"],
+        icons=["pencil", "list-task", "download", "calendar", "globe", "file-earmark-pdf", "chat-left-text"],
         menu_icon="cast",
         default_index=default_tab_idx,
         orientation="horizontal",
@@ -2011,6 +2012,63 @@ def page_exceptions():
                         f"<div style='background:rgba(255, 165, 0, 0.2); padding: 10px; border-radius:10px; text-align:center;'><b>🟠 Por Aprobar (RRHH) ({len(df_rrhh)})</b></div>",
                         unsafe_allow_html=True,
                     )
+                    
+                    if not df_rrhh.empty:
+                        with st.expander("🚀 Aprobación Masiva (RRHH)"):
+                            st.caption("Selecciona varias solicitudes para aprobarlas de forma automática. Ten en cuenta que si alguna requiere aprobación del Jefe Directo, el sistema solo la escalará al jefe en lugar de aprobarla definitivamente.")
+                            options_map = {f"#{r['id']} - {r['full_name']} ({r['reason_type']})": r for _, r in df_rrhh.iterrows()}
+                            selected_to_approve = st.multiselect("Seleccionar solicitudes:", options=list(options_map.keys()), key="bulk_hr")
+                            
+                            if st.button("✅ Procesar Seleccionadas", type="primary", use_container_width=True):
+                                if selected_to_approve:
+                                    from database_conn.queries import db_approve_leave_request_rrhh
+                                    for opt in selected_to_approve:
+                                        r = options_map[opt]
+                                        requiere_jefe_tipo = r["reason_type"] in ["Vacaciones", "Calamidad Doméstica", "Licencia de Luto", "Licencia de Paternidad", "Licencia por Votación", "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"]
+                                        is_special_user = str(r["user_id"]) in ["119279359", "111627893"]
+                                        if is_special_user and r["reason_type"] in ["Permiso Personal", "Permiso Laboral"]:
+                                            requiere_jefe = False
+                                        elif r.get("requester_role") == "juridico":
+                                            requiere_jefe = False
+                                        else:
+                                            requiere_jefe = requiere_jefe_tipo or (pd.isna(r.get("coord_name")) and r["reason_type"] != "Incapacidad")
+                                            
+                                        if pd.notna(r.get("jefe_name")) and str(r.get("jefe_name")).strip():
+                                            requiere_jefe = False
+
+                                        if requiere_jefe:
+                                            db_approve_leave_request_rrhh(r["id"], st.session_state["user"]["username"], is_final=False)
+                                        else:
+                                            if db_approve_leave_request_rrhh(r["id"], st.session_state["user"]["username"], is_final=True):
+                                                with db_session() as conn:
+                                                    cur = conn.cursor()
+                                                    d_start = date.fromisoformat(r["leave_date_start"])
+                                                    d_end = date.fromisoformat(r["leave_date_end"])
+                                                    dates_to_process = []
+                                                    if "specific_dates" in r and pd.notna(r["specific_dates"]) and str(r["specific_dates"]).strip() not in ["None", ""]:
+                                                        dates_to_process = [date.fromisoformat(d.strip()) for d in str(r["specific_dates"]).split(",") if d.strip()]
+                                                    else:
+                                                        delta = d_end - d_start
+                                                        dates_to_process = [d_start + timedelta(days=i) for i in range(delta.days + 1)]
+                                                    
+                                                    days_deducted = 0
+                                                    for curr_date in dates_to_process:
+                                                        if r["reason_type"] == "Vacaciones":
+                                                            if curr_date.weekday() == 6 or is_holiday(curr_date):
+                                                                continue
+                                                        day_to_log = curr_date.isoformat()
+                                                        cur.execute(
+                                                            "INSERT INTO exceptions(user_id, date, type, notes, created_at) VALUES(%s,%s,%s,%s,%s) ON CONFLICT(user_id, date) DO UPDATE SET type=excluded.type, notes=excluded.notes",
+                                                            (r["user_id"], day_to_log, r["reason_type"], f"Aprobado de Portal: {r['reason_description']}", datetime.now().isoformat(timespec="seconds"))
+                                                        )
+                                                        days_deducted += 1
+
+                                                    if r["reason_type"] == "Vacaciones" and days_deducted > 0:
+                                                        cur.execute("UPDATE users_app SET vacation_balance = vacation_balance - %s WHERE username = %s", (days_deducted, r["user_id"]))
+                                                log_audit("APPROVE_LEAVE_FINAL", f"Permiso #{r['id']} ({r['reason_type']}) de {r['full_name']} APROBADO MASIVO FINAL por RRHH.")
+                                    st.success(f"Se procesaron {len(selected_to_approve)} solicitudes correctamente.")
+                                    st.rerun()
+
                     st.write("")
                     for _, r in df_rrhh.iterrows():
                         render_card(r, "rrhh")
@@ -2334,3 +2392,66 @@ def page_exceptions():
                                     st.rerun()
         else:
             st.warning("No tienes permisos para acceder a la bandeja de Trámites.")
+
+    elif sel_tab == "💬 Buzón PQRS":
+        if user_role in ["admin", "nomina"]:
+            st.header("💬 Buzón de Sugerencias y PQRS")
+            st.info("Gestión de comunicaciones internas radicadas por los colaboradores.")
+
+            from database_conn.queries import db_get_all_pqrs, db_update_pqrs_response
+
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                pqrs_status_filter = st.selectbox("Filtrar por Estado", ["Todas", "PENDING", "IN_PROGRESS", "RESOLVED", "CLOSED"])
+            with col_f2:
+                pqrs_cat_filter = st.selectbox("Filtrar por Categoría", ["Todas", "Sugerencia de Mejora", "Petición o Consulta", "Queja o Inquietud", "Reconocimiento o Felicitación"])
+
+            df_pqrs = db_get_all_pqrs(pqrs_status_filter, pqrs_cat_filter)
+
+            if df_pqrs.empty:
+                st.toast("No hay PQRS radicadas con estos filtros.")
+            else:
+                for idx, row in df_pqrs.iterrows():
+                    pqrs_id = row["id"]
+                    tcode = row["ticket_code"]
+                    cat = row["category"]
+                    status = row["status"]
+                    created_at = row["created_at"].split("T")[0]
+                    is_anon = row["is_anonymous"]
+                    
+                    sender_label = "🔒 Anónimo" if is_anon else f"👤 {row['full_name']} ({row['user_id']})"
+                    
+                    with st.expander(f"{tcode} | {cat} - {sender_label} [{status}]"):
+                        col_dt, col_act = st.columns([2, 1])
+                        
+                        with col_dt:
+                            st.write(f"**Fecha:** {created_at}")
+                            st.write(f"**Sede / Área:** {row['sede']} / {row['target_area']}")
+                            st.write(f"**Asunto:** {row['subject']}")
+                            st.markdown("---")
+                            st.write(f"**Mensaje:**\n{row['description']}")
+                            
+                            if row["attachment_path"]:
+                                import os
+                                if os.path.exists(row["attachment_path"]):
+                                    with open(row["attachment_path"], "rb") as f:
+                                        st.download_button(
+                                            label="📄 Descargar Soporte Adjunto",
+                                            data=f,
+                                            file_name=os.path.basename(row["attachment_path"]),
+                                            mime="application/pdf",
+                                            key=f"pqrs_dl_{pqrs_id}"
+                                        )
+
+                        with col_act:
+                            st.markdown("### Responder PQRS")
+                            with st.form(f"pqrs_resp_{pqrs_id}"):
+                                new_status = st.selectbox("Actualizar Estado", ["IN_PROGRESS", "RESOLVED", "CLOSED"], index=1)
+                                response_text = st.text_area("Respuesta / Plan de Acción", value=row["admin_response"] or "")
+                                
+                                if st.form_submit_button("Guardar Respuesta", use_container_width=True):
+                                    db_update_pqrs_response(pqrs_id, new_status, response_text, user["username"])
+                                    st.success("✅ Respuesta guardada.")
+                                    st.rerun()
+        else:
+            st.warning("No tienes permisos para acceder al Buzón PQRS.")
