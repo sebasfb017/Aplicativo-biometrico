@@ -33,7 +33,7 @@ def db_validate_session(token: str):
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT u.username, u.full_name, u.role, u.active, u.emp_area, u.emp_subarea, u.managed_department, u.managed_area
+            SELECT u.username, u.full_name, u.role, u.active, u.emp_area, u.emp_subarea, u.managed_department, u.managed_area, u.includes_direct_coord
             FROM user_sessions s
             JOIN users_app u ON s.username = u.username
             WHERE s.token = %s AND s.expires_at > %s AND u.active = 1
@@ -52,9 +52,9 @@ def db_validate_session(token: str):
             "emp_subarea": row[5],
             "managed_department": row[6],
             "managed_area": row[7],
+            "includes_direct_coord": bool(row[8]) if row[8] is not None else False,
         }
     return None
-
 
 def db_delete_session(token: str):
     """Elimina la sesión correspondiente al token para cerrar la sesión."""
@@ -592,16 +592,21 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             direct_routing = dr_row[0] if dr_row else None
 
             if direct_routing == 'COORD':
-                # Notify Angy Jaramillo (111644844) directly
+                # Notificar dinámicamente al coordinador marcado con includes_direct_coord=TRUE
                 cur.execute(
-                    "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
-                    (
-                        "111644844",
-                        "Permiso por Autorizar (Sede Zarzal)",
-                        f"Nueva solicitud #{req_id} ({req_type}) de {req_name} (Sede Zarzal) esperando tu aprobación.<br><b>Justificación:</b> {req_desc}",
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    ),
+                    "SELECT username FROM users_app WHERE includes_direct_coord = TRUE AND role = 'coordinador' AND active = 1"
                 )
+                direct_coord_rows = cur.fetchall()
+                for dc_row in direct_coord_rows:
+                    cur.execute(
+                        "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
+                        (
+                            dc_row[0],
+                            "Permiso por Autorizar (Sede Zarzal)",
+                            f"Nueva solicitud #{req_id} ({req_type}) de {req_name} (Sede Zarzal) esperando tu aprobación.<br><b>Justificación:</b> {req_desc}",
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        ),
+                    )
 
             elif req_subarea:
                 # Find coordinators managing this subarea

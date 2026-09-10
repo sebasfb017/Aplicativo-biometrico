@@ -23,13 +23,13 @@ def get_user(username: str):
         # Fallback por si no han migrado la tabla aún
         cur.execute(
             """
-            SELECT username, full_name, role, password_hash, active, managed_department, NULL, NULL, NULL, NULL, NULL, 'Oscuro'
+            SELECT username, full_name, role, password_hash, active, managed_department, NULL, NULL, NULL, NULL, NULL, 'Oscuro', FALSE
             FROM users_app WHERE username = %s
         """,
             (username,),
         )
         r = cur.fetchone()
-        row = (*r, 0, None, None, None, None, 'Oscuro') if r else None
+        row = (*r, 0, None, None, None, None, 'Oscuro', False) if r else None
     conn.close()
     return row
 
@@ -48,7 +48,23 @@ def verify_login(username: str, password: str):
             else {"error": "Credenciales incorrectas o usuario no existe."}
         )
 
-    if len(row) >= 12:
+    if len(row) >= 13:
+        (
+            _username,
+            full_name,
+            role,
+            pw_hash,
+            active,
+            managed_dept,
+            failed_attempts,
+            locked_until,
+            managed_area,
+            emp_area,
+            emp_subarea,
+            theme_preference,
+            includes_direct_coord,
+        ) = row[:13]
+    elif len(row) >= 12:
         (
             _username,
             full_name,
@@ -63,6 +79,7 @@ def verify_login(username: str, password: str):
             emp_subarea,
             theme_preference,
         ) = row[:12]
+        includes_direct_coord = False
     else:
         (
             _username,
@@ -78,6 +95,7 @@ def verify_login(username: str, password: str):
         emp_area = None
         emp_subarea = None
         theme_preference = "Oscuro"
+        includes_direct_coord = False
 
     if active != 1:
         return None if is_pytest else {"error": "Tu cuenta está inactiva."}
@@ -119,6 +137,7 @@ def verify_login(username: str, password: str):
             "emp_area": emp_area,
             "emp_subarea": emp_subarea,
             "theme_preference": theme_preference,
+            "includes_direct_coord": bool(includes_direct_coord) if includes_direct_coord is not None else False,
         }
     else:
         # Login fallido

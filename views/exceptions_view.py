@@ -525,7 +525,7 @@ def render_absence_calendar(user):
         )
         cond_zarzal = (
             f"OR ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD')"
-            if user["username"] == "111644844"
+            if user.get("includes_direct_coord")
             else ""
         )
 
@@ -570,8 +570,8 @@ def render_absence_calendar(user):
                 WHERE lr.status IN {status_filter}
                   AND lr.leave_date_start <= %s AND lr.leave_date_end >= %s
                   AND (
-                      (ua.username IN ('119279359', '111627893') AND %s = 'Administrativo') OR
-                      (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
+                      (ua.direct_routing = 'JEFE_ADMIN' AND %s = 'Administrativo') OR
+                      ((ua.direct_routing IS NULL OR ua.direct_routing != 'JEFE_ADMIN') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR
                       (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
                       (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
                       ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD' AND %s = 'Administrativo')
@@ -870,7 +870,7 @@ def page_exceptions():
                 )
                 cond_zarzal = (
                     f"OR ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD')"
-                    if user["username"] == "111644844"
+                    if user.get("includes_direct_coord")
                     else ""
                 )
 
@@ -925,8 +925,8 @@ def page_exceptions():
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.status = 'PENDING_JEFE' AND 
                           (
-                              (ua.username IN ('119279359', '111627893') AND %s = 'Administrativo') OR
-                              (ua.username NOT IN ('119279359', '111627893') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR 
+                              (ua.direct_routing = 'JEFE_ADMIN' AND %s = 'Administrativo') OR
+                              ((ua.direct_routing IS NULL OR ua.direct_routing != 'JEFE_ADMIN') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR
                               (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
                               (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
                               ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD' AND %s = 'Administrativo')
