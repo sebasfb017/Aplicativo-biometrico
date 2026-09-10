@@ -48,7 +48,7 @@ def verify_login(username: str, password: str):
             else {"error": "Credenciales incorrectas o usuario no existe."}
         )
 
-    if len(row) == 11:
+    if len(row) >= 12:
         (
             _username,
             full_name,
@@ -62,7 +62,7 @@ def verify_login(username: str, password: str):
             emp_area,
             emp_subarea,
             theme_preference,
-        ) = row
+        ) = row[:12]
     else:
         (
             _username,
