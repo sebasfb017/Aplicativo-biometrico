@@ -289,7 +289,7 @@ def preview_attachment_dialog(attachment_path, employee_name):
         try:
             with open(file_path, "rb") as f:
                 base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf" style="border: none; border-radius: 8px;"></iframe>'
+            pdf_display = f'<object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="600px"><embed src="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="600px" /></object>'
             st.markdown(pdf_display, unsafe_allow_html=True)
         except Exception as e:
             st.error(f"No se pudo cargar el PDF: {e}")
@@ -306,7 +306,7 @@ def preview_attachment_dialog(attachment_path, employee_name):
                     elif inner_ext == ".pdf":
                         import base64
                         base64_pdf = base64.b64encode(zf.read(fn)).decode('utf-8')
-                        pdf_display = f'<div style="margin-top: 10px; margin-bottom: 5px; font-weight: bold;">📄 {fn}</div><iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf" style="border: none; border-radius: 8px;"></iframe>'
+                        pdf_display = f'<div style="margin-top: 10px; margin-bottom: 5px; font-weight: bold;">📄 {fn}</div><object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="500px"><embed src="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="500px" /></object>'
                         st.markdown(pdf_display, unsafe_allow_html=True)
         except Exception as e:
             st.error(f"No se pudo leer el contenido del ZIP: {e}")
@@ -760,6 +760,25 @@ def page_exceptions():
     st.title("🛡️ Novedades y Justificaciones")
     user = st.session_state["user"]
 
+    # === REFRESH STALE SESSION STATE PARA JEFES ===
+    # Si su sesión es antigua (antes de asignarles un área), la actualizamos en caliente.
+    if user["role"] in ["jefe_area", "coordinador"]:
+        from database_conn.connection import db_conn
+        try:
+            conn = db_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT managed_area, managed_department FROM users_app WHERE username = %s", (user["username"],))
+            fresh = cur.fetchone()
+            conn.close()
+            if fresh:
+                user["managed_area"] = fresh[0]
+                user["managed_department"] = fresh[1]
+                st.session_state["user"]["managed_area"] = fresh[0]
+                st.session_state["user"]["managed_department"] = fresh[1]
+        except Exception:
+            pass
+    # ==============================================
+
     # --- PERSISTENCIA DE PESTAÑA ACTIVA ---
     if "tab_sel" in st.query_params:
         try:
@@ -861,8 +880,6 @@ def page_exceptions():
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
                 params = (managed_dept_str,)
-                if user["username"] == "111644844":
-                    params += tuple(ZARZAL_EMPLOYEES)
             elif user.get("managed_area", "") == "Control Interno":
                 query = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -896,16 +913,11 @@ def page_exceptions():
                               (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
                               (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
                               ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD' AND %s = 'Administrativo')
-                          )
+                          ) /* FIX CACHE 1 */
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
-                params = (
-                    user.get("managed_area", ""),
-                    user.get("managed_area", ""),
-                    user.get("managed_area", ""),
-                    user.get("managed_area", ""),
-                    user.get("managed_area", ""),
-                )
+                m_area = (user.get("managed_area") or "").strip()
+                params = (m_area, m_area, m_area, m_area, m_area)
 
             with db_session() as conn:
                 df_pend = get_cached_dataframe(query, params=params)
@@ -2394,7 +2406,8 @@ def page_exceptions():
             st.warning("No tienes permisos para acceder a la bandeja de Trámites.")
 
     elif sel_tab == "💬 Buzón PQRS":
-        if user_role in ["admin", "nomina"]:
+        user_role = user["role"]
+        if user_role in ["admin", "nomina"] or (user_role == "empleado" and user.get("emp_subarea") in ["Nomina", "Talento humano"]):
             st.header("💬 Buzón de Sugerencias y PQRS")
             st.info("Gestión de comunicaciones internas radicadas por los colaboradores.")
 
