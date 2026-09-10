@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 import google.generativeai as genai
 
-from database_conn.connection import db_conn
+from database_conn.connection import db_conn, db_session
 
 
 # --- Componente Visual de Trazabilidad (Barra de Progreso) ---
@@ -1158,18 +1158,20 @@ def page_employee_portal():
                 st.rerun()
 
     with t2:
-        df_reqs = get_cached_dataframe(
-            """
-            SELECT id as "Radicado", request_date as "Fecha_Solicitud", leave_date_start, 
-                   leave_date_end, total_time as "Duración", reason_type as "Motivo", status as "Estado",
-                   full_name
-            FROM leave_requests lr
-            JOIN users_app ua ON lr.user_id = ua.username
-            WHERE lr.user_id = %s AND (lr.hidden_by_employee IS NULL OR lr.hidden_by_employee = 0)
-            ORDER BY id DESC
-        """,
-            params=(user["username"],),
-        )
+        with db_session() as conn:
+            df_reqs = pd.read_sql_query(
+                """
+                SELECT id as "Radicado", request_date as "Fecha_Solicitud", leave_date_start, 
+                       leave_date_end, total_time as "Duración", reason_type as "Motivo", status as "Estado",
+                       full_name
+                FROM leave_requests lr
+                JOIN users_app ua ON lr.user_id = ua.username
+                WHERE lr.user_id = %s AND (lr.hidden_by_employee IS NULL OR lr.hidden_by_employee = 0)
+                ORDER BY id DESC
+            """,
+                conn,
+                params=(user["username"],),
+            )
 
         if df_reqs.empty:
             st.info("No tienes solicitudes históricas radicas.")

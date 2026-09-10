@@ -112,7 +112,7 @@ def get_cached_full_employees():
     conn.close()
     return df
 
-@st.cache_data(show_spinner=False, ttl=3600)
+# Se eliminó el caché para evitar UnserializableReturnValueError de Pandas
 def get_cached_full_users():
     conn = db_conn()
     df = pd.read_sql_query("SELECT * FROM users_app ORDER BY full_name", conn)
