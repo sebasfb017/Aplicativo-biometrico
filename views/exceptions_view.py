@@ -761,9 +761,11 @@ def page_exceptions():
     user = st.session_state["user"]
 
     # === REFRESH STALE SESSION STATE PARA JEFES ===
-    # Si su sesión es antigua (antes de asignarles un área), la actualizamos en caliente.
+    # Siempre refrescamos managed_area/managed_department desde BD para evitar
+    # sesiones obsoletas o el string 'None' guardado en session_state.
     if user["role"] in ["jefe_area", "coordinador"]:
         from database_conn.connection import db_conn
+        from database_conn.queries import get_cached_dataframe
         try:
             conn = db_conn()
             cur = conn.cursor()
@@ -771,10 +773,15 @@ def page_exceptions():
             fresh = cur.fetchone()
             conn.close()
             if fresh:
-                user["managed_area"] = fresh[0]
-                user["managed_department"] = fresh[1]
-                st.session_state["user"]["managed_area"] = fresh[0]
-                st.session_state["user"]["managed_department"] = fresh[1]
+                fresh_area = fresh[0] if fresh[0] not in (None, "None", "") else None
+                fresh_dept = fresh[1] if fresh[1] not in (None, "None", "") else None
+                # Si el valor cambió respecto a la sesión actual, limpiamos el caché de consultas
+                if user.get("managed_area") != fresh_area or user.get("managed_department") != fresh_dept:
+                    get_cached_dataframe.clear()
+                user["managed_area"] = fresh_area
+                user["managed_department"] = fresh_dept
+                st.session_state["user"]["managed_area"] = fresh_area
+                st.session_state["user"]["managed_department"] = fresh_dept
         except Exception:
             pass
     # ==============================================
@@ -845,6 +852,10 @@ def page_exceptions():
                     f"Última actualización: {datetime.now().strftime('%H:%M:%S')}"
                 )
 
+            # Normalizar managed_area: None, 'None' o '' se tratan igual
+            _raw_area = user.get("managed_area", "") or ""
+            _managed_area = "" if _raw_area in ("None", None) else _raw_area.strip()
+
             if user["role"] == "coordinador":
                 managed_dept_str = user.get("managed_department", "")
                 cond_serv_gen = (
@@ -880,7 +891,7 @@ def page_exceptions():
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
                 params = (managed_dept_str,)
-            elif user.get("managed_area", "") == "Control Interno":
+            elif _managed_area == "Control Interno":
                 query = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.start_time, lr.end_time, lr.total_time,
@@ -896,6 +907,12 @@ def page_exceptions():
                 """
                 params = ()
             else:
+                if not _managed_area:
+                    st.warning(
+                        "⚠️ Tu usuario no tiene un área de gestión asignada. "
+                        "Contacta a un administrador para que configure tu 'Área Gestionada'."
+                    )
+                    st.stop()
                 query = f"""
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
                            lr.start_time, lr.end_time, lr.total_time,
@@ -913,11 +930,10 @@ def page_exceptions():
                               (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
                               (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
                               ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD' AND %s = 'Administrativo')
-                          ) /* FIX CACHE 1 */
+                          ) /* FIX CACHE 2 */
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
-                m_area = (user.get("managed_area") or "").strip()
-                params = (m_area, m_area, m_area, m_area, m_area)
+                params = (_managed_area, _managed_area, _managed_area, _managed_area, _managed_area)
 
             with db_session() as conn:
                 df_pend = get_cached_dataframe(query, params=params)
