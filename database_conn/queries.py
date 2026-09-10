@@ -66,8 +66,8 @@ def db_delete_session(token: str):
 # --- GESTIÓN DE USUARIOS (Corrección de Errores y Consultas) ---
 
 
-# CACHE: Carga infinita, se limpia manualmente al haber cambios.
-@st.cache_data(show_spinner=False)
+# CACHE: TTL de 1 hora, se limpia manualmente al haber cambios.
+@st.cache_data(show_spinner=False, ttl=3600)
 def get_users_by_role(roles_list):
     """Obtiene usuarios filtrados por una lista de roles para las tablas de administración."""
     conn = db_conn()
@@ -93,8 +93,8 @@ def get_users_by_role(roles_list):
     return df
 
 
-# CACHE: Hace que los selectores de pantalla (ej. listado de empleados) carguen al instante sin re-consultar a la BD.
-@st.cache_data(show_spinner=False)
+# CACHE: TTL de 1 hora para que el selector refleje altas/bajas sin reiniciar.
+@st.cache_data(show_spinner=False, ttl=3600)
 def get_all_employees():
     """Obtiene el listado maestro de empleados para selectores y diálogos."""
     conn = db_conn()
@@ -112,12 +112,10 @@ def get_cached_full_employees():
     conn.close()
     return df
 
-# Se eliminó el caché para evitar UnserializableReturnValueError de Pandas
+# Sin caché para evitar UnserializableReturnValueError de Pandas
 def get_cached_full_users():
-    conn = db_conn()
-    df = pd.read_sql_query("SELECT * FROM users_app ORDER BY full_name", conn)
-    conn.close()
-    return df
+    with db_session() as conn:
+        return pd.read_sql_query("SELECT * FROM users_app ORDER BY full_name", conn)
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def get_cached_profiles():

@@ -393,13 +393,12 @@ def page_employee_portal():
     """
     st.markdown(mobile_css, unsafe_allow_html=True)
 
-    conn_vac = db_conn()
-    cur_vac = conn_vac.cursor()
-    cur_vac.execute(
-        "SELECT vacation_balance FROM users_app WHERE username = %s", (user["username"],)
-    )
-    row_vac = cur_vac.fetchone()
-    conn_vac.close()
+    with db_session() as conn_vac:
+        cur_vac = conn_vac.cursor()
+        cur_vac.execute(
+            "SELECT vacation_balance FROM users_app WHERE username = %s", (user["username"],)
+        )
+        row_vac = cur_vac.fetchone()
     saldo_vac = int(row_vac[0]) if row_vac and row_vac[0] is not None else 0
 
     header_col, vac_col = st.columns([3, 1])
