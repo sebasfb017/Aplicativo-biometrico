@@ -13,7 +13,7 @@ def get_user(username: str):
     try:
         cur.execute(
             """
-            SELECT username, full_name, role, password_hash, active, managed_department, failed_attempts, locked_until, managed_area, emp_area, emp_subarea, theme_preference
+            SELECT username, full_name, role, password_hash, active, managed_department, failed_attempts, locked_until, managed_area, emp_area, emp_subarea, theme_preference, includes_direct_coord
             FROM users_app WHERE username = %s
         """,
             (username,),

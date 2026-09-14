@@ -169,6 +169,29 @@ def register_employee_dialog():
         )
         st.info("Paso 2: Datos de Contacto, Área y Seguridad")
 
+
+        st.markdown("---")
+
+        # Selectbox FUERA del form para que sea reactivo al cambiar área
+        selected_a = st.selectbox(
+            "Área a la que perteneces",
+            list(AREA_MAPPING.keys()),
+            key="reg_sel_area",
+        )
+        if selected_a not in AREA_MAPPING:
+            selected_a = list(AREA_MAPPING.keys())[0]
+
+        # Si el área cambió, reiniciar la sub-área para que no quede la del área anterior
+        if st.session_state.get("_last_reg_area") != selected_a:
+            st.session_state["_last_reg_area"] = selected_a
+            st.session_state.pop("reg_sel_subarea", None)
+
+        selected_subarea = st.selectbox(
+            "Sub-área / Cargo",
+            AREA_MAPPING[selected_a],
+            key="reg_sel_subarea",
+        )
+
         with st.form("reg_form", border=False):
             col_c1, col_c2 = st.columns(2)
             with col_c1:
@@ -176,20 +199,7 @@ def register_employee_dialog():
             with col_c2:
                 st.text_input("Correo Electrónico", key="reg_email")
 
-            st.markdown("---")
-            st.selectbox(
-                "Área a la que perteneces", list(AREA_MAPPING.keys()), key="reg_sel_area"
-            )
 
-            selected_a = st.session_state.get("reg_sel_area", "Administrativo")
-            if selected_a not in AREA_MAPPING:
-                selected_a = "Administrativo"
-
-            st.selectbox(
-                "Sub-área / Cargo", AREA_MAPPING[selected_a], key="reg_sel_subarea"
-            )
-
-            st.markdown("---")
             rol_options = {
                 "empleado": "Auxiliar",
                 "coordinador": "Coordinador de Departamento",
