@@ -780,7 +780,7 @@ def db_approve_leave_request_jefe(req_id, jefe_username):
         cur.execute(
             """
             UPDATE leave_requests 
-            SET status = 'PENDING_RRHH', approved_by_jefe = %s, jefe_approval_date = %s
+            SET status = 'APPROVED', approved_by_jefe = %s, jefe_approval_date = %s
             WHERE id = %s AND status = 'PENDING_JEFE'
         """,
             (jefe_username, datetime.now().isoformat(timespec="seconds"), req_id),
@@ -790,7 +790,7 @@ def db_approve_leave_request_jefe(req_id, jefe_username):
         notify = update_success and user_id
 
     if notify:
-        db_notify_next_approvers(req_id, user_id, "PENDING_RRHH", jefe_name)
+        db_notify_next_approvers(req_id, user_id, "APPROVED", jefe_name)
     get_cached_dataframe.clear()
     return update_success
 
@@ -808,13 +808,23 @@ def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
         a_row = cur.fetchone()
         approver_name = a_row[0] if a_row else approver_user
 
+        # Fix #3: consultar skip_jefe_approval del solicitante para forzar aprobación final
+        if not is_final and user_id:
+            cur.execute(
+                "SELECT skip_jefe_approval FROM users_app WHERE username = %s", (user_id,)
+            )
+            skip_row = cur.fetchone()
+            if skip_row and skip_row[0]:
+                is_final = True
+
         now = datetime.now().isoformat(timespec="seconds")
         status = "APPROVED" if is_final else "PENDING_JEFE"
+        # Fix #2: guardia de estado — no re-procesar solicitudes ya finalizadas
         cur.execute(
             """
             UPDATE leave_requests 
             SET status = %s, approved_by_rrhh = %s, rrhh_approval_date = %s 
-            WHERE id = %s
+            WHERE id = %s AND status IN ('PENDING_RRHH', 'PENDING_COORD', 'PENDING_JEFE')
         """,
             (status, approver_user, now, req_id),
         )
@@ -845,7 +855,7 @@ def db_reject_leave_request(req_id, rejected_by, rejection_reason):
             """
             UPDATE leave_requests 
             SET status = 'REJECTED', rejection_reason = %s
-            WHERE id = %s
+            WHERE id = %s AND status NOT IN ('APPROVED', 'CANCELLED', 'REJECTED')
         """,
             (
                 rejection_reason,
