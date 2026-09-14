@@ -764,8 +764,6 @@ def page_exceptions():
     # Siempre refrescamos managed_area/managed_department desde BD para evitar
     # sesiones obsoletas o el string 'None' guardado en session_state.
     if user["role"] in ["jefe_area", "coordinador"]:
-        from database_conn.connection import db_conn
-        from database_conn.queries import get_cached_dataframe
         try:
             conn = db_conn()
             cur = conn.cursor()
@@ -1638,7 +1636,7 @@ def page_exceptions():
                    (SELECT role FROM users_app WHERE username = lr.user_id) as requester_role
             FROM leave_requests lr
             JOIN employees e ON lr.user_id = e.user_id
-            WHERE lr.status IN ('PENDING_RRHH', 'PENDING_COORD', 'PENDING_JEFE')
+            WHERE lr.status = 'PENDING_RRHH'
             ORDER BY lr.id DESC
         """
         )
@@ -1872,7 +1870,17 @@ def page_exceptions():
                                 "119279359",
                                 "111627893",
                             ]
-                            if is_special_user and r["reason_type"] in [
+                            # Verificar si el solicitante tiene skip_jefe_approval activado
+                            from database_conn.queries import get_cached_dataframe as _gcdf
+                            _skip_df = _gcdf(
+                                "SELECT skip_jefe_approval FROM users_app WHERE username = %s",
+                                params=(str(r["user_id"]),)
+                            )
+                            _skip_jefe = bool(_skip_df["skip_jefe_approval"].iloc[0]) if not _skip_df.empty else False
+
+                            if _skip_jefe:
+                                requiere_jefe = False
+                            elif is_special_user and r["reason_type"] in [
                                 "Permiso Personal",
                                 "Permiso Laboral",
                             ]:

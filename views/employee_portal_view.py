@@ -542,12 +542,36 @@ def page_employee_portal():
                             key=f"rt_dummy_{fk}",
                         )
 
+                # Determinar valor automático de "Remunerado" según el tipo de permiso
+                _TIPOS_NO_REMUNERADOS = {
+                    "Licencia No Remunerada",
+                    "Cambio de Turno",
+                }
+                _TIPOS_REMUNERADOS = {
+                    "Cita Médica",
+                    "Cita Médica con desplazamiento a otra ciudad",
+                    "Calamidad Doméstica",
+                    "Licencia de Luto",
+                    "Licencia de Paternidad",
+                    "Licencia por Votación",
+                    "Licencia por Jurado de Votación",
+                    "Licencia Remunerada",
+                    "Vacaciones",
+                    "Incapacidad",
+                }
+                _paid_key = f"is_paid_{fk}"
+                if reason_type in _TIPOS_NO_REMUNERADOS:
+                    st.session_state[_paid_key] = "No"
+                elif reason_type in _TIPOS_REMUNERADOS:
+                    st.session_state[_paid_key] = "Sí"
+
                 is_reason_selected = reason_type is not None
+
                 is_paid = st.radio(
                     "¿Permiso Remunerado?",
                     ["No", "Sí"],
                     horizontal=True,
-                    key=f"is_paid_{fk}",
+                    key=_paid_key,
                     disabled=not is_reason_selected,
                 )
                 duracion_permiso = st.radio(
@@ -870,13 +894,17 @@ def page_employee_portal():
                 )
 
                 st.write("")
+                # Fix #5: guard contra doble-submit — deshabilitar botón mientras procesa
+                _is_submitting = st.session_state.get(f"submitting_{fk}", False)
                 submitted = st.button(
-                    "✅ Firmar y Enviar a RRHH",
+                    "⏳ Enviando..." if _is_submitting else "✅ Firmar y Enviar a RRHH",
                     type="primary",
                     use_container_width=True,
+                    disabled=_is_submitting,
                 )
+                if submitted:
+                    st.session_state[f"submitting_{fk}"] = True
 
-        if submitted:
             # --- Validación de Tamaño del Archivo ---
             MAX_FILE_SIZE_MB = 20
             file_is_valid = True
@@ -1153,6 +1181,8 @@ def page_employee_portal():
                 st.session_state[f"duracion_permiso_{new_fk}"] = None
                 st.session_state[f"r_desc_{new_fk}"] = ""
                 st.session_state[f"specific_dates_list_{new_fk}"] = []
+                # Limpiar el guard de doble-submit para la nueva clave
+                st.session_state.pop(f"submitting_{fk}", None)
                 
                 st.rerun()
 
