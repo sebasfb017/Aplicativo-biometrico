@@ -277,36 +277,76 @@ def upsert_exception(user_id, date_str, exc_type, notes):
 
 
 def get_exceptions_df():
-    """Obtiene el histórico de todas las novedades agrupando días consecutivos."""
+    """Obtiene el histórico de todas las novedades (manuales + permisos del portal) agrupando períodos consecutivos."""
     conn = db_conn()
-    df = pd.read_sql_query(
+    # Novedades manuales (una fila por día)
+    df_exc = pd.read_sql_query(
         """
         SELECT ex.id, ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
         FROM exceptions ex
         LEFT JOIN employees e ON ex.user_id = e.user_id
         ORDER BY ex.user_id, ex.type, ex.date ASC
-    """,
+        """,
+        conn,
+    )
+    # Permisos del portal aprobados (ya tienen start/end)
+    df_req = pd.read_sql_query(
+        """
+        SELECT lr.id, lr.user_id,
+               COALESCE(e.full_name, ua.full_name) AS full_name,
+               lr.leave_date_start AS date,
+               lr.leave_date_end,
+               lr.reason_type AS type,
+               lr.reason_description AS notes,
+               lr.created_at,
+               lr.specific_dates
+        FROM leave_requests lr
+        LEFT JOIN employees e ON lr.user_id = e.user_id
+        LEFT JOIN users_app ua ON lr.user_id = ua.username
+        ORDER BY lr.user_id, lr.reason_type, lr.leave_date_start ASC
+        """,
         conn,
     )
     conn.close()
 
+    # Expandir cada permiso del portal en filas individuales por día
+    rows = []
+    for _, r in df_req.iterrows():
+        start_date = pd.to_datetime(r["date"], errors="coerce")
+        end_date = pd.to_datetime(r["leave_date_end"], errors="coerce")
+        spec = r.get("specific_dates")
+        note_val = r["notes"] if pd.notnull(r.get("notes", None)) else ""
+
+        if spec and isinstance(spec, str) and spec.strip():
+            for d_str in [d.strip() for d in spec.split(",") if d.strip()]:
+                rows.append({"id": r["id"], "user_id": r["user_id"], "full_name": r["full_name"],
+                             "date": d_str, "type": r["type"], "notes": note_val, "created_at": r["created_at"]})
+        elif pd.notnull(start_date) and pd.notnull(end_date):
+            curr = start_date
+            while curr <= end_date:
+                rows.append({"id": r["id"], "user_id": r["user_id"], "full_name": r["full_name"],
+                             "date": curr.strftime("%Y-%m-%d"), "type": r["type"], "notes": note_val, "created_at": r["created_at"]})
+                curr += pd.Timedelta(days=1)
+        elif pd.notnull(start_date):
+            rows.append({"id": r["id"], "user_id": r["user_id"], "full_name": r["full_name"],
+                         "date": start_date.strftime("%Y-%m-%d"), "type": r["type"], "notes": note_val, "created_at": r["created_at"]})
+
+    df_req_expanded = (pd.DataFrame(rows) if rows
+                       else pd.DataFrame(columns=["id", "user_id", "full_name", "date", "type", "notes", "created_at"]))
+
+    # Limpiar nulls
+    for df_part in [df_exc, df_req_expanded]:
+        if not df_part.empty and "notes" in df_part.columns:
+            df_part["notes"] = df_part["notes"].fillna("")
+
+    # Combinar y ordenar
+    df = pd.concat([df_exc, df_req_expanded], ignore_index=True)
     if df.empty:
         df["date_end"] = pd.Series(dtype="object")
         df["total_days"] = pd.Series(dtype="int")
-        return df[
-            [
-                "id",
-                "user_id",
-                "full_name",
-                "date",
-                "date_end",
-                "total_days",
-                "type",
-                "notes",
-                "created_at",
-            ]
-        ]
+        return df[["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at"]]
 
+    df = df.sort_values(by=["user_id", "type", "date"], ascending=True)
     df["date_obj"] = pd.to_datetime(df["date"])
 
     df["grp"] = (
@@ -330,8 +370,8 @@ def get_exceptions_df():
             notes=(
                 "notes",
                 lambda x: (
-                    ", ".join([str(i) for i in x.dropna().unique()])
-                    if len(x.dropna()) > 0
+                    ", ".join([str(i) for i in x.dropna().unique() if str(i).strip()])
+                    if len(x.dropna().unique()) > 0
                     else "Ingresado por cuadro de turnos"
                 ),
             ),
@@ -340,21 +380,8 @@ def get_exceptions_df():
         .reset_index()
     )
 
-    final_df = grouped[
-        [
-            "id",
-            "user_id",
-            "full_name",
-            "date",
-            "date_end",
-            "total_days",
-            "type",
-            "notes",
-            "created_at",
-        ]
-    ].copy()
+    final_df = grouped[["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at"]].copy()
     final_df = final_df.sort_values("created_at", ascending=False)
-
     return final_df
 
 
@@ -385,7 +412,8 @@ def db_create_leave_request(
               AND leave_date_start = %s 
               AND leave_date_end = %s 
               AND reason_type = %s
-              AND created_at >= (NOW() - INTERVAL '5 minutes')::text
+              AND status NOT IN ('CANCELLED', 'REJECTED')
+              AND created_at::timestamp >= NOW() - INTERVAL '5 minutes'
             LIMIT 1
             """,
             (user_id, leave_start.isoformat(), leave_end.isoformat(), r_type)
@@ -485,6 +513,103 @@ def db_create_leave_request(
     db_notify_next_approvers(req_id, user_id, target_status)
     get_cached_dataframe.clear()
     return req_id
+
+
+def db_get_next_approver_info(user_id, reason_type):
+    """Devuelve el nombre/rol descriptivo del próximo aprobador que recibirá la solicitud en tiempo real."""
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT role, emp_subarea, direct_routing, emp_area FROM users_app WHERE username = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return "🏢 Gestión Humana / RRHH"
+        
+        role, subarea, direct_routing, emp_area = row[0], row[1] or "", row[2], row[3] or ""
+
+    target_status = "PENDING_COORD"
+
+    if reason_type == "Incapacidad":
+        target_status = "PENDING_RRHH"
+    elif direct_routing:
+        if direct_routing == "RRHH":
+            target_status = "PENDING_RRHH"
+        elif direct_routing == "JEFE":
+            target_status = "PENDING_JEFE"
+        elif direct_routing == "COORD":
+            target_status = "PENDING_COORD"
+    elif role in ["coordinador", "jefe_area"]:
+        target_status = "PENDING_RRHH"
+    elif role in ["admin", "nomina"]:
+        target_status = "PENDING_JEFE"
+    elif role == "empleado":
+        has_coordinator = False
+        if subarea:
+            with db_session() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT managed_department FROM users_app WHERE role IN ('coordinador', 'nomina') AND active = 1"
+                )
+                coordinators = cur.fetchall()
+                for c_row in coordinators:
+                    managed_dept = c_row[0] or ""
+                    target_subarea = subarea
+                    if target_subarea == "Servicios Generales":
+                        target_subarea = "Calidad"
+                    elif target_subarea == "Orientador":
+                        target_subarea = "Seguridad"
+
+                    if target_subarea in managed_dept or subarea in managed_dept:
+                        has_coordinator = True
+                        break
+        if not has_coordinator:
+            target_status = "PENDING_RRHH"
+
+    with db_session() as conn:
+        if target_status == "PENDING_COORD":
+            target_coord_dept = subarea
+            if subarea == "Servicios Generales":
+                target_coord_dept = "Calidad"
+            elif subarea == "Orientador":
+                target_coord_dept = "Seguridad"
+            
+            df_c = pd.read_sql_query(
+                "SELECT full_name, managed_department FROM users_app WHERE role IN ('coordinador', 'nomina') AND active = 1",
+                conn,
+            )
+            matched_names = []
+            for _, r in df_c.iterrows():
+                m_dept = r.get("managed_department") or ""
+                if target_coord_dept and (target_coord_dept in m_dept or subarea in m_dept):
+                    matched_names.append(f"{r['full_name']} (Coordinador/a)")
+            if matched_names:
+                return "👤 " + ", ".join(matched_names)
+            return "🏢 Coordinación de Área"
+
+        elif target_status == "PENDING_JEFE":
+            target_jefe_area = emp_area
+            special_areas = [
+                "Comercial", "Publicidad y Comunicaciones", "Marketing",
+                "Contratación", "Mercadeo", "Ejecutivo Comercial"
+            ]
+            if any(s in subarea for s in special_areas):
+                target_jefe_area = "Control Interno"
+            
+            df_j = pd.read_sql_query(
+                "SELECT full_name FROM users_app WHERE role = 'jefe_area' AND active = 1 AND (managed_area = %s OR managed_area = 'Control Interno')",
+                conn,
+                params=(target_jefe_area,),
+            )
+            if not df_j.empty:
+                names = [f"{r['full_name']} (Jefe de Área)" for _, r in df_j.iterrows()]
+                return "👤 " + ", ".join(names)
+            return "👤 Jefe de Área"
+
+        elif target_status == "PENDING_RRHH":
+            return "🏢 Gestión Humana / RRHH"
+
+    return "🏢 Gestión Humana / RRHH"
 
 
 def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
@@ -1304,7 +1429,8 @@ def db_create_hr_procedure(user_id, procedure_type, details, attachment_path):
             SELECT id FROM hr_procedures 
             WHERE user_id = %s 
               AND procedure_type = %s
-              AND created_at >= (NOW() - INTERVAL '5 minutes')::text
+              AND status NOT IN ('CANCELLED', 'REJECTED')
+              AND created_at::timestamp >= NOW() - INTERVAL '5 minutes'
             LIMIT 1
             """,
             (user_id, procedure_type)
