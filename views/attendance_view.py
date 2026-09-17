@@ -13,6 +13,7 @@ from utils.constants import AREA_MAPPING
 
 @st.dialog("✏️ Editar Marcación", width="large")
 def edit_attendance_dialog(record_id: int):
+    record_id = int(record_id)
     conn = db_conn()
     df_rec = pd.read_sql_query(
         """
