@@ -107,6 +107,7 @@ def check_schedule_conflicts(
 
 @st.dialog("Detalles Completos de la Novedad/Permiso")
 def show_exception_details(exc_id: int):
+    exc_id = int(exc_id)
     with db_session() as conn:
         df_exc = get_cached_dataframe(
             """
@@ -166,8 +167,11 @@ def show_exception_details(exc_id: int):
         with c2:
             h_in = req["start_time"] if req["start_time"] else "N/A"
             h_out = req["end_time"] if req["end_time"] else "N/A"
-            st.markdown(f"**Hora Salida:** {h_in}")
-            st.markdown(f"**Hora Entrada:** {h_out}")
+            is_cambio = req["reason_type"] == "Cambio de Turno"
+            lbl_in = "Inicio Nuevo Turno:" if is_cambio else "Hora Salida:"
+            lbl_out = "Fin Nuevo Turno:" if is_cambio else "Hora Entrada:"
+            st.markdown(f"**{lbl_in}** {h_in}")
+            st.markdown(f"**{lbl_out}** {h_out}")
             st.markdown(f"**Tiempo Total:** {req['total_time']}")
 
         st.write(f"**Motivo Original:** {req['reason_type']}")
@@ -236,30 +240,7 @@ def show_exception_details(exc_id: int):
             """, params=(f"%Permiso #{req['id']} %",),
             )
 
-        if not df_audit.empty:
-            st.divider()
-            st.markdown("**Trazabilidad de Aprobaciones:**")
-            for _, row_a in df_audit.iterrows():
-                role_val = row_a.get("role")
-                if role_val == "coordinador":
-                    level = "Coordinador"
-                elif role_val == "jefe_area":
-                    level = "Jefe de Área"
-                elif role_val in ["admin", "nomina"]:
-                    level = "Gestión Humana"
-                else:
-                    if row_a["action"] == "APPROVE_LEAVE_L1":
-                        level = "Coordinador"
-                    elif "Jefe de Área" in str(row_a.get("details", "")):
-                        level = "Jefe de Área"
-                    else:
-                        level = "Gestión Humana"
-                approver_name = (
-                    row_a["full_name"]
-                    if pd.notna(row_a["full_name"])
-                    else row_a["user_id"]
-                )
-                st.caption(f"✓ **{level}**: {approver_name} ({row_a['timestamp']})")
+
     else:
         st.info(
             "ℹ️ Esta novedad no parece tener una solicitud digital asociada del portal de empleados (o fue ingresada manualmente)."
@@ -1636,7 +1617,7 @@ def page_exceptions():
                    (SELECT role FROM users_app WHERE username = lr.user_id) as requester_role
             FROM leave_requests lr
             JOIN employees e ON lr.user_id = e.user_id
-            WHERE lr.status = 'PENDING_RRHH'
+            WHERE lr.status IN ('PENDING_RRHH', 'PENDING_COORD', 'PENDING_JEFE')
             ORDER BY lr.id DESC
         """
         )
