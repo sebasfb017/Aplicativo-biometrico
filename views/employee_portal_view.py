@@ -120,6 +120,7 @@ from database_conn.queries import (
     db_create_leave_request,
     db_create_hr_procedure,
     db_get_employee_procedures,
+    db_get_next_approver_info,
     get_cached_dataframe,
 )
 from services.email_service import send_novedad_alert
@@ -128,6 +129,7 @@ from services.notifications import generate_fth012_pdf
 
 @st.dialog("Detalles de Mi Solicitud (F-TH-012)")
 def show_leave_request_details(req_id: int):
+    req_id = int(req_id)
     conn = db_conn()
     df_req = pd.read_sql_query(
         "SELECT * FROM leave_requests WHERE id = %s", conn, params=(req_id,)
@@ -178,6 +180,10 @@ def show_leave_request_details(req_id: int):
             f"🚫 Solicitud Cancelada por el empleado. Motivo: {req['cancellation_reason']}"
         )
 
+    is_cambio = req["reason_type"] == "Cambio de Turno"
+    lbl_in = "Inicio Nuevo Turno" if is_cambio else "Hora Salida"
+    lbl_out = "Fin Nuevo Turno" if is_cambio else "Hora Entrada"
+
     html_info = f"""
     <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
         <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 15px; margin-bottom: 15px;">
@@ -196,11 +202,11 @@ def show_leave_request_details(req_id: int):
         </div>
         <div style="display: flex; justify-content: space-between;">
             <div>
-                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Hora Salida</div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">{lbl_in}</div>
                 <div style="font-weight: 600;">{req["start_time"] if req["start_time"] else "N/A"}</div>
             </div>
             <div>
-                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Hora Entrada</div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">{lbl_out}</div>
                 <div style="font-weight: 600;">{req["end_time"] if req["end_time"] else "N/A"}</div>
             </div>
             <div>
@@ -214,34 +220,20 @@ def show_leave_request_details(req_id: int):
     st.write(f"**Motivo General:** {req['reason_type']}")
 
     st.markdown("**Mi Justificación / Detalles:**")
-    st.info(
-        req["reason_description"]
+    desc_text = (
+        str(req["reason_description"]).replace("\\n", "\n")
         if req["reason_description"]
         else "Sin detalles ingresados."
     )
+    st.info(desc_text)
 
     if req["how_to_makeup"]:
         st.markdown("**Acuerdo de Reposición Prometido:**")
         st.warning(req["how_to_makeup"])
 
-    if not df_audit.empty:
-        st.divider()
-        st.markdown("**Trazabilidad de Aprobación:**")
-        for _, row in df_audit.iterrows():
-            is_approve = "APPROVE" in row["action"]
-            icon = "✅" if is_approve else "❌"
-            action_text = "Aprobado por" if is_approve else "Rechazado por"
-            date_str = pd.to_datetime(row["timestamp"]).strftime("%Y-%m-%d %H:%M")
-            role_map = {
-                "admin": "Administrador",
-                "nomina": "Nómina/RRHH",
-                "jefe_area": "Jefe de Área",
-                "coordinador": "Coordinador",
-            }
-            rol_name = role_map.get(row["role"], "Autorizador")
-            st.info(
-                f"{icon} **{action_text}:** {row['full_name']} ({rol_name}) - *{date_str}*"
-            )
+    st.divider()
+    from components.timeline_component import render_approval_timeline
+    render_approval_timeline(int(req["id"]))
 
     # --- GESTIÓN DOCUMENTAL: Soporte Médico o Legal Adjunto ---
     if (
@@ -304,28 +296,7 @@ def show_leave_request_details(req_id: int):
                 "El archivo adjunto no se encuentra en el servidor. Puede haber sido eliminado."
             )
     # -----------------------------------------------------------
-    if not df_audit.empty:
-        st.divider()
-        st.markdown("**Trazabilidad de Aprobaciones:**")
-        for _, row_a in df_audit.iterrows():
-            role_val = row_a.get("role")
-            if role_val == "coordinador":
-                level = "Coordinador"
-            elif role_val == "jefe_area":
-                level = "Jefe de Área"
-            elif role_val in ["admin", "nomina"]:
-                level = "Gestión Humana"
-            else:
-                if row_a["action"] == "APPROVE_LEAVE_L1":
-                    level = "Coordinador"
-                elif "Jefe de Área" in str(row_a.get("details", "")):
-                    level = "Jefe de Área"
-                else:
-                    level = "Gestión Humana"
-            approver_name = (
-                row_a["full_name"] if pd.notna(row_a["full_name"]) else row_a["user_id"]
-            )
-            st.caption(f"✓ **{level}**: {approver_name} ({row_a['timestamp']})")
+
 
 
 @st.dialog("Cancelar Solicitud de Permiso")
@@ -545,7 +516,6 @@ def page_employee_portal():
                 # Determinar valor automático de "Remunerado" según el tipo de permiso
                 _TIPOS_NO_REMUNERADOS = {
                     "Licencia No Remunerada",
-                    "Cambio de Turno",
                 }
                 _TIPOS_REMUNERADOS = {
                     "Cita Médica",
@@ -883,6 +853,16 @@ def page_employee_portal():
 
             with st.container(border=True):
                 st.subheader("3. Soportes y Envío")
+                
+                requires_attachment = categoria == "Incapacidad" or reason_type in [
+                    "Licencia por Votación",
+                    "Licencia por Jurado de Votación",
+                ]
+                if requires_attachment:
+                    st.warning(
+                        f"⚠️ **Atención:** Para **{reason_type or 'esta novedad'}** es OBLIGATORIO adjuntar el documento de soporte antes de enviar la solicitud."
+                    )
+
                 st.write(
                     "📄 **Documento de Soporte (Obligatorio para Incapacidad y Jurado/Votación)**"
                 )
@@ -894,10 +874,32 @@ def page_employee_portal():
                 )
 
                 st.write("")
-                # Fix #5: guard contra doble-submit — deshabilitar botón mientras procesa
+
+                # --- Tarjeta de Previsualización en Tiempo Real ---
+                if categoria and reason_type:
+                    next_approver_text = db_get_next_approver_info(user["username"], reason_type)
+                    with st.container(border=True):
+                        st.markdown("🔍 **Resumen de la Solicitud (Previsualización)**")
+                        col_rev1, col_rev2 = st.columns(2)
+                        with col_rev1:
+                            st.markdown(f"**Novedad:** {reason_type}")
+                            st.markdown(f"**Remunerado:** {'✅ Sí' if is_paid == 'Sí' else '❌ No'}")
+                            st.markdown(f"**Tiempo Calculado:** {calculated_time}")
+                        with col_rev2:
+                            st.markdown(f"**Próximo Aprobador:** {next_approver_text}")
+                            if requires_attachment:
+                                if uploaded_files:
+                                    st.markdown(f"**Soporte:** ✅ {len(uploaded_files)} archivo(s) adjunto(s)")
+                                else:
+                                    st.markdown("**Soporte:** ⚠️ *Pendiente (Obligatorio)*")
+                            else:
+                                st.markdown(f"**Soporte:** {'✅ ' + str(len(uploaded_files)) + ' archivo(s)' if uploaded_files else 'ℹ️ Opcional'}")
+
+                st.write("")
+                # Guard contra doble-submit: deshabilitar botón mientras procesa
                 _is_submitting = st.session_state.get(f"submitting_{fk}", False)
                 submitted = st.button(
-                    "⏳ Enviando..." if _is_submitting else "✅ Firmar y Enviar a RRHH",
+                    "⏳ Enviando..." if _is_submitting else "✅ Firmar y Enviar Solicitud",
                     type="primary",
                     use_container_width=True,
                     disabled=_is_submitting,
@@ -905,20 +907,21 @@ def page_employee_portal():
                 if submitted:
                     st.session_state[f"submitting_{fk}"] = True
 
+        if st.session_state.get(f"submitting_{fk}", False):
             # --- Validación de Tamaño del Archivo ---
             MAX_FILE_SIZE_MB = 20
             file_is_valid = True
 
             if uploaded_files:
-                # Obtenemos el tamaño de los archivos subidos en bytes y lo convertimos a MB
                 total_size = sum(uf.size for uf in uploaded_files)
                 file_size_mb = total_size / (1024 * 1024)
                 if file_size_mb > MAX_FILE_SIZE_MB:
                     st.error(
-                        f"❌ El tamaño total de los archivos es demasiado grande ({file_size_mb:.1f} MB). El tamaño máximo permitido es {MAX_FILE_SIZE_MB} MB. Por favor, comprime los archivos antes de subirlos."
+                        f"❌ El tamaño total de los archivos es demasiado grande ({file_size_mb:.1f} MB). "
+                        f"El tamaño máximo permitido es {MAX_FILE_SIZE_MB} MB. Por favor, comprime los archivos antes de subirlos."
                     )
                     file_is_valid = False
-            # ---------------------------------------
+                    st.session_state.pop(f"submitting_{fk}", None)
 
             is_valid_form = file_is_valid
 
@@ -966,6 +969,9 @@ def page_employee_portal():
                         )
                         is_valid_form = False
 
+            if not is_valid_form:
+                st.session_state.pop(f"submitting_{fk}", None)
+
             if is_valid_form:
                 d_start = (
                     leave_dates[0]
@@ -977,8 +983,12 @@ def page_employee_portal():
                     if isinstance(leave_dates, (list, tuple)) and len(leave_dates) > 1
                     else d_start
                 )
-                str_ts = time_s.strftime("%H:%M") if time_s else ""
-                str_te = time_e.strftime("%H:%M") if time_e else ""
+                if categoria == "Cambio de Turno":
+                    str_ts = nuevo_start.strftime("%H:%M") if 'nuevo_start' in locals() and nuevo_start else ""
+                    str_te = nuevo_end.strftime("%H:%M") if 'nuevo_end' in locals() and nuevo_end else ""
+                else:
+                    str_ts = time_s.strftime("%H:%M") if time_s else ""
+                    str_te = time_e.strftime("%H:%M") if time_e else ""
 
                 attachment_path = None
                 if uploaded_files:
