@@ -275,13 +275,17 @@ def generate_fth012_pdf(req, df_audit):
     pdf.cell(val_w, 6, str(req["leave_date_end"]), new_x="LMARGIN", new_y="NEXT")
 
     # Fila 2
+    is_cambio_pdf = req.get("reason_type") == "Cambio de Turno"
+    lbl_in_pdf = "Inicio Nuevo Turno:" if is_cambio_pdf else "Hora Salida:"
+    lbl_out_pdf = "Fin Nuevo Turno:" if is_cambio_pdf else "Hora Entrada:"
+
     pdf.set_font("helvetica", "B", 9)
-    pdf.cell(col_w, 6, "Hora Salida:")
+    pdf.cell(col_w, 6, lbl_in_pdf)
     pdf.set_font("helvetica", "", 9)
     pdf.cell(val_w, 6, str(req.get("start_time") or "N/A"))
 
     pdf.set_font("helvetica", "B", 9)
-    pdf.cell(col_w, 6, "Hora Entrada:")
+    pdf.cell(col_w, 6, lbl_out_pdf)
     pdf.set_font("helvetica", "", 9)
     pdf.cell(val_w, 6, str(req.get("end_time") or "N/A"), new_x="LMARGIN", new_y="NEXT")
 
@@ -304,9 +308,8 @@ def generate_fth012_pdf(req, df_audit):
         0, 5, "Justificación o Descripción del Motivo:", new_x="LMARGIN", new_y="NEXT"
     )
     pdf.set_font("helvetica", "", 9)
-    pdf.multi_cell(
-        0, 5, str(req["reason_description"] or "Sin justificación ingresada.")
-    )
+    raw_pdf_desc = str(req.get("reason_description") or "Sin justificación ingresada.").replace("\\n", "\n")
+    pdf.multi_cell(0, 5, raw_pdf_desc)
     pdf.ln(2)
 
     if not req["is_paid"] and req.get("how_to_makeup"):
