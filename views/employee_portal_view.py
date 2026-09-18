@@ -440,6 +440,7 @@ def page_employee_portal():
                         index=None,
                         placeholder="Selecciona...",
                         key=f"categoria_{fk}",
+                        help="Selecciona el tipo principal de permiso o novedad que requieres.",
                     )
 
                 with col_det:
@@ -454,6 +455,7 @@ def page_employee_portal():
                             index=None,
                             placeholder="Selecciona...",
                             key=f"rt_citas_{fk}",
+                            help="Específica si la cita médica requiere desplazarse a otra ciudad.",
                         )
                     elif categoria == "Permisos":
                         reason_type = st.selectbox(
@@ -462,6 +464,7 @@ def page_employee_portal():
                             index=None,
                             placeholder="Selecciona...",
                             key=f"rt_permisos_{fk}",
+                            help="Permiso Personal (Asuntos propios) vs Permiso Laboral (Asuntos de la empresa).",
                         )
                     elif categoria == "Licencias":
                         reason_type = st.selectbox(
@@ -839,7 +842,7 @@ def page_employee_portal():
                 st.subheader("2. Motivo y Justificación")
                 
                 r_desc = st.text_area(
-                    "Justificación / Detalles", key=f"r_desc_{fk}"
+                    "Justificación / Detalles", key=f"r_desc_{fk}", help="Describe detalladamente el motivo de tu solicitud. Esto será leído por quien te apruebe el permiso."
                 )
                 if (
                     categoria in ["Licencias", "Vacaciones", "Incapacidad", "Cambio de Turno"]
@@ -871,6 +874,7 @@ def page_employee_portal():
                     type=["pdf", "png", "jpg", "jpeg"],
                     accept_multiple_files=True,
                     key=f"upload_{fk}",
+                    help="Documento obligatorio para Incapacidades y Licencias por Jurado/Votación.",
                 )
 
                 st.write("")
