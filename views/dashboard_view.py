@@ -147,12 +147,12 @@ def page_dashboard():
     c_m1, c_m2 = st.columns(2)
     with c_m1:
         sel_month_name = st.selectbox(
-            "Mes", meses, index=default_month - 1, key="dash_month"
+            "Mes", meses, index=default_month - 1, key="dash_month", help="Selecciona el mes para ver el consolidado de retrasos."
         )
         sel_month = meses.index(sel_month_name) + 1
     with c_m2:
         sel_year = st.selectbox(
-            "Año", list(range(today.year - 2, today.year + 2)), index=2, key="dash_year"
+            "Año", list(range(today.year - 2, today.year + 2)), index=2, key="dash_year", help="Selecciona el año."
         )
 
     try:
