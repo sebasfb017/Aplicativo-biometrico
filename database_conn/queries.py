@@ -439,17 +439,23 @@ def db_create_leave_request(
     if r_type == "Incapacidad":
         target_status = "PENDING_RRHH"
     elif direct_routing:
-        if direct_routing == 'RRHH':
+        if "RRHH" in direct_routing:
             target_status = "PENDING_RRHH"
-        elif direct_routing == 'JEFE':
+        elif "JEFE" in direct_routing:
             target_status = "PENDING_JEFE"
-        elif direct_routing == 'COORD':
+        elif "COORD" in direct_routing:
             target_status = "PENDING_COORD"
-    elif role == "coordinador":
-        # Salta la aprobación de coordinador (ya que él es uno), va a RRHH
+        else:
+            if role in ["coordinador", "jefe_area"]:
+                target_status = "PENDING_RRHH"
+            elif role in ["admin", "nomina"]:
+                target_status = "PENDING_JEFE"
+            else:
+                target_status = "PENDING_RRHH"
+    elif role in ["coordinador", "jefe_area"]:
+        # Salta la aprobación de coordinador, va a RRHH
         target_status = "PENDING_RRHH"
     elif role in ["admin", "nomina"]:
-        # Si radica RRHH, también debería registrarse formalmente o saltar a Jefe
         target_status = "PENDING_JEFE"
     elif role == "jefe_area":
         # Si radica el Jefe, se auto-aprueba por él mismo, pero DEBE pasar por RRHH
@@ -533,12 +539,19 @@ def db_get_next_approver_info(user_id, reason_type):
     if reason_type == "Incapacidad":
         target_status = "PENDING_RRHH"
     elif direct_routing:
-        if direct_routing == "RRHH":
+        if "RRHH" in direct_routing:
             target_status = "PENDING_RRHH"
-        elif direct_routing == "JEFE":
+        elif "JEFE" in direct_routing:
             target_status = "PENDING_JEFE"
-        elif direct_routing == "COORD":
+        elif "COORD" in direct_routing:
             target_status = "PENDING_COORD"
+        else:
+            if role in ["coordinador", "jefe_area"]:
+                target_status = "PENDING_RRHH"
+            elif role in ["admin", "nomina"]:
+                target_status = "PENDING_JEFE"
+            else:
+                target_status = "PENDING_RRHH"
     elif role in ["coordinador", "jefe_area"]:
         target_status = "PENDING_RRHH"
     elif role in ["admin", "nomina"]:
