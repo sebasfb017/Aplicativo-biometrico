@@ -206,12 +206,17 @@ def page_dashboard():
                 ).head(5)
                 top5_df = top5_df[top5_df["minutos_tarde_total"] > 0]
                 if not top5_df.empty:
-                    html_t5 = "<div class='premium-table-container'><table class='premium-table'>"
-                    html_t5 += "<thead><tr><th>Empleado</th><th>Minutos</th></tr></thead><tbody>"
-                    for _, r in top5_df.iterrows():
-                        html_t5 += f"<tr><td><b>{r['full_name']}</b></td><td><span class='badge-modern badge-amber'>⏱️ {r['minutos_tarde_total']} min</span></td></tr>"
-                    html_t5 += "</tbody></table></div>"
-                    st.markdown(html_t5, unsafe_allow_html=True)
+                    st.dataframe(
+                        top5_df[["full_name", "minutos_tarde_total"]],
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "full_name": st.column_config.TextColumn("Empleado"),
+                            "minutos_tarde_total": st.column_config.NumberColumn(
+                                "Minutos", format="⏱️ %d min"
+                            ),
+                        },
+                    )
                     
                     csv_t5 = top5_df[["full_name", "minutos_tarde_total"]].rename(columns={"full_name": "Empleado", "minutos_tarde_total": "Minutos"}).to_csv(index=False, sep=";").encode("utf-8-sig")
                     st.download_button(
@@ -272,21 +277,26 @@ def page_dashboard():
     df_pendientes = get_cached_dataframe(query_pend)
 
     if not df_pendientes.empty:
-        html_table = (
-            "<div class='premium-table-container'><table class='premium-table'>"
+        df_pendientes["Estado"] = df_pendientes["Estado"].replace(
+            {
+                "PENDING_COORD": "🕒 Coord.",
+                "PENDING_JEFE": "🕒 Jefe Área",
+                "PENDING_RRHH": "🕒 RRHH",
+            }
         )
-        html_table += "<thead><tr><th>Radicado</th><th>Fecha</th><th>Empleado</th><th>Departamento</th><th>Motivo</th><th>Estado</th></tr></thead><tbody>"
-        for _, r in df_pendientes.iterrows():
-            st_badge = "badge-amber"
-            estado_str = (
-                str(r["Estado"])
-                .replace("PENDING_COORD", "🕒 Coord.")
-                .replace("PENDING_JEFE", "🕒 Jefe Área")
-                .replace("PENDING_RRHH", "🕒 RRHH")
-            )
-            html_table += f"<tr><td>#{r['Radicado']}</td><td>{r['Fecha']}</td><td><b>{r['Empleado']}</b></td><td>{r.get('Departamento', 'N/A')}</td><td>{r['Motivo']}</td><td><span class='badge-modern {st_badge}'>{estado_str}</span></td></tr>"
-        html_table += "</tbody></table></div>"
-        st.markdown(html_table, unsafe_allow_html=True)
+        st.dataframe(
+            df_pendientes,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Radicado": st.column_config.NumberColumn("Radicado", format="#%d"),
+                "Fecha": st.column_config.DatetimeColumn("Fecha Solicitud", format="YYYY-MM-DD HH:mm"),
+                "Empleado": st.column_config.TextColumn("Empleado"),
+                "Departamento": st.column_config.TextColumn("Departamento"),
+                "Motivo": st.column_config.TextColumn("Motivo"),
+                "Estado": st.column_config.TextColumn("Estado"),
+            },
+        )
     else:
         st.success("¡Todo al día! No hay solicitudes pendientes de aprobación.")
 

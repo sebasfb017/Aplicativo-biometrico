@@ -19,3 +19,8 @@ devices:
   port: 4370
   password: 0
   timeout: 10
+- name: TERAPIA
+  ip: 10.10.11.115
+  port: 4370
+  password: 1234
+  timeout: 10

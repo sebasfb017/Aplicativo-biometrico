@@ -908,11 +908,12 @@ def page_exceptions():
                               ((ua.direct_routing IS NULL OR ua.direct_routing != 'JEFE_ADMIN') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR
                               (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
                               (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
+                              (lr.user_id IN ('119279359', '111304019') AND %s = 'Financiera') OR
                               ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD' AND %s = 'Administrativo')
                           ) /* FIX CACHE 2 */
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
-                params = (_managed_area, _managed_area, _managed_area, _managed_area, _managed_area)
+                params = (_managed_area, _managed_area, _managed_area, _managed_area, _managed_area, _managed_area)
 
             with db_session() as conn:
                 df_pend = get_cached_dataframe(query, params=params)
@@ -1166,12 +1167,14 @@ def page_exceptions():
                               ua.emp_area = %s OR 
                               (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
                               (ua.emp_subarea = 'Auditor Médico' AND %s = 'Auditoria Médica') OR
-                              (ua.emp_subarea = 'Control Interno' AND %s = 'Control Interno')
+                              (ua.emp_subarea = 'Control Interno' AND %s = 'Control Interno') OR
+                              (lr.user_id IN ('119279359', '111304019') AND %s = 'Financiera')
                           ))
                     ORDER BY lr.id DESC
                 """
                 params_hist = (
                     user["username"],
+                    user.get("managed_area", ""),
                     user.get("managed_area", ""),
                     user.get("managed_area", ""),
                     user.get("managed_area", ""),
@@ -1403,6 +1406,7 @@ def page_exceptions():
                 "Tipo",
                 "Observaciones",
                 "Registrado El",
+                "Origen",
             ]
 
             # Reorganizar columnas para que Total Días quede junto a las fechas (Ya viene así de queries)
@@ -1417,6 +1421,7 @@ def page_exceptions():
                     "Tipo",
                     "Observaciones",
                     "Registrado El",
+                    "Origen",
                 ]
             ]
 
@@ -1582,10 +1587,14 @@ def page_exceptions():
                     row_idx = event.selection.rows[0]
                     if row_idx < len(filtered_df):
                         selected_id = int(filtered_df.iloc[row_idx]["ID"])
+                        source = filtered_df.iloc[row_idx]["Origen"]
 
                         if selected_id != st.session_state.last_processed_exc:
                             st.session_state.last_processed_exc = selected_id
-                            show_exception_details(selected_id)
+                            if source == "Portal":
+                                show_leave_request_details(selected_id)
+                            else:
+                                show_exception_details(selected_id)
                     else:
                         st.session_state.last_processed_exc = None
                 else:
@@ -2217,7 +2226,9 @@ def page_exceptions():
                         u_managed = row["user_managed_dept"]
 
                         target_jefe_area = area
-                        if str(row["user_id"]) in ["119279359", "111627893"] or subarea in [
+                        if str(row["user_id"]) in ["119279359", "111304019"]:
+                            target_jefe_area = "Financiera"
+                        elif str(row["user_id"]) in ["111627893"] or subarea in [
                             "Rehabilitación",
                             "Tecnólogo Rayos X",
                             "Farmacia",

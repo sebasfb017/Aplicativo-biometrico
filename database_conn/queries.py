@@ -285,6 +285,7 @@ def get_exceptions_df():
         SELECT ex.id, ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
         FROM exceptions ex
         LEFT JOIN employees e ON ex.user_id = e.user_id
+        WHERE ex.notes NOT LIKE 'Aprobado de Portal:%%' OR ex.notes IS NULL
         ORDER BY ex.user_id, ex.type, ex.date ASC
         """,
         conn,
@@ -320,19 +321,24 @@ def get_exceptions_df():
         if spec and isinstance(spec, str) and spec.strip():
             for d_str in [d.strip() for d in spec.split(",") if d.strip()]:
                 rows.append({"id": r["id"], "user_id": r["user_id"], "full_name": r["full_name"],
-                             "date": d_str, "type": r["type"], "notes": note_val, "created_at": r["created_at"]})
+                             "date": d_str, "type": r["type"], "notes": note_val, "created_at": r["created_at"], "source": "Portal"})
         elif pd.notnull(start_date) and pd.notnull(end_date):
             curr = start_date
             while curr <= end_date:
                 rows.append({"id": r["id"], "user_id": r["user_id"], "full_name": r["full_name"],
-                             "date": curr.strftime("%Y-%m-%d"), "type": r["type"], "notes": note_val, "created_at": r["created_at"]})
+                             "date": curr.strftime("%Y-%m-%d"), "type": r["type"], "notes": note_val, "created_at": r["created_at"], "source": "Portal"})
                 curr += pd.Timedelta(days=1)
         elif pd.notnull(start_date):
             rows.append({"id": r["id"], "user_id": r["user_id"], "full_name": r["full_name"],
-                         "date": start_date.strftime("%Y-%m-%d"), "type": r["type"], "notes": note_val, "created_at": r["created_at"]})
+                         "date": start_date.strftime("%Y-%m-%d"), "type": r["type"], "notes": note_val, "created_at": r["created_at"], "source": "Portal"})
 
     df_req_expanded = (pd.DataFrame(rows) if rows
-                       else pd.DataFrame(columns=["id", "user_id", "full_name", "date", "type", "notes", "created_at"]))
+                       else pd.DataFrame(columns=["id", "user_id", "full_name", "date", "type", "notes", "created_at", "source"]))
+
+    if not df_exc.empty:
+        df_exc["source"] = "Manual"
+    else:
+        df_exc["source"] = pd.Series(dtype="object")
 
     # Limpiar nulls
     for df_part in [df_exc, df_req_expanded]:
@@ -344,7 +350,7 @@ def get_exceptions_df():
     if df.empty:
         df["date_end"] = pd.Series(dtype="object")
         df["total_days"] = pd.Series(dtype="int")
-        return df[["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at"]]
+        return df[["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at", "source"]]
 
     df = df.sort_values(by=["user_id", "type", "date"], ascending=True)
     df["date_obj"] = pd.to_datetime(df["date"])
@@ -376,13 +382,17 @@ def get_exceptions_df():
                 ),
             ),
             created_at=("created_at", "min"),
+            source=("source", "first"),
         )
-        .reset_index()
-    )
+    ).reset_index()
 
-    final_df = grouped[["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at"]].copy()
-    final_df = final_df.sort_values("created_at", ascending=False)
-    return final_df
+    # Formatear la fecha final
+    grouped["date"] = pd.to_datetime(grouped["date"]).dt.strftime("%Y-%m-%d")
+    grouped["date_end"] = pd.to_datetime(grouped["date_end"]).dt.strftime("%Y-%m-%d")
+
+    return grouped[
+        ["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at", "source"]
+    ].sort_values(by=["user_id", "date"], ascending=False)
 
 
 def db_create_leave_request(
@@ -606,7 +616,10 @@ def db_get_next_approver_info(user_id, reason_type):
                 "Comercial", "Publicidad y Comunicaciones", "Marketing",
                 "Contratación", "Mercadeo", "Ejecutivo Comercial"
             ]
-            if any(s in subarea for s in special_areas):
+            
+            if str(user_id) in ["119279359", "111304019"]:
+                target_jefe_area = "Financiera"
+            elif any(s in subarea for s in special_areas):
                 target_jefe_area = "Control Interno"
             
             df_j = pd.read_sql_query(
@@ -798,7 +811,9 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
             # Resolvemos qué Jefatura debe aprobar la solicitud basándonos en la sub-área.
             target_jefe_area = req_area
 
-            if req_subarea in [
+            if str(requester_id) in ["119279359", "111304019"]:
+                target_jefe_area = "Financiera"
+            elif req_subarea in [
                 "Rehabilitación",
                 "Tecnólogo Rayos X",
                 "Farmacia",

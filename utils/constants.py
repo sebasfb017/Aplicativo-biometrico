@@ -24,6 +24,7 @@ AREA_MAPPING = {
         "Control Interno",
         "Mantenimiento",
         "Quimico Farmaceutico",
+        "Talento humano",
     ],
     "Financiera": [
         "Facturación",
@@ -33,7 +34,6 @@ AREA_MAPPING = {
         "Contabilidad",
         "Dirección Financiera",
         "Compras",
-        "Talento humano",
     ],
     "Asistencial": ["Enfermería", "Farmacia", "Admisiones", "Rehabilitación"],
     "Medico": ["Medico"],
