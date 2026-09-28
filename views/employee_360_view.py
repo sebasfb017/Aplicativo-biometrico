@@ -13,12 +13,58 @@ def get_employee_exceptions(year, month, user_id):
     conn = db_conn()
     start_date = date(year, month, 1).isoformat()
     end_date = date(year, month, calendar.monthrange(year, month)[1]).isoformat()
-    df = pd.read_sql_query(
-        "SELECT date as fecha, type as tipo, notes as notas FROM exceptions WHERE user_id = %s AND date >= %s AND date <= %s",
+    
+    df_exc = pd.read_sql_query(
+        "SELECT date as fecha, type as tipo, notes as notas, NULL as start_time, NULL as end_time, 1 as is_paid FROM exceptions WHERE user_id = %s AND date >= %s AND date <= %s AND (notes NOT LIKE 'Aprobado de Portal:%%' OR notes IS NULL)",
         conn,
         params=(str(user_id), start_date, end_date),
     )
+    
+    df_req = pd.read_sql_query(
+        "SELECT leave_date_start, leave_date_end, reason_type, reason_description, specific_dates, start_time, end_time, is_paid FROM leave_requests WHERE user_id = %s AND status = 'APPROVED'",
+        conn,
+        params=(str(user_id),),
+    )
     conn.close()
+    
+    records = df_exc.to_dict('records')
+    
+    if not df_req.empty:
+        for _, r in df_req.iterrows():
+            d_start = date.fromisoformat(r["leave_date_start"])
+            d_end = date.fromisoformat(r["leave_date_end"])
+            
+            dates_to_process = []
+            if "specific_dates" in r and pd.notna(r["specific_dates"]) and str(r["specific_dates"]).strip() not in ["None", ""]:
+                dates_to_process = [date.fromisoformat(d.strip()) for d in str(r["specific_dates"]).split(",") if d.strip()]
+            else:
+                delta = d_end - d_start
+                dates_to_process = [d_start + timedelta(days=i) for i in range(delta.days + 1)]
+                
+            for curr_date in dates_to_process:
+                if curr_date.year == year and curr_date.month == month:
+                    if r["reason_type"] == "Vacaciones":
+                        if curr_date.weekday() == 6 or is_holiday(curr_date):
+                            continue
+                    
+                    st_val = r.get("start_time")
+                    et_val = r.get("end_time")
+                    # Manejar nulos o cadenas vacías
+                    if pd.isna(st_val) or str(st_val).strip() == "":
+                        st_val = None
+                    if pd.isna(et_val) or str(et_val).strip() == "":
+                        et_val = None
+
+                    records.append({
+                        "fecha": curr_date.isoformat(),
+                        "tipo": r["reason_type"],
+                        "notas": f"Aprobado de Portal: {r['reason_description']}",
+                        "start_time": st_val,
+                        "end_time": et_val,
+                        "is_paid": int(r.get("is_paid", 1)) if pd.notna(r.get("is_paid")) else 1
+                    })
+                    
+    df = pd.DataFrame(records)
     return df
 
 
@@ -87,7 +133,16 @@ def page_employee_360():
         exc_df = get_employee_exceptions(
             selected_year, selected_month, selected_user_id
         )
-        exceptions_dict = {row["fecha"]: row["tipo"] for _, row in exc_df.iterrows()}
+        exceptions_dict = {
+            row["fecha"]: {
+                "tipo": row["tipo"],
+                "notas": row.get("notas", ""),
+                "start_time": row.get("start_time"),
+                "end_time": row.get("end_time"),
+                "is_paid": row.get("is_paid", 1),
+            }
+            for _, row in exc_df.iterrows()
+        }
 
         raw_df = get_employee_raw_punches(
             selected_year, selected_month, selected_user_id
@@ -116,7 +171,8 @@ def page_employee_360():
             date_str = current_date.isoformat()
 
             sched = schedule_for_user_date(selected_user_id, current_date, conn)
-            novedad = exceptions_dict.get(date_str, "-")
+            novedad_obj = exceptions_dict.get(date_str)
+            novedad = novedad_obj["tipo"] if novedad_obj else "-"
             dia_punches = sorted(punches_por_dia.get(date_str, []))
 
             # Tipos: normal, retardo, falta, novedad, libre, pendiente, huerfano (marco sin turno)
@@ -209,6 +265,10 @@ def page_employee_360():
                     "marcaciones_am": marcaciones_am,
                     "marcaciones_pm": marcaciones_pm,
                     "novedad": novedad,
+                    "novedad_notas": novedad_obj["notas"] if novedad_obj else "",
+                    "novedad_st": novedad_obj["start_time"] if novedad_obj else None,
+                    "novedad_et": novedad_obj["end_time"] if novedad_obj else None,
+                    "novedad_paid": novedad_obj["is_paid"] if novedad_obj else 1,
                     "es_festivo": es_festivo,
                 }
             )
@@ -370,9 +430,14 @@ def page_employee_360():
             inner_content += '<div class="info-line info-falta">Inasistencia</div>'
 
         if cell["novedad"] != "-":
-            inner_content += (
-                f'<div class="info-line info-novedad">⚠️ {cell["novedad"]}</div>'
-            )
+            nov_text = f'⚠️ {cell["novedad"]}'
+
+            if cell["novedad_paid"] == 0:
+                inner_content += f'<div class="info-line info-novedad" style="background-color: rgba(111,66,193,0.15); color: #6f42c1; border-color: rgba(111,66,193,0.3);">📉 No Remun.<br>{nov_text}</div>'
+            else:
+                inner_content += (
+                    f'<div class="info-line info-novedad">{nov_text}</div>'
+                )
 
         if cell["es_festivo"]:
             inner_content += '<div class="info-line" style="background: rgba(13,202,240,0.2); color: #0dcaf0; font-weight: 600; border: 1px solid rgba(13,202,240,0.4);">🎉 Festivo</div>'
