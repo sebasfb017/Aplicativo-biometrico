@@ -185,33 +185,33 @@ def show_leave_request_details(req_id: int):
     lbl_out = "Fin Nuevo Turno" if is_cambio else "Hora Entrada"
 
     html_info = f"""
-    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+    <div class="premium-glass-card" style="margin-bottom: 20px; text-align: left; display: block; height: auto;">
         <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 15px; margin-bottom: 15px;">
             <div>
-                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Fecha de Solicitud</div>
-                <div style="font-weight: 600;">{req["request_date"]}</div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">Fecha de Solicitud</div>
+                <div style="font-weight: 700; font-size: 1.1em;">{req["request_date"]}</div>
             </div>
             <div>
-                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Fechas de Ausencia</div>
-                <div style="font-weight: 600;">{req["leave_date_start"]} al {req["leave_date_end"]}</div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">Fechas de Ausencia</div>
+                <div style="font-weight: 700; font-size: 1.1em;">{req["leave_date_start"]} al {req["leave_date_end"]}</div>
             </div>
             <div>
-                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Remunerado</div>
-                <div style="font-weight: 600;">{"✅ Sí" if req["is_paid"] else "❌ No"}</div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">Remunerado</div>
+                <div style="font-weight: 700; font-size: 1.1em;">{"✅ Sí" if req["is_paid"] else "❌ No"}</div>
             </div>
         </div>
         <div style="display: flex; justify-content: space-between;">
             <div>
-                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">{lbl_in}</div>
-                <div style="font-weight: 600;">{req["start_time"] if req["start_time"] else "N/A"}</div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">{lbl_in}</div>
+                <div style="font-weight: 700; font-size: 1.1em;">{req["start_time"] if req["start_time"] else "N/A"}</div>
             </div>
             <div>
-                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">{lbl_out}</div>
-                <div style="font-weight: 600;">{req["end_time"] if req["end_time"] else "N/A"}</div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">{lbl_out}</div>
+                <div style="font-weight: 700; font-size: 1.1em;">{req["end_time"] if req["end_time"] else "N/A"}</div>
             </div>
             <div>
-                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px;">Tiempo Total</div>
-                <div style="font-weight: 600; color: #6366f1;">{req["total_time"]}</div>
+                <div style="color: #9CA3AF; font-size: 0.85em; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">Tiempo Total</div>
+                <div style="font-weight: 800; font-size: 1.2em; color: #6366f1;">{req["total_time"]}</div>
             </div>
         </div>
     </div>
@@ -336,29 +336,59 @@ def cancel_leave_request_dialog(
 def page_employee_portal():
     user = st.session_state["user"]
 
-    # CSS Global para Optimización Móvil
+    # CSS Global para Optimización Móvil y Glassmorphism Premium
     mobile_css = """
     <style>
+    /* Estilos Móviles */
     @media (max-width: 600px) {
-        /* Reducir padding lateral en móviles */
         .block-container {
             padding-left: 1rem !important;
             padding-right: 1rem !important;
             padding-top: 1.5rem !important;
         }
-        /* Botones e inputs touch-friendly */
         .stButton>button, .stDownloadButton>button, .stFormSubmitButton>button {
             min-height: 44px !important;
             border-radius: 8px !important;
         }
         input, select, textarea {
-            font-size: 16px !important; /* Evita zoom automático en iOS */
+            font-size: 16px !important;
         }
-        /* Asegurar que las tabs no se corten */
         .stTabs [data-baseweb="tab-list"] {
             overflow-x: auto;
             white-space: nowrap;
         }
+    }
+
+    /* Glassmorphism Premium para Tarjetas de Streamlit (Expander y Containers) */
+    div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        background: linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01)) !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        border-radius: 15px !important;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1) !important;
+        backdrop-filter: blur(10px) !important;
+        transition: transform 0.3s ease, box-shadow 0.3s ease !important;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:hover > div {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.2) !important;
+        border-color: rgba(255,255,255,0.2) !important;
+    }
+
+    /* Clase para tarjetas HTML personalizadas */
+    .premium-glass-card {
+        background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.02));
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 15px; padding: 1.5rem;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15);
+        backdrop-filter: blur(12px);
+        text-align: center;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        height: 100%; display: flex; flex-direction: column; justify-content: center;
+    }
+    .premium-glass-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.25);
+        border-color: rgba(255,255,255,0.3);
     }
     </style>
     """
@@ -374,7 +404,7 @@ def page_employee_portal():
 
     header_col, vac_col = st.columns([3, 1])
     with header_col:
-        st.title("🧑‍⚕️ Mi Portal de Autogestión (F-TH-012)")
+        st.title("🧑‍⚕️ Mi Portal de Autogestión")
         area = user.get("emp_area") or "Sin Área Definida"
         subarea = user.get("emp_subarea")
         area_display = (
@@ -385,9 +415,9 @@ def page_employee_portal():
     with vac_col:
         st.markdown(
             f"""
-        <div style="background-color: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.1); text-align: center; height: 100%; display: flex; flex-direction: column; justify-content: center; margin-top: 20px;">
-            <p style="margin:0; font-size: 0.85em; color: #a0aec0; text-transform: uppercase; letter-spacing: 1px;">Vacaciones a Favor</p>
-            <p style="margin:0; font-size: 1.8em; font-weight: bold; color: #e2e8f0;">🏖️ {saldo_vac} <span style="font-size: 0.5em; font-weight: normal; color: #a0aec0;">días</span></p>
+        <div class="premium-glass-card" style="margin-top: 15px;">
+            <p style="margin:0; font-size: 0.85em; color: #a0aec0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Vacaciones a Favor</p>
+            <p style="margin:10px 0 0 0; font-size: 2.2em; font-weight: 800; color: #0d6efd;">🏖️ {saldo_vac} <span style="font-size: 0.4em; font-weight: 600; color: #6c757d; text-transform: uppercase;">días</span></p>
         </div>
         """,
             unsafe_allow_html=True,
@@ -962,6 +992,18 @@ def page_employee_portal():
                         f"❌ Has solicitado {dias_solicitados} días de vacaciones, pero solo tienes {saldo_vac} días a favor."
                     )
                     is_valid_form = False
+                elif reason_type == "Permiso Personal":
+                    if duracion_permiso == "Por Días":
+                        st.error("❌ Los Permisos Personales solo pueden solicitarse 'Por Horas' y por un máximo de 2 horas.")
+                        is_valid_form = False
+                    elif time_s and time_e:
+                        ts_dt = datetime.combine(date.today(), time_s)
+                        te_dt = datetime.combine(date.today(), time_e)
+                        if te_dt > ts_dt:
+                            diff = te_dt - ts_dt
+                            if (diff.seconds // 60) > 120:
+                                st.error("❌ Los Permisos Personales no pueden exceder un máximo de 2 horas.")
+                                is_valid_form = False
                 else:
                     requires_attachment = categoria == "Incapacidad" or reason_type in [
                         "Licencia por Votación",
@@ -1143,7 +1185,7 @@ def page_employee_portal():
                                     """
                                     SELECT emp_email, emp_phone FROM users_app 
                                     WHERE role = 'jefe_area' AND active = 1 
-                                    AND (managed_area = %s OR managed_area = 'Control Interno')
+                                    AND managed_area = %s
                                 """,
                                     conn,
                                     params=(target_jefe_area,),
@@ -1547,6 +1589,21 @@ def page_employee_portal():
                             st.write(f"- **Detalles:** {tram['details']}")
                     if tram["attachment_path"]:
                         st.write(f"📎 **Soporte adjunto:** `{tram['attachment_path'].split('/')[-1]}`")
+                    
+                    if tram.get("admin_notes"):
+                        st.info(f"**Notas de RRHH:** {tram['admin_notes']}")
+                        
+                    if tram.get("response_path"):
+                        import os
+                        if os.path.exists(tram["response_path"]):
+                            with open(tram["response_path"], "rb") as f:
+                                st.download_button(
+                                    label="📥 Descargar Respuesta / Certificado (PDF)",
+                                    data=f,
+                                    file_name=os.path.basename(tram["response_path"]),
+                                    mime="application/pdf",
+                                    key=f"dl_resp_{tram['id']}"
+                                )
 
     with t4:
         st.subheader("💬 Buzón de Sugerencias y PQRS")
