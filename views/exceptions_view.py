@@ -130,121 +130,7 @@ def show_exception_details(exc_id: int):
 
         st.divider()
 
-        # Buscar si existe una solicitud digital de portal asociada
-        df_req = get_cached_dataframe(
-            """
-            SELECT *
-            FROM leave_requests
-            WHERE user_id = %s AND status = 'APPROVED'
-              AND leave_date_start <= %s AND leave_date_end >= %s
-            ORDER BY id DESC LIMIT 1
-        """, params=(exc["user_id"], exc["date"], exc["date"]),
-        )
-
-    if not df_req.empty:
-        req = df_req.iloc[0]
-        st.markdown("### 📄 Detalles de la Solicitud (Portal F-TH-012)")
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(f"**Radicado:** #{req['id']}")
-            st.markdown(f"**Fecha de Solicitud:** {req['request_date']}")
-            if (
-                "specific_dates" in req
-                and pd.notna(req.get("specific_dates"))
-                and str(req.get("specific_dates")).strip() != "None"
-                and str(req.get("specific_dates")).strip() != ""
-            ):
-                formatted_dates = str(req["specific_dates"]).replace(",", ", ")
-                st.markdown(f"**Fechas de Ausencia:** {formatted_dates}")
-            elif req["leave_date_start"] == req["leave_date_end"]:
-                st.markdown(f"**Fechas de Ausencia:** {req['leave_date_start']}")
-            else:
-                st.markdown(
-                    f"**Fechas de Ausencia:** {req['leave_date_start']} al {req['leave_date_end']}"
-                )
-            st.markdown(f"**Remunerado:** {'✅ Sí' if req['is_paid'] else '❌ No'}")
-        with c2:
-            h_in = req["start_time"] if req["start_time"] else "N/A"
-            h_out = req["end_time"] if req["end_time"] else "N/A"
-            is_cambio = req["reason_type"] == "Cambio de Turno"
-            lbl_in = "Inicio Nuevo Turno:" if is_cambio else "Hora Salida:"
-            lbl_out = "Fin Nuevo Turno:" if is_cambio else "Hora Entrada:"
-            st.markdown(f"**{lbl_in}** {h_in}")
-            st.markdown(f"**{lbl_out}** {h_out}")
-            st.markdown(f"**Tiempo Total:** {req['total_time']}")
-
-        st.write(f"**Motivo Original:** {req['reason_type']}")
-
-        st.markdown("**Justificación del Empleado:**")
-        st.info(
-            req["reason_description"]
-            if req["reason_description"]
-            else "Sin detalles adicionales."
-        )
-
-        if req["how_to_makeup"]:
-            st.markdown("**Acuerdo de Reposición Prometido:**")
-            st.warning(req["how_to_makeup"])
-
-        if pd.notna(req["attachment_path"]) and str(req["attachment_path"]).strip():
-            st.write("**Soporte Adjunto:**")
-            import os
-
-            from database_conn.connection import DATA_DIR
-
-            file_path = os.path.join(DATA_DIR, "uploads", str(req["attachment_path"]))
-            if os.path.exists(file_path):
-                with st.expander("👁️ Previsualizar Soporte Adjunto", expanded=False):
-                    ext = os.path.splitext(file_path)[1].lower()
-                    if ext in [".png", ".jpg", ".jpeg", ".webp"]:
-                        st.image(file_path, use_container_width=True)
-                    elif ext == ".pdf":
-                        try:
-                            import shutil
-
-                            static_dir = os.path.join(os.getcwd(), "static")
-                            os.makedirs(static_dir, exist_ok=True)
-                            static_file_path = os.path.join(
-                                static_dir, str(req["attachment_path"])
-                            )
-
-                            if not os.path.exists(static_file_path):
-                                shutil.copy2(file_path, static_file_path)
-
-                            pdf_url = f"/app/static/{req['attachment_path']}"
-                            pdf_display = f'<iframe src="{pdf_url}" width="100%" height="600" style="border: none;"></iframe>'
-                            st.markdown(pdf_display, unsafe_allow_html=True)
-                        except Exception as e:
-                            st.error(f"No se pudo cargar el PDF: {e}")
-                    else:
-                        st.info("Vista previa no disponible para este tipo de archivo.")
-
-                with open(file_path, "rb") as f:
-                    st.download_button(
-                        "📎 Descargar Soporte Adjunto",
-                        data=f.read(),
-                        file_name=str(req["attachment_path"]),
-                        key=f"dl_det_{req['id']}",
-                        use_container_width=True,
-                    )
-
-        with db_session() as conn:
-            df_audit = get_cached_dataframe(
-                """
-                SELECT a.user_id, a.action, a.timestamp, u.full_name, a.details, u.role
-                FROM audit_logs a
-                LEFT JOIN users_app u ON a.user_id = u.username
-                WHERE a.details LIKE %s AND a.action LIKE 'APPROVE_%%'
-                ORDER BY a.timestamp ASC
-            """, params=(f"%Permiso #{req['id']} %",),
-            )
-
-
-    else:
-        st.info(
-            "ℹ️ Esta novedad no parece tener una solicitud digital asociada del portal de empleados (o fue ingresada manualmente)."
-        )
+        # Esta novedad es estrictamente manual, las de portal usan show_leave_request_details
 
 
 @st.dialog("👁️ Soporte Adjunto")
@@ -305,17 +191,37 @@ def preview_attachment_dialog(attachment_path, employee_name):
         )
 
 
-@st.dialog("Motivo de Rechazo")
+@st.dialog("Motivo de Rechazo", width="large")
 def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
-    st.write(f"Rechazando solicitud #{req_id} de {full_name} ({reason_type}).")
+    st.markdown(f"**Rechazando solicitud #{req_id} de {full_name}**")
+    st.caption(f"Tipo: {reason_type}")
+    st.divider()
+    
+    MIN_CHARS = 20
+    
     reason = st.text_area(
-        "Por favor, ingresa el motivo del rechazo:", key=f"rejection_reason_{req_id}"
+        "Motivo del Rechazo (Obligatorio) *",
+        key=f"rejection_reason_{req_id}",
+        placeholder="Describe claramente por qué se está rechazando esta solicitud...",
+        height=120,
     )
+    
+    char_count = len(reason.strip()) if reason else 0
+    remaining = max(0, MIN_CHARS - char_count)
+    
+    if remaining > 0:
+        st.caption(f"⚠️ Faltan al menos {remaining} caracteres más ({char_count}/{MIN_CHARS} mín.).")
+    else:
+        st.caption(f"✅ Justificación válida ({char_count} caracteres).")
+    
+    st.warning("⚠️ Esta acción es **irreversible**. El empleado será notificado del rechazo con este motivo.")
 
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Confirmar Rechazo", type="primary", use_container_width=True):
-            if reason:
+            if char_count < MIN_CHARS:
+                st.error(f"❌ El motivo del rechazo debe tener mínimo {MIN_CHARS} caracteres. Escribe {remaining} caracteres más.")
+            else:
                 db_reject_leave_request(
                     req_id, st.session_state["user"]["username"], reason
                 )
@@ -329,16 +235,13 @@ def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
                     req_id,
                     reason_type,
                     "RECHAZADA",
-                    f"Tu permiso fue rechazado por la jefatura/RRHH. Motivo: {reason}",
+                    f"Tu permiso fue rechazado. Motivo: {reason}",
                     st.session_state["user"]["full_name"],
                 )
-                st.toast("Solicitud rechazada y empleado notificado.")
+                st.toast("✅ Solicitud rechazada y empleado notificado.")
                 st.rerun()
-            else:
-                st.error("El motivo de rechazo no puede estar vacío.")
     with col2:
         if st.button("Cancelar", use_container_width=True):
-            st.session_state[f"show_rejection_dialog_{req_id}"] = False
             st.rerun()
 
 
@@ -349,7 +252,7 @@ def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
 # el navegador colapsaba (NotFoundError) al intentar borrar visores de PDF pesados
 # al mismo tiempo que la página se reiniciaba con st.rerun().
 def handle_approve_callback(r_dict, user):
-    if user["role"] == "coordinador":
+    if user["role"] == "coordinador" or (user["role"] == "nomina" and user.get("managed_department")):
         success = db_approve_leave_request_coord(r_dict["id"], user["username"])
         if not success:
             st.toast("La solicitud ya fue procesada o no se encontró.", icon="⚠️")
@@ -744,7 +647,8 @@ def page_exceptions():
     # === REFRESH STALE SESSION STATE PARA JEFES ===
     # Siempre refrescamos managed_area/managed_department desde BD para evitar
     # sesiones obsoletas o el string 'None' guardado en session_state.
-    if user["role"] in ["jefe_area", "coordinador"]:
+    _is_coord_nomina = user["role"] == "nomina" and user.get("managed_department") not in (None, "None", "")
+    if user["role"] in ["jefe_area", "coordinador"] or _is_coord_nomina:
         try:
             conn = db_conn()
             cur = conn.cursor()
@@ -777,7 +681,7 @@ def page_exceptions():
     if "exceptions_active_tab" in st.session_state:
         default_tab_idx = st.session_state["exceptions_active_tab"]
 
-    if user["role"] in ["coordinador", "jefe_area"]:
+    if user["role"] in ["coordinador", "jefe_area"] or _is_coord_nomina:
         st.write(
             f"Panel de Gestión para: **{user.get('managed_department') or user.get('managed_area')}**"
         )
@@ -835,7 +739,7 @@ def page_exceptions():
             _raw_area = user.get("managed_area", "") or ""
             _managed_area = "" if _raw_area in ("None", None) else _raw_area.strip()
 
-            if user["role"] == "coordinador":
+            if user["role"] == "coordinador" or (user["role"] == "nomina" and user.get("managed_department")):
                 managed_dept_str = user.get("managed_department", "")
                 cond_serv_gen = (
                     "OR (ua.emp_subarea = 'Servicios Generales')"
@@ -1069,7 +973,7 @@ def page_exceptions():
                                 # --- Llamada al detector de conflictos ---
                                 managed_entity = (
                                     user.get("managed_department")
-                                    if user["role"] == "coordinador"
+                                    if user["role"] == "coordinador" or (user["role"] == "nomina" and user.get("managed_department"))
                                     else user.get("managed_area")
                                 )
                                 check_schedule_conflicts(
@@ -1127,7 +1031,7 @@ def page_exceptions():
             render_absence_calendar(user)
 
         elif sel_tab == "🕰️ Historial de Decisiones":
-            if user["role"] == "coordinador":
+            if user["role"] == "coordinador" or (user["role"] == "nomina" and user.get("managed_department")):
                 managed_dept_str = user.get("managed_department", "")
                 cond_serv_gen = (
                     "OR (ua.emp_subarea = 'Servicios Generales')"
@@ -1257,7 +1161,11 @@ def page_exceptions():
                 else:
                     st.session_state.last_processed_hist = None
 
-        return
+        if not _is_coord_nomina:
+            return
+        
+        st.markdown("<hr style='margin: 40px 0; border: 1px solid #ccc;'/>", unsafe_allow_html=True)
+        st.subheader("🛠️ Panel de Recursos Humanos")
 
     st.write(
         "Registra permisos, incapacidades médicas o vacaciones. El sistema **no penalizará** a estos empleados en los reportes de tardanzas para los días seleccionados."
@@ -1279,9 +1187,9 @@ def page_exceptions():
             pass
         st.query_params.pop("tab_sel", None)
 
-    default_tab_idx = 0
-    if "exceptions_active_tab" in st.session_state:
-        default_tab_idx = st.session_state["exceptions_active_tab"]
+    default_tab_idx_admin = 0
+    if "exceptions_active_tab_admin" in st.session_state:
+        default_tab_idx_admin = st.session_state["exceptions_active_tab_admin"]
 
     tab_options = [
         "📝 Registrar Novedad Manual",
@@ -1297,7 +1205,7 @@ def page_exceptions():
         options=tab_options,
         icons=["pencil", "list-task", "download", "calendar", "globe", "file-earmark-pdf", "chat-left-text"],
         menu_icon="cast",
-        default_index=default_tab_idx,
+        default_index=default_tab_idx_admin,
         orientation="horizontal",
         key="admin_tabs_menu",
         styles={
@@ -1320,7 +1228,7 @@ def page_exceptions():
             },
         },
     )
-    st.session_state["exceptions_active_tab"] = tab_options.index(sel_tab)
+    st.session_state["exceptions_active_tab_admin"] = tab_options.index(sel_tab)
 
     if sel_tab == "📝 Registrar Novedad Manual":
         with st.form("form_exceptions"):
@@ -2380,8 +2288,18 @@ def page_exceptions():
                         with col_info:
                             st.markdown(f"**Usuario:** {user_id} - {emp_name}")
                             st.markdown(f"**Departamento:** {row['department']}")
-                            st.markdown(f"**Detalles:**")
-                            st.json(row["details"])
+                            if row["details"] and row["details"] != "{}":
+                                import json
+                                try:
+                                    # Fix single quotes to double quotes if it's poorly formatted JSON string
+                                    details_str = row["details"].replace("'", '"')
+                                    d = json.loads(details_str)
+                                    for k, v in d.items():
+                                        if isinstance(v, list):
+                                            v = ", ".join(v)
+                                        st.markdown(f"- **{k}:** {v}")
+                                except Exception as e:
+                                    st.markdown(f"- **Detalles (Raw):** {row['details']}")
                             
                             if row["attachment_path"]:
                                 import os
@@ -2403,9 +2321,21 @@ def page_exceptions():
                             with st.form(f"hr_action_{proc_id}"):
                                 action_opt = st.radio("Acción a tomar", ["Aprobar/Completar", "Rechazar"])
                                 notes = st.text_area("Observaciones (Opcional)")
+                                response_file = st.file_uploader("Adjuntar Respuesta (PDF, opcional)", type=["pdf", "png", "jpg"], key=f"resp_{proc_id}")
                                 if st.form_submit_button("Procesar Trámite", use_container_width=True):
+                                    import os
                                     new_status = "COMPLETED" if action_opt == "Aprobar/Completar" else "REJECTED"
-                                    db_update_hr_procedure_status(proc_id, new_status, notes)
+                                    
+                                    response_path = ""
+                                    if response_file is not None:
+                                        upload_dir = "uploads/procedures/responses"
+                                        os.makedirs(upload_dir, exist_ok=True)
+                                        safe_name = f"{proc_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{response_file.name}"
+                                        response_path = os.path.join(upload_dir, safe_name)
+                                        with open(response_path, "wb") as f:
+                                            f.write(response_file.getbuffer())
+                                            
+                                    db_update_hr_procedure_status(proc_id, new_status, notes, response_path)
                                     
                                     # Obtener correo del empleado (usando el db_session global)
                                     with db_session() as conn:

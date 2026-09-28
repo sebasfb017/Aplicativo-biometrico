@@ -99,6 +99,8 @@ def edit_employee_dialog(user_id):
                 )
 
             get_all_employees.clear()
+            from database_conn.queries import get_cached_full_employees
+            get_cached_full_employees.clear()
             st.toast("✅ Cambios guardados correctamente.")
             st.rerun()
         except Exception as exc:
@@ -146,6 +148,27 @@ def page_employees():
     require_role("admin", "nomina")
     st.title("👨‍💼 Directorio de Empleados")
     st.write("Administra la plantilla de personal y asocia los perfiles de Dolormed.")
+
+    # CSS Global para Glassmorphism
+    glass_css = """
+    <style>
+    /* Glassmorphism Premium para Tarjetas de Streamlit */
+    div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        background: linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01)) !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        border-radius: 15px !important;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1) !important;
+        backdrop-filter: blur(10px) !important;
+        transition: transform 0.3s ease, box-shadow 0.3s ease !important;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:hover > div {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.2) !important;
+        border-color: rgba(255,255,255,0.2) !important;
+    }
+    </style>
+    """
+    st.markdown(glass_css, unsafe_allow_html=True)
 
     from database_conn.queries import get_cached_full_employees, get_cached_profiles
     profiles_df = get_cached_profiles()
