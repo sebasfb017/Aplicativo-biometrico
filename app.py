@@ -547,14 +547,8 @@ def main():
     # Obtener el rol real del usuario
     user_role = user["role"]
 
-    # Asignación de rol efectivo: si el rol es auxiliar ('empleado') y su sub-área es Nómina o Talento Humano,
-    # le asignamos dinámicamente los permisos y la interfaz del rol administrativo 'nomina' para que
-    # puedan acceder al panel de RRHH sin ser administradores globales.
-    if user_role == "empleado" and user.get("emp_subarea") in [
-        "Nomina",
-        "Talento humano",
-    ]:
-        user_role = "nomina"
+    # El rol asignado en la BD es el que prevalece.
+    # No se eleva a 'nomina' automáticamente a los empleados de Talento Humano.
 
     # --- INACTIVITY TIMEOUT (10 min) ---
     # Sistema de seguridad que cierra la sesión automáticamente si el usuario
@@ -697,22 +691,74 @@ def main():
 
         with st.popover(bell_label, use_container_width=True):
             st.markdown(
-                "<h4 style='margin:0;'>Mis Notificaciones</h4>", unsafe_allow_html=True
+                """
+                <style>
+                div[data-testid="stPopoverBody"] {
+                    background: rgba(30, 41, 59, 0.8) !important;
+                    backdrop-filter: blur(16px) saturate(180%) !important;
+                    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                    border-radius: 16px !important;
+                    padding: 15px !important;
+                }
+                .notif-card {
+                    background: rgba(255, 255, 255, 0.05);
+                    border: 1px solid rgba(255, 255, 255, 0.05);
+                    border-radius: 10px;
+                    padding: 12px;
+                    margin-bottom: 10px;
+                    transition: all 0.2s ease;
+                }
+                .notif-card:hover {
+                    background: rgba(255, 255, 255, 0.1);
+                    transform: translateY(-2px);
+                    border-color: rgba(99, 102, 241, 0.4);
+                }
+                .notif-header {
+                    font-weight: 600;
+                    color: #e2e8f0;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    margin-bottom: 4px;
+                }
+                .notif-body {
+                    font-size: 0.85rem;
+                    color: #94a3b8;
+                    line-height: 1.4;
+                }
+                .notif-time {
+                    font-size: 0.7rem;
+                    color: #64748b;
+                    margin-top: 6px;
+                    display: block;
+                }
+                </style>
+                <h4 style='margin:0; color:#e2e8f0;'>🔔 Centro de Notificaciones</h4>
+                <hr style='border-color: rgba(255,255,255,0.1); margin: 10px 0;'>
+                """,
+                unsafe_allow_html=True
             )
-            st.markdown("---")
+            
             notifs = db_get_recent_notifications(user["username"])
             if not notifs:
-                st.write("No tienes notificaciones recientes.")
+                st.markdown("<div style='text-align: center; color: #64748b; padding: 20px 0;'>No tienes notificaciones recientes.</div>", unsafe_allow_html=True)
             else:
                 for n in notifs:
                     icon = "🟢" if not n["is_read"] else "⚪"
-                    st.markdown(
-                        f"**{icon} {n['title']}**\n<small>{n['message']}</small>\n<small style='color:gray; font-size: 0.75rem; display: block; margin-top: 2px;'>{n['created_at']}</small>",
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
+                    opacity = "1.0" if not n["is_read"] else "0.5"
+                    
+                    card_html = f"""
+                    <div class='notif-card' style='opacity: {opacity};'>
+                        <div class='notif-header'>{icon} {n['title']}</div>
+                        <div class='notif-body'>{n['message']}</div>
+                        <span class='notif-time'>🕒 {n['created_at']}</span>
+                    </div>
+                    """
+                    st.markdown(card_html, unsafe_allow_html=True)
+                    
+                st.markdown("<br>", unsafe_allow_html=True)
                 if st.button(
-                    "Marcar todas como leídas",
+                    "✓ Marcar todas como leídas",
                     key="mark_all_read_top_btn",
                     use_container_width=True,
                 ):
