@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from database_conn.connection import db_conn
-from database_conn.queries import db_create_session, get_users_by_role
+from database_conn.queries import db_create_session, get_users_by_role, db_cleanup_old_notifications
 from services.email_service import (
     send_password_changed_email,
     send_password_reset_pin,
@@ -604,6 +604,10 @@ def page_login():
                         token = db_create_session(user["username"])
                         st.session_state["session_token"] = token
                         st.query_params["session_token"] = token
+                        db_cleanup_old_notifications(user["username"])
+                        if user.get("role") in ["admin", "nomina", "coordinador"]:
+                            from services.reminder_job import run_reminder_job_if_needed
+                            run_reminder_job_if_needed()
                         st.toast(f"¡Bienvenido, {user['full_name']}!", icon="👋")
                         import time
                         time.sleep(0.5)
@@ -631,6 +635,10 @@ def page_login():
                             token = db_create_session(user["username"])
                             st.session_state["session_token"] = token
                             st.query_params["session_token"] = token
+                            db_cleanup_old_notifications(user["username"])
+                            if user.get("role") in ["admin", "nomina", "coordinador"]:
+                                from services.reminder_job import run_reminder_job_if_needed
+                                run_reminder_job_if_needed()
                             st.toast(f"Acceso exitoso: {user['full_name']}", icon="👋")
                             import time
                             time.sleep(0.5)

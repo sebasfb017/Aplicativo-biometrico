@@ -277,7 +277,9 @@ def upsert_exception(user_id, date_str, exc_type, notes):
 
 
 def get_exceptions_df():
-    """Obtiene el histórico de todas las novedades (manuales + permisos del portal) agrupando períodos consecutivos."""
+    """Obtiene el histórico de todas las novedades (manuales + permisos del portal).
+    Las novedades manuales se agrupan por períodos consecutivos.
+    Las solicitudes del portal se muestran intactas tal como fueron creadas."""
     conn = db_conn()
     # Novedades manuales (una fila por día)
     df_exc = pd.read_sql_query(
@@ -285,114 +287,110 @@ def get_exceptions_df():
         SELECT ex.id, ex.user_id, e.full_name, ex.date, ex.type, ex.notes, ex.created_at
         FROM exceptions ex
         LEFT JOIN employees e ON ex.user_id = e.user_id
-        WHERE ex.notes NOT LIKE 'Aprobado de Portal:%%' OR ex.notes IS NULL
+        WHERE ex.notes NOT LIKE 'Aprobado de Portal:%' OR ex.notes IS NULL
         ORDER BY ex.user_id, ex.type, ex.date ASC
         """,
         conn,
     )
-    # Permisos del portal aprobados (ya tienen start/end)
+    # Permisos del portal aprobados
     df_req = pd.read_sql_query(
         """
         SELECT lr.id, lr.user_id,
                COALESCE(e.full_name, ua.full_name) AS full_name,
                lr.leave_date_start AS date,
-               lr.leave_date_end,
+               lr.leave_date_end AS date_end,
                lr.reason_type AS type,
                lr.reason_description AS notes,
                lr.created_at,
-               lr.specific_dates
+               lr.specific_dates,
+               lr.total_time AS total_time_str
         FROM leave_requests lr
         LEFT JOIN employees e ON lr.user_id = e.user_id
         LEFT JOIN users_app ua ON lr.user_id = ua.username
+        WHERE lr.status = 'APPROVED'
         ORDER BY lr.user_id, lr.reason_type, lr.leave_date_start ASC
         """,
         conn,
     )
     conn.close()
 
-    # Expandir cada permiso del portal en filas individuales por día
-    rows = []
-    for _, r in df_req.iterrows():
-        start_date = pd.to_datetime(r["date"], errors="coerce")
-        end_date = pd.to_datetime(r["leave_date_end"], errors="coerce")
-        spec = r.get("specific_dates")
-        note_val = r["notes"] if pd.notnull(r.get("notes", None)) else ""
+    # Procesar solicitudes del portal (df_req)
+    if not df_req.empty:
+        df_req["source"] = "Portal"
+        # Calcular total_days
+        def calc_days(row):
+            tt = str(row.get("total_time_str", ""))
+            if "Día" in tt:
+                import re
+                match = re.search(r'\d+', tt)
+                if match:
+                    return int(match.group())
+            spec = row.get("specific_dates")
+            if pd.notna(spec) and str(spec).strip() and str(spec).strip() != "None":
+                return len([d for d in str(spec).split(",") if d.strip()])
+            else:
+                try:
+                    s = pd.to_datetime(row["date"])
+                    e = pd.to_datetime(row["date_end"])
+                    return (e - s).days + 1
+                except:
+                    return 1
+        
+        df_req["total_days"] = df_req.apply(calc_days, axis=1)
+        df_req = df_req[["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at", "source"]]
+    else:
+        df_req = pd.DataFrame(columns=["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at", "source"])
 
-        if spec and isinstance(spec, str) and spec.strip():
-            for d_str in [d.strip() for d in spec.split(",") if d.strip()]:
-                rows.append({"id": r["id"], "user_id": r["user_id"], "full_name": r["full_name"],
-                             "date": d_str, "type": r["type"], "notes": note_val, "created_at": r["created_at"], "source": "Portal"})
-        elif pd.notnull(start_date) and pd.notnull(end_date):
-            curr = start_date
-            while curr <= end_date:
-                rows.append({"id": r["id"], "user_id": r["user_id"], "full_name": r["full_name"],
-                             "date": curr.strftime("%Y-%m-%d"), "type": r["type"], "notes": note_val, "created_at": r["created_at"], "source": "Portal"})
-                curr += pd.Timedelta(days=1)
-        elif pd.notnull(start_date):
-            rows.append({"id": r["id"], "user_id": r["user_id"], "full_name": r["full_name"],
-                         "date": start_date.strftime("%Y-%m-%d"), "type": r["type"], "notes": note_val, "created_at": r["created_at"], "source": "Portal"})
-
-    df_req_expanded = (pd.DataFrame(rows) if rows
-                       else pd.DataFrame(columns=["id", "user_id", "full_name", "date", "type", "notes", "created_at", "source"]))
-
+    # Procesar y agrupar novedades manuales (df_exc)
     if not df_exc.empty:
         df_exc["source"] = "Manual"
-    else:
-        df_exc["source"] = pd.Series(dtype="object")
+        df_exc["notes"] = df_exc["notes"].fillna("")
+        df_exc = df_exc.sort_values(by=["user_id", "type", "date"], ascending=True)
+        df_exc["date_obj"] = pd.to_datetime(df_exc["date"])
 
-    # Limpiar nulls
-    for df_part in [df_exc, df_req_expanded]:
-        if not df_part.empty and "notes" in df_part.columns:
-            df_part["notes"] = df_part["notes"].fillna("")
+        df_exc["grp"] = (
+            (df_exc["user_id"] != df_exc["user_id"].shift())
+            | (df_exc["type"] != df_exc["type"].shift())
+            | ((df_exc["notes"] != df_exc["notes"].shift()) & (df_exc["type"] != "Vacaciones"))
+            | (
+                (df_exc["date_obj"].diff().dt.days > 1)
+                & ~((df_exc["type"] == "Vacaciones") & (df_exc["date_obj"].diff().dt.days <= 5))
+            )
+            | (df_exc["date_obj"].diff().dt.days <= 0)
+        ).cumsum()
 
-    # Combinar y ordenar
-    df = pd.concat([df_exc, df_req_expanded], ignore_index=True)
-    if df.empty:
-        df["date_end"] = pd.Series(dtype="object")
-        df["total_days"] = pd.Series(dtype="int")
-        return df[["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at", "source"]]
-
-    df = df.sort_values(by=["user_id", "type", "date"], ascending=True)
-    df["date_obj"] = pd.to_datetime(df["date"])
-
-    df["grp"] = (
-        (df["user_id"] != df["user_id"].shift())
-        | (df["type"] != df["type"].shift())
-        | ((df["notes"] != df["notes"].shift()) & (df["type"] != "Vacaciones"))
-        | (
-            (df["date_obj"].diff().dt.days > 1)
-            & ~((df["type"] == "Vacaciones") & (df["date_obj"].diff().dt.days <= 5))
-        )
-        | (df["date_obj"].diff().dt.days <= 0)
-    ).cumsum()
-
-    grouped = (
-        df.groupby(["user_id", "full_name", "type", "grp"])
-        .agg(
-            id=("id", "first"),
-            date=("date", "min"),
-            date_end=("date", "max"),
-            total_days=("date", "count"),
-            notes=(
-                "notes",
-                lambda x: (
-                    ", ".join([str(i) for i in x.dropna().unique() if str(i).strip()])
-                    if len(x.dropna().unique()) > 0
-                    else "Ingresado por cuadro de turnos"
+        grouped_exc = (
+            df_exc.groupby(["user_id", "full_name", "type", "grp"])
+            .agg(
+                id=("id", "first"),
+                date=("date", "min"),
+                date_end=("date", "max"),
+                total_days=("date", "count"),
+                notes=(
+                    "notes",
+                    lambda x: (
+                        ", ".join([str(i) for i in x.dropna().unique() if str(i).strip()])
+                        if len(x.dropna().unique()) > 0
+                        else "Ingresado por cuadro de turnos"
+                    ),
                 ),
-            ),
-            created_at=("created_at", "min"),
-            source=("source", "first"),
-        )
-    ).reset_index()
+                created_at=("created_at", "min"),
+                source=("source", "first"),
+            )
+        ).reset_index()
 
-    # Formatear la fecha final
-    grouped["date"] = pd.to_datetime(grouped["date"]).dt.strftime("%Y-%m-%d")
-    grouped["date_end"] = pd.to_datetime(grouped["date_end"]).dt.strftime("%Y-%m-%d")
+        grouped_exc["date"] = pd.to_datetime(grouped_exc["date"]).dt.strftime("%Y-%m-%d")
+        grouped_exc["date_end"] = pd.to_datetime(grouped_exc["date_end"]).dt.strftime("%Y-%m-%d")
+        grouped_exc = grouped_exc[["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at", "source"]]
+    else:
+        grouped_exc = pd.DataFrame(columns=["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at", "source"])
 
-    return grouped[
-        ["id", "user_id", "full_name", "date", "date_end", "total_days", "type", "notes", "created_at", "source"]
-    ].sort_values(by=["user_id", "date"], ascending=False)
+    # Combinar ambos dataframes
+    final_df = pd.concat([grouped_exc, df_req], ignore_index=True)
+    if final_df.empty:
+        return final_df
+        
+    return final_df.sort_values(by=["user_id", "date"], ascending=False)
 
 
 def db_create_leave_request(
@@ -446,7 +444,16 @@ def db_create_leave_request(
     # Por defecto inicia en el nivel más bajo (Coordinador)
     target_status = "PENDING_COORD"
 
-    if r_type == "Incapacidad":
+    if r_type == "Permiso Laboral":
+        if str(user_id) in ["119279359", "111734829", "38795759"]: # Valentina, Helen, Angela van a Coordinador
+            target_status = "PENDING_COORD"
+        elif role in ["coordinador", "jefe_area", "admin", "nomina"]:
+            target_status = "PENDING_JEFE"
+        else:
+            target_status = "PENDING_COORD"
+    elif r_type in ["Permiso Personal", "Cambio de Turno"] and str(user_id) in ["119279359", "111734829", "38795759"]:
+        target_status = "PENDING_COORD"
+    elif r_type == "Incapacidad":
         target_status = "PENDING_RRHH"
     elif direct_routing:
         if "RRHH" in direct_routing:
@@ -546,7 +553,16 @@ def db_get_next_approver_info(user_id, reason_type):
 
     target_status = "PENDING_COORD"
 
-    if reason_type == "Incapacidad":
+    if reason_type == "Permiso Laboral":
+        if str(user_id) in ["119279359", "111734829", "38795759"]: # Valentina, Helen, Angela van a Coordinador
+            target_status = "PENDING_COORD"
+        elif role in ["coordinador", "jefe_area", "admin", "nomina"]:
+            target_status = "PENDING_JEFE"
+        else:
+            target_status = "PENDING_COORD"
+    elif reason_type in ["Permiso Personal", "Cambio de Turno"] and str(user_id) in ["119279359", "111734829", "38795759"]:
+        target_status = "PENDING_COORD"
+    elif reason_type == "Incapacidad":
         target_status = "PENDING_RRHH"
     elif direct_routing:
         if "RRHH" in direct_routing:
@@ -612,18 +628,43 @@ def db_get_next_approver_info(user_id, reason_type):
 
         elif target_status == "PENDING_JEFE":
             target_jefe_area = emp_area
-            special_areas = [
+            special_ci = [
                 "Comercial", "Publicidad y Comunicaciones", "Marketing",
-                "Contratación", "Mercadeo", "Ejecutivo Comercial"
+                "Contratación", "Mercadeo", "Ejecutivo Comercial",
+                "Enfermería", "Auditor Médico", "Medico", "Control Interno", "Cirugía"
+            ]
+            special_admin = [
+                "Rehabilitación", "Tecnólogo Rayos X", "Farmacia",
+                "Mantenimiento", "Seguridad", "Orientador"
             ]
             
             if str(user_id) in ["119279359", "111304019"]:
                 target_jefe_area = "Financiera"
-            elif any(s in subarea for s in special_areas):
+            elif subarea == "Admisiones":
+                target_jefe_area = "Financiera"
+            elif any(s in subarea for s in special_ci):
                 target_jefe_area = "Control Interno"
+            elif any(s in subarea for s in special_admin):
+                target_jefe_area = "Administrativo"
+            # Si es coordinador, chequear sus áreas administradas
+            elif role == "coordinador":
+                with db_session() as conn2:
+                    cur2 = conn2.cursor()
+                    cur2.execute("SELECT managed_department FROM users_app WHERE username = %s", (user_id,))
+                    c_row = cur2.fetchone()
+                    if c_row and c_row[0]:
+                        c_depts = [d.strip() for d in c_row[0].split(",") if d.strip()]
+                        if any(dept in c_depts for dept in special_admin):
+                            target_jefe_area = "Administrativo"
+                        elif "Admisiones" in c_depts:
+                            target_jefe_area = "Financiera"
+                        elif any(dept in c_depts for dept in special_ci):
+                            target_jefe_area = "Control Interno"
+
+            
             
             df_j = pd.read_sql_query(
-                "SELECT full_name FROM users_app WHERE role = 'jefe_area' AND active = 1 AND (managed_area = %s OR managed_area = 'Control Interno')",
+                "SELECT full_name FROM users_app WHERE role = 'jefe_area' AND active = 1 AND managed_area = %s",
                 conn,
                 params=(target_jefe_area,),
             )
@@ -899,20 +940,27 @@ def db_approve_leave_request_coord(req_id, coord_username):
         coord_row = cur.fetchone()
         coord_name = coord_row[0] if coord_row else coord_username
 
+        cur.execute("SELECT reason_type FROM leave_requests WHERE id = %s", (req_id,))
+        r_type_row = cur.fetchone()
+        reason_type = r_type_row[0] if r_type_row else ""
+
+        # Si es Permiso Laboral, o Permiso Personal/Cambio de Turno de Valentina/Helen/Angela, termina directamente al ser aprobado por el coordinador
+        next_status = 'APPROVED' if reason_type == 'Permiso Laboral' or (reason_type in ['Permiso Personal', 'Cambio de Turno'] and str(user_id) in ['119279359', '111734829', '38795759']) else 'PENDING_RRHH'
+
         cur.execute(
             """
             UPDATE leave_requests 
-            SET status = 'PENDING_RRHH', approved_by_coord = %s, coord_approval_date = %s
+            SET status = %s, approved_by_coord = %s, coord_approval_date = %s
             WHERE id = %s AND status = 'PENDING_COORD'
         """,
-            (coord_username, datetime.now().isoformat(timespec="seconds"), req_id),
+            (next_status, coord_username, datetime.now().isoformat(timespec="seconds"), req_id),
         )
 
         update_success = cur.rowcount > 0
         notify = update_success and user_id
 
     if notify:
-        db_notify_next_approvers(req_id, user_id, "PENDING_RRHH", coord_name)
+        db_notify_next_approvers(req_id, user_id, next_status, coord_name)
     get_cached_dataframe.clear()
     return update_success
 
@@ -1335,6 +1383,16 @@ def db_get_unread_notifications_count(user_id):
         return res[0] if res else 0
 
 
+
+def db_cleanup_old_notifications(user_id, days=60):
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM notifications WHERE user_id = %s AND created_at::timestamp < NOW() - INTERVAL '%s days'",
+            (user_id, days)
+        )
+        conn.commit()
+
 def db_get_recent_notifications(user_id, limit=5):
     with db_session() as conn:
         cur = conn.cursor()
@@ -1483,7 +1541,7 @@ def db_get_employee_procedures(user_id):
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT id, procedure_type, details, attachment_path, status, created_at
+            SELECT id, procedure_type, details, attachment_path, status, created_at, response_path, admin_notes
             FROM hr_procedures
             WHERE user_id = %s
             ORDER BY created_at DESC
@@ -1498,6 +1556,8 @@ def db_get_employee_procedures(user_id):
                 attachment_path=r[3],
                 status=r[4],
                 created_at=r[5],
+                response_path=r[6],
+                admin_notes=r[7],
             )
             for r in cur.fetchall()
         ]
@@ -1517,17 +1577,17 @@ def db_get_pending_hr_procedures():
         """
         return pd.read_sql_query(query, conn)
 
-def db_update_hr_procedure_status(procedure_id, status, notes=""):
+def db_update_hr_procedure_status(procedure_id, status, notes="", response_path=""):
     """Update the status of an HR procedure."""
     with db_session() as conn:
         cur = conn.cursor()
         cur.execute(
             """
             UPDATE hr_procedures
-            SET status = %s
+            SET status = %s, admin_notes = %s, response_path = %s
             WHERE id = %s
             """,
-            (status, procedure_id),
+            (status, notes, response_path, procedure_id),
         )
         conn.commit()
 
@@ -1760,4 +1820,80 @@ def db_update_pqrs_response(pqrs_id: int, new_status: str, response_text: str, r
                 f"Talento Humano ha respondido a tu radicado {ticket}. Estado: {new_status}."
             )
         conn.commit()
+
+
+def db_get_stale_pending_requests(days_threshold=2):
+    """
+    Retorna los permisos que llevan más de 'days_threshold' días esperando
+    aprobación, junto con el correo del próximo aprobador responsable.
+    """
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                lr.id,
+                lr.user_id,
+                e.full_name AS employee_name,
+                lr.reason_type,
+                lr.status,
+                lr.request_date,
+                lr.leave_date_start,
+                lr.total_time,
+                -- Determinar el email del aprobador según el estado actual
+                CASE
+                    WHEN lr.status = 'PENDING_COORD' THEN (
+                        SELECT u.email FROM users_app u
+                        INNER JOIN employees emp ON emp.user_id = u.username
+                        WHERE emp.department = e.department
+                          AND u.role IN ('coordinador', 'admin')
+                          AND u.username != lr.user_id
+                        LIMIT 1
+                    )
+                    WHEN lr.status = 'PENDING_JEFE' THEN (
+                        SELECT u.email FROM users_app u
+                        WHERE u.role = 'admin'
+                        LIMIT 1
+                    )
+                    WHEN lr.status = 'PENDING_RRHH' THEN (
+                        SELECT u.email FROM users_app u
+                        WHERE u.role = 'admin' OR (u.role = 'empleado'
+                          AND u.username IN (
+                            SELECT emp2.user_id FROM employees emp2
+                            WHERE emp2.department ILIKE '%Talento%' OR emp2.department ILIKE '%Nomina%'
+                          )
+                        )
+                        LIMIT 1
+                    )
+                    ELSE NULL
+                END AS approver_email,
+                CASE
+                    WHEN lr.status = 'PENDING_COORD' THEN 'Coordinador / Jefe de Área'
+                    WHEN lr.status = 'PENDING_JEFE' THEN 'Jefe Directo'
+                    WHEN lr.status = 'PENDING_RRHH' THEN 'Recursos Humanos'
+                    ELSE 'Desconocido'
+                END AS approver_role
+            FROM leave_requests lr
+            JOIN employees e ON e.user_id = lr.user_id
+            WHERE lr.status IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')
+              AND lr.request_date::date <= CURRENT_DATE - INTERVAL '%s days'
+            ORDER BY lr.request_date ASC
+            """ % days_threshold
+        )
+        rows = cur.fetchall()
+        return [
+            dict(
+                id=r[0],
+                user_id=r[1],
+                employee_name=r[2],
+                reason_type=r[3],
+                status=r[4],
+                request_date=r[5],
+                leave_date_start=r[6],
+                total_time=r[7],
+                approver_email=r[8],
+                approver_role=r[9],
+            )
+            for r in rows
+        ]
 

@@ -397,3 +397,58 @@ def send_hr_procedure_status_update(employee_email, employee_name, procedure_typ
     """
     
     _send_email(employee_email, subject, html_content)
+
+
+def send_approver_reminder(approver_email, approver_role, pending_requests):
+    """
+    Envía un recordatorio al aprobador con la lista de permisos
+    que llevan más de X días sin respuesta.
+    """
+    if not approver_email or not pending_requests:
+        return
+
+    count = len(pending_requests)
+    subject = f"⏰ Recordatorio: Tienes {count} solicitud(es) pendiente(s) de revisión"
+    title = f"⏰ {count} Solicitud(es) Sin Respuesta"
+
+    rows_html = ""
+    for r in pending_requests:
+        days_waiting = r.get("days_waiting", "?")
+        rows_html += f"""
+        <tr>
+            <td style="padding:10px; border-bottom:1px solid #e2e8f0;">{r['id']}</td>
+            <td style="padding:10px; border-bottom:1px solid #e2e8f0;">{r['employee_name']}</td>
+            <td style="padding:10px; border-bottom:1px solid #e2e8f0;">{r['reason_type']}</td>
+            <td style="padding:10px; border-bottom:1px solid #e2e8f0;">{r['leave_date_start']}</td>
+            <td style="padding:10px; border-bottom:1px solid #e2e8f0; color:#dc2626; font-weight:bold;">{days_waiting} día(s)</td>
+        </tr>
+        """
+
+    body = f"""
+    <p>Hola <strong>{approver_role}</strong>,</p>
+    <p>Este es un recordatorio automático. Las siguientes solicitudes de empleados llevan
+    <strong>más de 2 días</strong> esperando tu revisión y aprobación en el portal:</p>
+
+    <table style="width:100%; border-collapse:collapse; margin:20px 0; font-size:14px;">
+        <thead>
+            <tr style="background-color:#f1f5f9;">
+                <th style="padding:10px; text-align:left;">#</th>
+                <th style="padding:10px; text-align:left;">Empleado</th>
+                <th style="padding:10px; text-align:left;">Tipo</th>
+                <th style="padding:10px; text-align:left;">Fecha Solicitada</th>
+                <th style="padding:10px; text-align:left;">Días sin respuesta</th>
+            </tr>
+        </thead>
+        <tbody>
+            {rows_html}
+        </tbody>
+    </table>
+
+    <p>Por favor, ingresa al portal a la sección de <strong>Flujos y Autorizaciones</strong>
+    para gestionar estas solicitudes a la brevedad posible.</p>
+    <p><em>Este correo se envía automáticamente cuando una solicitud lleva más de 2 días sin respuesta.</em></p>
+    """
+
+    html = _get_base_template(title, body, header_color="#dc2626")
+    text = f"Recordatorio: Tienes {count} solicitud(es) de permiso pendiente(s) de revisión en el portal."
+    return _send_email(approver_email, subject, html, text)
