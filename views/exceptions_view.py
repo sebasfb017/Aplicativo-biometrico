@@ -764,16 +764,19 @@ def page_exceptions():
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
-                    WHERE lr.status = 'PENDING_COORD' AND 
+                    WHERE lr.status = 'PENDING_COORD' AND lr.user_id != %s AND
                           (
-                              %s LIKE '%%' || ua.emp_subarea || '%%'
-                              {cond_serv_gen}
-                              {cond_orientador}
-                              {cond_zarzal}
+                              (lr.user_id = '100389343' AND %s = 'Administrativa, Rehabilitación') OR
+                              (lr.user_id != '100389343' AND (
+                                  %s ILIKE '%%' || ua.emp_subarea || '%%'
+                                  {cond_serv_gen}
+                                  {cond_orientador}
+                                  {cond_zarzal}
+                              ))
                           )
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
-                params = (managed_dept_str,)
+                params = (user["username"], managed_dept_str, managed_dept_str,)
             elif _managed_area == "Control Interno":
                 query = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -785,10 +788,10 @@ def page_exceptions():
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
-                    WHERE lr.status = 'PENDING_JEFE'
+                    WHERE lr.status = 'PENDING_JEFE' AND lr.user_id != %s
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
-                params = ()
+                params = (user["username"],)
             else:
                 if not _managed_area:
                     st.warning(
@@ -806,7 +809,7 @@ def page_exceptions():
                     FROM leave_requests lr
                     JOIN employees e ON lr.user_id = e.user_id
                     LEFT JOIN users_app ua ON lr.user_id = ua.username
-                    WHERE lr.status = 'PENDING_JEFE' AND 
+                    WHERE lr.status = 'PENDING_JEFE' AND lr.user_id != %s AND 
                           (
                               (ua.direct_routing = 'JEFE_ADMIN' AND %s = 'Administrativo') OR
                               ((ua.direct_routing IS NULL OR ua.direct_routing != 'JEFE_ADMIN') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR
@@ -817,7 +820,7 @@ def page_exceptions():
                           ) /* FIX CACHE 2 */
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
-                params = (_managed_area, _managed_area, _managed_area, _managed_area, _managed_area, _managed_area)
+                params = (user["username"], _managed_area, _managed_area, _managed_area, _managed_area, _managed_area, _managed_area)
 
             with db_session() as conn:
                 df_pend = get_cached_dataframe(query, params=params)
@@ -1908,6 +1911,37 @@ def page_exceptions():
                             st.info(
                                 f"⏳ Esperando a: {r['status'].replace('PENDING_', '')}"
                             )
+                            if st.session_state["user"]["role"] in [
+                                "admin",
+                                "nomina",
+                            ] or (
+                                st.session_state["user"]["role"] == "empleado"
+                                and st.session_state["user"].get("emp_subarea")
+                                in ["Nomina", "Talento humano"]
+                            ):
+                                if st.button(
+                                    "↩️ Revertir a Pendiente",
+                                    key=f"rev_jefe_{r['id']}",
+                                    use_container_width=True,
+                                ):
+                                    from database_conn.queries import (
+                                        db_revert_leave_request,
+                                    )
+
+                                    success = db_revert_leave_request(
+                                        r["id"], st.session_state["user"]["username"]
+                                    )
+                                    if success:
+                                        st.toast(
+                                            f"Permiso #{r['id']} devuelto a estado Pendiente.",
+                                            icon="✅",
+                                        )
+                                        st.rerun()
+                                    else:
+                                        st.toast(
+                                            "No se pudo revertir. Verifica el estado.",
+                                            icon="⚠️",
+                                        )
                         else:
                             color = "green" if r["status"] == "APPROVED" else "red"
                             st.markdown(
@@ -2122,7 +2156,7 @@ def page_exceptions():
                         matching_coords = []
                         for name, m_depts in coordinators:
                             m_depts_str = m_depts or ""
-                            if target_subarea in m_depts_str or subarea in m_depts_str:
+                            if (target_subarea in m_depts_str or subarea in m_depts_str) and name != row["full_name"]:
                                 matching_coords.append(name)
                         if matching_coords:
                             return ", ".join(matching_coords)
@@ -2181,7 +2215,7 @@ def page_exceptions():
 
                         matching_jefes = []
                         for name, m_area in jefes:
-                            if m_area == target_jefe_area:
+                            if m_area == target_jefe_area and name != row["full_name"]:
                                 matching_jefes.append(name)
                         if matching_jefes:
                             return ", ".join(matching_jefes)

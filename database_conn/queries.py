@@ -455,6 +455,8 @@ def db_create_leave_request(
         target_status = "PENDING_COORD"
     elif r_type == "Incapacidad":
         target_status = "PENDING_RRHH"
+    elif r_type in ["Licencia Remunerada", "Licencia No Remunerada"] and str(user_id) == "119279359":
+        target_status = "PENDING_COORD"
     elif direct_routing:
         if "RRHH" in direct_routing:
             target_status = "PENDING_RRHH"
@@ -495,7 +497,7 @@ def db_create_leave_request(
                         elif target_subarea == "Orientador":
                             target_subarea = "Seguridad"
 
-                        if target_subarea in managed_dept or subarea in managed_dept:
+                        if target_subarea.lower() in managed_dept.lower() or subarea.lower() in managed_dept.lower():
                             has_coordinator = True
                             break
             if not has_coordinator:
@@ -564,6 +566,8 @@ def db_get_next_approver_info(user_id, reason_type):
         target_status = "PENDING_COORD"
     elif reason_type == "Incapacidad":
         target_status = "PENDING_RRHH"
+    elif reason_type in ["Licencia Remunerada", "Licencia No Remunerada"] and str(user_id) == "119279359":
+        target_status = "PENDING_COORD"
     elif direct_routing:
         if "RRHH" in direct_routing:
             target_status = "PENDING_RRHH"
@@ -614,13 +618,17 @@ def db_get_next_approver_info(user_id, reason_type):
                 target_coord_dept = "Seguridad"
             
             df_c = pd.read_sql_query(
-                "SELECT full_name, managed_department FROM users_app WHERE role IN ('coordinador', 'nomina') AND active = 1",
+                "SELECT full_name, managed_department FROM users_app WHERE role IN ('coordinador', 'nomina') AND active = 1 AND username != %s",
                 conn,
+                params=(user_id,),
             )
+            if str(user_id) == "100389343":
+                return "👤 ANGY JARAMILLO (Coordinador/a)"
+
             matched_names = []
             for _, r in df_c.iterrows():
                 m_dept = r.get("managed_department") or ""
-                if target_coord_dept and (target_coord_dept in m_dept or subarea in m_dept):
+                if target_coord_dept and (target_coord_dept.lower() in m_dept.lower() or subarea.lower() in m_dept.lower()):
                     matched_names.append(f"{r['full_name']} (Coordinador/a)")
             if matched_names:
                 return "👤 " + ", ".join(matched_names)
@@ -664,9 +672,9 @@ def db_get_next_approver_info(user_id, reason_type):
             
             
             df_j = pd.read_sql_query(
-                "SELECT full_name FROM users_app WHERE role = 'jefe_area' AND active = 1 AND managed_area = %s",
+                "SELECT full_name FROM users_app WHERE role = 'jefe_area' AND active = 1 AND managed_area = %s AND username != %s",
                 conn,
-                params=(target_jefe_area,),
+                params=(target_jefe_area, user_id),
             )
             if not df_j.empty:
                 names = [f"{r['full_name']} (Jefe de Área)" for _, r in df_j.iterrows()]
@@ -944,8 +952,8 @@ def db_approve_leave_request_coord(req_id, coord_username):
         r_type_row = cur.fetchone()
         reason_type = r_type_row[0] if r_type_row else ""
 
-        # Si es Permiso Laboral, o Permiso Personal/Cambio de Turno de Valentina/Helen/Angela, termina directamente al ser aprobado por el coordinador
-        next_status = 'APPROVED' if reason_type == 'Permiso Laboral' or (reason_type in ['Permiso Personal', 'Cambio de Turno'] and str(user_id) in ['119279359', '111734829', '38795759']) else 'PENDING_RRHH'
+        # Solo Valentina/Helen/Angela terminan directamente al ser aprobados por el coordinador para estos tipos de permisos
+        next_status = 'APPROVED' if (reason_type in ['Permiso Laboral', 'Permiso Personal', 'Cambio de Turno'] and str(user_id) in ['119279359', '111734829', '38795759']) else 'PENDING_RRHH'
 
         cur.execute(
             """
@@ -1106,7 +1114,7 @@ def db_revert_leave_request(req_id, admin_user):
 
         user_id, status, reason_type, start_date, end_date, specific_dates = req_row
 
-        if status not in ["APPROVED", "REJECTED"]:
+        if status not in ["APPROVED", "REJECTED", "PENDING_JEFE"]:
             return False
 
         if status == "APPROVED":
