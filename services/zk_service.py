@@ -229,10 +229,39 @@ def sync_device_time(device: dict):
     return False, f"Fallo tras 3 intentos. Último error: {last_error}"
 
 
+def _load_biometric_id_map(conn) -> dict:
+    """
+    Carga la tabla biometric_id_map como dict:
+    {(device_name, bio_user_id): real_user_id}
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT device_name, bio_user_id, real_user_id FROM biometric_id_map")
+        return {(row[0], row[1]): row[2] for row in cur.fetchall()}
+    except Exception:
+        return {}
+
+
 def upsert_attendance(rows: list[dict]):
-    """Inserta las marcaciones en la BD evitando duplicados."""
+    """
+    Inserta las marcaciones en la BD evitando duplicados.
+    Aplica automáticamente el mapeo de IDs del biométrico (biometric_id_map)
+    para traducir IDs secuenciales a cédulas reales antes de insertar.
+    """
     if not rows:
         return 0, 0
+
+    conn = db_conn()
+
+    # Cargar mapa de traducción de IDs
+    id_map = _load_biometric_id_map(conn)
+
+    # Aplicar traducción: si el user_id + device_name tienen un mapeo, usar la cédula real
+    translated_rows = []
+    for r in rows:
+        key = (r["device_name"], str(r["user_id"]))
+        real_id = id_map.get(key, r["user_id"])
+        translated_rows.append({**r, "user_id": real_id})
 
     data = [
         (
@@ -245,10 +274,9 @@ def upsert_attendance(rows: list[dict]):
             r["uid"],
             r["downloaded_at"],
         )
-        for r in rows
+        for r in translated_rows
     ]
 
-    conn = db_conn()
     cur = conn.cursor()
 
     cur.executemany(
@@ -266,6 +294,7 @@ def upsert_attendance(rows: list[dict]):
     conn.commit()
     conn.close()
     return inserted, skipped
+
 
 
 def get_device_users_status(device: dict):

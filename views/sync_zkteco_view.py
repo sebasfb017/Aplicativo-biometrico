@@ -29,7 +29,7 @@ def get_sync_state():
         try:
             with open(SYNC_STATE_FILE, "r") as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
             pass
     return {"is_running": False, "message": "", "logs": []}
 
@@ -150,7 +150,7 @@ def edit_device_dialog(device_idx, devices_list):
                         try:
                             if conn:
                                 conn.disconnect()
-                        except Exception:
+                        except Exception as e:
                             pass
 
     st.markdown("---")
@@ -363,11 +363,12 @@ def page_sync():
                 statuses = check_all_devices_online(devices_config)
                 st.session_state["device_statuses"] = statuses
 
-    tab_sync, tab_conf, tab_ctrl = st.tabs(
+    tab_sync, tab_conf, tab_ctrl, tab_holidays = st.tabs(
         [
             "⏬ Sincronizar Datos",
             "⚙️ Configurar Dispositivos",
             "🎛️ Centro de Control (Usuarios)",
+            "🎉 Sincronizar Festivos",
         ]
     )
 
@@ -722,12 +723,82 @@ def page_sync():
             # ejecuta un UPDATE masivo en SQL para trasladar sus marcaciones históricas
             # a la cédula verdadera, dejando un rastro de auditoría por seguridad.
             st.markdown("---")
+            with st.expander("🔗 Cruce de IDs Huérfanos (Biométrico TERAPIA)", expanded=False):
+                st.write(
+                    "Muestra los usuarios del biométrico TERAPIA cuyo ID interno (secuencial) "
+                    "no coincide con ninguna cédula en la base de datos. "
+                    "Selecciona el empleado correcto para vincular sus marcaciones de forma permanente."
+                )
+                try:
+                    from database_conn.connection import db_session as _db_session
+                    import pandas as _pd
+
+                    with _db_session() as _conn:
+                        _cur = _conn.cursor()
+                        # IDs en TERAPIA con menos de 7 dígitos que no tienen empleado
+                        _cur.execute("""
+                            SELECT ar.user_id, COUNT(*) as marcaciones, MIN(ar.ts) as desde, MAX(ar.ts) as hasta
+                            FROM attendance_raw ar
+                            WHERE ar.device_name = 'TERAPIA'
+                              AND LENGTH(ar.user_id) < 7
+                              AND ar.is_ignored = 0
+                              AND ar.user_id NOT IN (SELECT user_id FROM employees)
+                            GROUP BY ar.user_id
+                            ORDER BY marcaciones DESC
+                        """)
+                        orphan_rows = _cur.fetchall()
+                        _cur.execute("SELECT user_id, full_name FROM employees ORDER BY full_name")
+                        all_emps = _cur.fetchall()
+
+                    emp_options = {f"{name} ({uid})": uid for uid, name in all_emps}
+
+                    if not orphan_rows:
+                        st.success("✅ ¡Sin IDs huérfanos! Todos los usuarios de TERAPIA están vinculados.")
+                    else:
+                        st.warning(f"⚠️ Hay **{len(orphan_rows)}** IDs sin vincular en TERAPIA con marcaciones pendientes.")
+                        df_orphan = _pd.DataFrame(orphan_rows, columns=["ID_Biometrico", "Marcaciones", "Desde", "Hasta"])
+                        st.dataframe(df_orphan.head(20), use_container_width=True, hide_index=True)
+                        st.markdown("**Vincular un ID manualmente a un empleado:**")
+                        c1, c2, c3 = st.columns([1, 2, 1])
+                        with c1:
+                            orphan_options = {f"ID={r[0]} ({r[1]} marc.)": r[0] for r in orphan_rows}
+                            sel_orph = st.selectbox("ID Huérfano", list(orphan_options.keys()), key="orphan_sel")
+                            sel_orph_id = orphan_options[sel_orph]
+                        with c2:
+                            sel_emp = st.selectbox("Empleado real (destino)", list(emp_options.keys()), key="emp_dest_sel")
+                            sel_cedula = emp_options[sel_emp]
+                        with c3:
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            if st.button("🔗 Vincular", type="primary", use_container_width=True, key="link_orphan_btn"):
+                                from database_conn.connection import db_conn as _db_conn
+                                from datetime import datetime as _dt
+                                _c = _db_conn()
+                                _cu = _c.cursor()
+                                _cu.execute(
+                                    "UPDATE attendance_raw SET user_id = %s WHERE user_id = %s AND device_name = 'TERAPIA'",
+                                    (sel_cedula, sel_orph_id)
+                                )
+                                n = _cu.rowcount
+                                _cu.execute(
+                                    "INSERT INTO audit_logs (user_id, action, details, timestamp) VALUES (%s,%s,%s,%s)",
+                                    ("admin_manual", "MANUAL_ID_FIX",
+                                     f"TERAPIA manual: {n} marcaciones de ID={sel_orph_id} => {sel_cedula}",
+                                     _dt.now().isoformat(timespec="seconds"))
+                                )
+                                _c.commit()
+                                _c.close()
+                                st.success(f"✅ {n} marcaciones vinculadas correctamente.")
+                                st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
             with st.expander(
                 "🛠️ Herramientas Avanzadas (Corrección de Datos Históricos)"
             ):
                 st.write(
                     "Si una huella fue enrolada con el número de cédula equivocado, utiliza esta herramienta para trasladar todo el historial de marcaciones de la cédula incorrecta a la correcta."
                 )
+
 
                 with st.form("reassign_punches_form"):
                     col1, col2 = st.columns(2)
@@ -798,3 +869,37 @@ def page_sync():
                                 conn.close()
                             except Exception as e:
                                 st.error(f"Error en base de datos: {e}")
+
+    with tab_holidays:
+        st.subheader("🎉 Sincronización Automática de Festivos")
+        st.write(
+            "Descarga automáticamente el calendario de días festivos oficiales de Colombia usando la Ley Emiliani. "
+            "Esto permite que el sistema ignore automáticamente los lunes festivos al calcular inasistencias o descontar días de vacaciones."
+        )
+        
+        st.markdown("---")
+        
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            years_ahead = st.slider("¿Cuántos años a futuro deseas sincronizar?", min_value=1, max_value=10, value=5, help="Por defecto descarga el año actual y los próximos 5 años.")
+            
+            if st.button("🚀 Iniciar Sincronización de Festivos", type="primary", use_container_width=True):
+                with st.spinner("Descargando calendario desde la API de Festivos de Colombia..."):
+                    try:
+                        from services.holiday_service import sync_colombian_holidays
+                        total_synced, years = sync_colombian_holidays(years_ahead)
+                        st.success(f"✅ ¡Éxito! Se han cargado o actualizado {total_synced} días festivos para los años {years[0]} - {years[-1]}.")
+                    except Exception as e:
+                        st.error(f"Error al sincronizar: {e}")
+        
+        with c2:
+            with st.expander("Ver Próximos Festivos Registrados", expanded=True):
+                try:
+                    with db_session() as conn:
+                        df_holidays = pd.read_sql_query("SELECT date as Fecha, description as Motivo FROM holidays WHERE date::date >= CURRENT_DATE ORDER BY date ASC LIMIT 10", conn)
+                    if not df_holidays.empty:
+                        st.dataframe(df_holidays, use_container_width=True, hide_index=True)
+                    else:
+                        st.write("No hay festivos próximos en la base de datos.")
+                except Exception as e:
+                    st.write(f"Error al cargar la tabla: {e}")
