@@ -1868,7 +1868,7 @@ def db_get_stale_pending_requests(days_threshold=2):
                         WHERE u.role = 'admin' OR (u.role = 'empleado'
                           AND u.username IN (
                             SELECT emp2.user_id FROM employees emp2
-                            WHERE emp2.department ILIKE '%Talento%' OR emp2.department ILIKE '%Nomina%'
+                            WHERE emp2.department ILIKE '%%Talento%%' OR emp2.department ILIKE '%%Nomina%%'
                           )
                         )
                         LIMIT 1
@@ -1884,9 +1884,10 @@ def db_get_stale_pending_requests(days_threshold=2):
             FROM leave_requests lr
             JOIN employees e ON e.user_id = lr.user_id
             WHERE lr.status IN ('PENDING_COORD', 'PENDING_JEFE', 'PENDING_RRHH')
-              AND lr.request_date::date <= CURRENT_DATE - INTERVAL '%s days'
+              AND lr.request_date::date <= CURRENT_DATE - (%s || ' days')::interval
             ORDER BY lr.request_date ASC
-            """ % days_threshold
+            """,
+            (int(days_threshold),)
         )
         rows = cur.fetchall()
         return [
