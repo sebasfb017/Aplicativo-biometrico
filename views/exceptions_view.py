@@ -197,33 +197,23 @@ def rejection_reason_dialog(req_id, user_id, full_name, reason_type):
     st.caption(f"Tipo: {reason_type}")
     st.divider()
     
-    MIN_CHARS = 20
-    
     reason = st.text_area(
         "Motivo del Rechazo (Obligatorio) *",
         key=f"rejection_reason_{req_id}",
-        placeholder="Describe claramente por qué se está rechazando esta solicitud...",
+        placeholder="Describe por qué se está rechazando esta solicitud...",
         height=120,
     )
-    
-    char_count = len(reason.strip()) if reason else 0
-    remaining = max(0, MIN_CHARS - char_count)
-    
-    if remaining > 0:
-        st.caption(f"⚠️ Faltan al menos {remaining} caracteres más ({char_count}/{MIN_CHARS} mín.).")
-    else:
-        st.caption(f"✅ Justificación válida ({char_count} caracteres).")
     
     st.warning("⚠️ Esta acción es **irreversible**. El empleado será notificado del rechazo con este motivo.")
 
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Confirmar Rechazo", type="primary", use_container_width=True):
-            if char_count < MIN_CHARS:
-                st.error(f"❌ El motivo del rechazo debe tener mínimo {MIN_CHARS} caracteres. Escribe {remaining} caracteres más.")
+            if not reason or not reason.strip():
+                st.error("❌ Por favor ingresa el motivo del rechazo.")
             else:
                 db_reject_leave_request(
-                    req_id, st.session_state["user"]["username"], reason
+                    req_id, st.session_state["user"]["username"], reason.strip()
                 )
                 log_audit(
                     "REJECT_LEAVE_L1",
@@ -948,6 +938,10 @@ def page_exceptions():
                                 st.write(
                                     f"**Fechas:** {r['leave_date_start']} al {r['leave_date_end']} | **Remunerado:** {'Sí' if r['is_paid'] else 'No'}"
                                 )
+                                if pd.notna(r.get("specific_dates")) and str(r.get("specific_dates")).strip():
+                                    st.write(
+                                        f"📅 **Días Específicos:** {r['specific_dates']}"
+                                    )
                                 if pd.notna(r.get("start_time")) and r.get(
                                     "start_time"
                                 ):
@@ -1001,6 +995,13 @@ def page_exceptions():
                                                 r["attachment_path"], r["full_name"]
                                             )
                             with cols[1]:
+                                if st.button(
+                                    "📋 Ver Detalles",
+                                    key=f"btn_details_{r['id']}",
+                                    use_container_width=True,
+                                ):
+                                    show_leave_request_details(r["id"])
+
                                 st.button(
                                     "👍 Aprobar",
                                     key=f"btn_acc_{r['id']}",
