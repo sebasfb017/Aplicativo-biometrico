@@ -127,12 +127,20 @@ from services.email_service import send_novedad_alert
 from services.notifications import generate_fth012_pdf
 
 
-@st.dialog("Detalles de Mi Solicitud (F-TH-012)")
+@st.dialog("Detalles de Solicitud (F-TH-012)", width="large")
 def show_leave_request_details(req_id: int):
     req_id = int(req_id)
     conn = db_conn()
     df_req = pd.read_sql_query(
-        "SELECT * FROM leave_requests WHERE id = %s", conn, params=(req_id,)
+        """
+        SELECT lr.*, e.full_name, ua.emp_area, ua.emp_subarea, e.department
+        FROM leave_requests lr
+        LEFT JOIN employees e ON lr.user_id = e.user_id
+        LEFT JOIN users_app ua ON lr.user_id = ua.username
+        WHERE lr.id = %s
+        """,
+        conn,
+        params=(req_id,),
     )
 
     df_audit = pd.read_sql_query(
@@ -155,7 +163,12 @@ def show_leave_request_details(req_id: int):
 
     req = df_req.iloc[0]
 
-    st.markdown(f"### Radicado: #{req['id']}")
+    emp_name = req.get("full_name") or f"ID: {req['user_id']}"
+    subarea = req.get("emp_subarea") or req.get("emp_area") or req.get("department")
+    area_str = f" • **Área:** {subarea}" if (pd.notna(subarea) and subarea) else ""
+
+    st.markdown(f"### 📋 Solicitud #{req['id']} — {emp_name}")
+    st.caption(f"👤 **Cédula:** `{req['user_id']}`{area_str}")
 
     # Usamos el nuevo componente visual
     st.markdown(
@@ -219,7 +232,10 @@ def show_leave_request_details(req_id: int):
     st.markdown(html_info, unsafe_allow_html=True)
     st.write(f"**Motivo General:** {req['reason_type']}")
 
-    st.markdown("**Mi Justificación / Detalles:**")
+    if "specific_dates" in req and pd.notna(req["specific_dates"]) and str(req["specific_dates"]).strip():
+        st.info(f"📅 **Días Específicos Solicitados:** `{req['specific_dates']}`")
+
+    st.markdown("**Justificación / Motivo del Empleado:**")
     desc_text = (
         str(req["reason_description"]).replace("\\n", "\n")
         if req["reason_description"]
