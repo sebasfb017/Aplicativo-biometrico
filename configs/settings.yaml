@@ -3,3 +3,4 @@ database:
 zkteco:
   default_port: 4370
   timeout: 10
+  socket_timeout: 3.5

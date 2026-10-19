@@ -11,7 +11,7 @@ def load_config():
         # Crear configuración por defecto si no existe
         default_config = {
             "database": {"path": "data/app.db"},
-            "zkteco": {"default_port": 4370, "timeout": 10},
+            "zkteco": {"default_port": 4370, "timeout": 10, "socket_timeout": 3.5},
         }
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             yaml.dump(default_config, f, allow_unicode=True, sort_keys=False)

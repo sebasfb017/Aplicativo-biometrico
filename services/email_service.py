@@ -1,3 +1,4 @@
+import logging
 import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -7,30 +8,57 @@ import yaml
 
 from database_conn.connection import BASE_DIR
 
+logger = logging.getLogger("email_service")
+
 SMTP_YAML = os.path.join(BASE_DIR, "configs", "smtp_config.yaml")
 
 
 def load_smtp_config():
-    if not os.path.exists(SMTP_YAML):
-        return {
-            "smtp_server": "smtp.gmail.com",
-            "smtp_port": 587,
-            "smtp_user": "",
-            "smtp_password": "",
-            "sender_name": "Nómina Dolormed",
-        }
+    # 1. Intentar cargar desde st.secrets
     try:
-        with open(SMTP_YAML, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-            return cfg
+        import streamlit as st
+        if hasattr(st, "secrets") and "smtp" in st.secrets:
+            sec = st.secrets["smtp"]
+            if sec.get("user") and sec.get("password"):
+                return {
+                    "smtp_server": sec.get("server", "smtp.gmail.com"),
+                    "smtp_port": int(sec.get("port", 587)),
+                    "smtp_user": sec.get("user", ""),
+                    "smtp_password": sec.get("password", ""),
+                    "sender_name": sec.get("sender_name", "Nómina Dolormed"),
+                }
     except Exception:
+        pass
+
+    # 2. Intentar cargar desde variables de entorno
+    env_user = os.getenv("SMTP_USER")
+    env_pass = os.getenv("SMTP_PASSWORD")
+    if env_user and env_pass:
         return {
-            "smtp_server": "smtp.gmail.com",
-            "smtp_port": 587,
-            "smtp_user": "",
-            "smtp_password": "",
-            "sender_name": "Nómina Dolormed",
+            "smtp_server": os.getenv("SMTP_SERVER", "smtp.gmail.com"),
+            "smtp_port": int(os.getenv("SMTP_PORT", 587)),
+            "smtp_user": env_user,
+            "smtp_password": env_pass,
+            "sender_name": os.getenv("SMTP_SENDER_NAME", "Nómina Dolormed"),
         }
+
+    # 3. Fallback a archivo YAML local
+    if os.path.exists(SMTP_YAML):
+        try:
+            with open(SMTP_YAML, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+                if cfg:
+                    return cfg
+        except Exception:
+            pass
+
+    return {
+        "smtp_server": "smtp.gmail.com",
+        "smtp_port": 587,
+        "smtp_user": "",
+        "smtp_password": "",
+        "sender_name": "Nómina Dolormed",
+    }
 
 
 def save_smtp_config(config: dict):
@@ -39,7 +67,7 @@ def save_smtp_config(config: dict):
             yaml.dump(config, f, allow_unicode=True, sort_keys=False)
         return True
     except Exception as e:
-        print(f"Error guardando smtp_config.yaml: {e}")
+        logger.error("Error guardando smtp_config.yaml: %s", e)
         return False
 
 
@@ -117,37 +145,25 @@ def _send_email_sync(to_email, subject, html_content, text_content=""):
 
 def _send_email(to_email, subject, html_content, text_content=""):
     """
-    Despacha el envío de correos electrónicos en un hilo en segundo plano (Asíncrono).
-
-    Esta envoltura evita que la interfaz gráfica de Streamlit se bloquee o experimente
-    retrasos mientras se establece la conexión con el servidor SMTP.
-
-    Parámetros:
-    -----------
-    to_email : str | list
-        Dirección(es) de correo electrónico del destinatario.
-    subject : str
-        Asunto del correo electrónico.
-    html_content : str
-        Cuerpo del mensaje en formato HTML para clientes modernos.
-    text_content : str, opcional
-        Cuerpo del mensaje en texto plano como respaldo.
-
-    Retorna:
-    --------
-    tuple(bool, str)
-        Estado de la operación inicial y un mensaje de confirmación.
+    Despacha el envío de correos electrónicos en el ThreadPoolExecutor compartido (Asíncrono).
+    Evita la creación descontrolada de hilos y previene bloqueos en la interfaz de usuario.
+    En caso de error en la entrega, registra NOTIFICATION_FAILURE en audit_logs.
     """
-    import threading
+    from services.notifications import (
+        dispatch_notification_async,
+        log_notification_failure,
+    )
 
     def background_task():
         success, msg = _send_email_sync(to_email, subject, html_content, text_content)
         if not success:
-            print(f"Error asíncrono enviando correo a {to_email}: {msg}")
+            logger.warning("Error asíncrono enviando correo a %s: %s", to_email, msg)
+            recip = ", ".join(to_email) if isinstance(to_email, list) else str(to_email)
+            log_notification_failure("Email", recip, f"Asunto: '{subject}' - {msg}")
+        else:
+            logger.info("📧 [EMAIL] Enviado exitosamente a %s", to_email)
 
-    thread = threading.Thread(target=background_task)
-    thread.daemon = True
-    thread.start()
+    dispatch_notification_async(background_task)
     return True, "Enviando en segundo plano..."
 
 
@@ -228,6 +244,7 @@ def send_novedad_alert(
     total_time,
     start_date,
     prev_approver=None,
+    sync: bool = False,
 ):
     subject = f"Nueva Solicitud Radicada: {full_name} ({reason_type})"
     title = "⚠️ Alerta de Nueva Novedad"
@@ -257,6 +274,8 @@ def send_novedad_alert(
 
     html = _get_base_template(title, body, header_color="#eab308")  # Yellow
     text = f"Alerta de Novedad: El empleado {full_name} acaba de radicar una nueva solicitud."
+    if sync:
+        return _send_email_sync(to_emails, subject, html, text)
     return _send_email(to_emails, subject, html, text)
 
 
@@ -399,7 +418,7 @@ def send_hr_procedure_status_update(employee_email, employee_name, procedure_typ
     _send_email(employee_email, subject, html_content)
 
 
-def send_approver_reminder(approver_email, approver_role, pending_requests):
+def send_approver_reminder(approver_email, approver_role, pending_requests, sync: bool = False):
     """
     Envía un recordatorio al aprobador con la lista de permisos
     que llevan más de X días sin respuesta.
@@ -451,4 +470,6 @@ def send_approver_reminder(approver_email, approver_role, pending_requests):
 
     html = _get_base_template(title, body, header_color="#dc2626")
     text = f"Recordatorio: Tienes {count} solicitud(es) de permiso pendiente(s) de revisión en el portal."
+    if sync:
+        return _send_email_sync(approver_email, subject, html, text)
     return _send_email(approver_email, subject, html, text)

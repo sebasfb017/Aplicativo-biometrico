@@ -131,6 +131,22 @@ def deduplicate_attendance(df: pd.DataFrame) -> pd.DataFrame:
     return df_clean
 
 
+def apply_business_punch_rules(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica reglas de negocio sobre las marcaciones de asistencia en la etapa analítica.
+    Regla de Reclasificación Horaria: Cualquier marcación que ocurra a las 2:00 PM (14:XX)
+    es reclasificada como Entrada (Punch 0), garantizando que los datos originales en la BD
+    permanezcan puros y fidedignos sin contaminación en la capa de hardware.
+    """
+    if df.empty or "ts" not in df.columns or "punch" not in df.columns:
+        return df
+    ts_series = pd.to_datetime(df["ts"])
+    mask_14 = ts_series.dt.hour == 14
+    if mask_14.any():
+        df = df.copy()
+        df.loc[mask_14, "punch"] = 0
+    return df
+
+
 def fetch_attendance_between(start_dt: datetime, end_dt: datetime):
     """Extrae las marcaciones crudas ignorando las que fueron eliminadas/editadas y duplicadas."""
     conn = db_conn()
@@ -151,7 +167,9 @@ def fetch_attendance_between(start_dt: datetime, end_dt: datetime):
     if not df.empty:
         df["ts"] = pd.to_datetime(df["ts"])
         df = deduplicate_attendance(df)
+        df = apply_business_punch_rules(df)
     return df
+
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -380,6 +398,7 @@ def get_late_punch_ids(start_date: date, end_date: date) -> dict:
 
     df["ts"] = pd.to_datetime(df["ts"])
     df = deduplicate_attendance(df)
+    df = apply_business_punch_rules(df)
     df["day"] = df["ts"].dt.date
 
     # 3. Cargar excepciones para ese periodo

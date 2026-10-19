@@ -1,12 +1,30 @@
+import logging
 import os
 import requests
 import streamlit as st
 
-# Webhook de n8n para enviar mensajes por WhatsApp.
-# Se recomienda colocar esto en los st.secrets de Streamlit a futuro.
-N8N_WEBHOOK_URL = os.environ.get("N8N_WHATSAPP_WEBHOOK", "http://192.168.52.29:5678/webhook/d4387103-a20e-4576-8ef1-6eb644d9aa7b")
+logger = logging.getLogger("whatsapp_service")
 
-def send_status_update_whatsapp(
+
+def get_n8n_webhook_url() -> str:
+    """Obtiene la URL del webhook de WhatsApp priorizando variables de entorno y secrets."""
+    url = os.getenv("N8N_WEBHOOK_URL") or os.getenv("N8N_WHATSAPP_WEBHOOK")
+    if url:
+        return url
+    try:
+        if hasattr(st, "secrets") and "n8n" in st.secrets:
+            sec_url = st.secrets["n8n"].get("webhook_url")
+            if sec_url:
+                return sec_url
+    except Exception:
+        pass
+    return "http://192.168.52.29:5678/webhook/d4387103-a20e-4576-8ef1-6eb644d9aa7b"
+
+
+N8N_WEBHOOK_URL = get_n8n_webhook_url()
+
+
+def _send_status_update_whatsapp_sync(
     phone_number: str,
     full_name: str,
     req_id: int,
@@ -14,22 +32,16 @@ def send_status_update_whatsapp(
     new_status: str,
     message: str,
     approver_name: str = None,
-):
-    """
-    Envía una notificación por WhatsApp al empleado cuando cambia el estado de su solicitud,
-    replicando el mismo formato del correo electrónico.
-    """
+) -> bool:
+    """Envía la petición HTTP a n8n de forma síncrona con timeout de 5 segundos."""
     if not phone_number:
-        print(f"⚠️ No hay número de teléfono para enviar WhatsApp (Req #{req_id})")
+        logger.warning("No hay número de teléfono para enviar WhatsApp (Req #%s)", req_id)
         return False
 
-    # Limpiar el número (remover espacios, signos + si es necesario, etc.)
-    # Si los números en la BD no tienen código de país (ej. Colombia es 57), deberías agregarlo aquí.
     clean_phone = phone_number.replace("+", "").replace(" ", "").strip()
     if len(clean_phone) == 10:  # Si es número local colombiano sin indicativo
         clean_phone = f"57{clean_phone}"
 
-    # Construir el mensaje formateado con negritas para WhatsApp
     whatsapp_text = (
         f"✅ *Actualización de Novedad*\n\n"
         f"Hola *{full_name}*,\n"
@@ -47,25 +59,82 @@ def send_status_update_whatsapp(
         "phone": clean_phone,
         "message": whatsapp_text,
         "req_id": req_id,
-        "program_id": "zkteco_nomina_app"
+        "program_id": "zkteco_nomina_app",
     }
 
     try:
-        # Enviar petición POST al Webhook de n8n
-        response = requests.post(N8N_WEBHOOK_URL, json=payload, timeout=10)
-        
+        target_url = get_n8n_webhook_url()
+        # Timeout estricto de 5 segundos para resiliencia de red
+        response = requests.post(target_url, json=payload, timeout=5)
+
         if response.status_code in [200, 201]:
-            print(f"📱 [WHATSAPP] Notificación enviada a {clean_phone} | Req #{req_id}")
+            logger.info("📱 [WHATSAPP] Notificación enviada a %s | Req #%s", clean_phone, req_id)
             return True
         else:
-            print(f"❌ [WHATSAPP ERROR] HTTP {response.status_code}: {response.text}")
+            err_msg = f"HTTP {response.status_code}: {response.text}"
+            logger.error("❌ [WHATSAPP ERROR] %s", err_msg)
+            from services.notifications import log_notification_failure
+
+            log_notification_failure("WhatsApp", clean_phone, err_msg, req_id=req_id)
             return False
-            
+
     except requests.exceptions.RequestException as e:
-        print(f"❌ [WHATSAPP ERROR] No se pudo contactar a n8n: {e}")
+        err_msg = f"No se pudo contactar a n8n: {e}"
+        logger.error("❌ [WHATSAPP ERROR] %s", err_msg)
+        from services.notifications import log_notification_failure
+
+        log_notification_failure("WhatsApp", clean_phone, err_msg, req_id=req_id)
+        return False
+    except Exception as e:
+        err_msg = f"Error inesperado enviando WhatsApp: {e}"
+        logger.error("❌ [WHATSAPP ERROR] %s", err_msg)
+        from services.notifications import log_notification_failure
+
+        log_notification_failure("WhatsApp", clean_phone, err_msg, req_id=req_id)
         return False
 
-def send_novedad_alert_whatsapp(
+
+def send_status_update_whatsapp(
+    phone_number: str,
+    full_name: str,
+    req_id: int,
+    reason_type: str,
+    new_status: str,
+    message: str,
+    approver_name: str = None,
+    sync: bool = False,
+):
+    """
+    Envía una notificación por WhatsApp al empleado cuando cambia el estado de su solicitud.
+    Por defecto se ejecuta de forma asíncrona no bloqueante (Fire-and-Forget en worker pool)
+    para garantizar respuesta ultra-rápida en la UI de Streamlit.
+    """
+    if sync:
+        return _send_status_update_whatsapp_sync(
+            phone_number,
+            full_name,
+            req_id,
+            reason_type,
+            new_status,
+            message,
+            approver_name,
+        )
+
+    from services.notifications import dispatch_notification_async
+
+    return dispatch_notification_async(
+        _send_status_update_whatsapp_sync,
+        phone_number,
+        full_name,
+        req_id,
+        reason_type,
+        new_status,
+        message,
+        approver_name,
+    )
+
+
+def _send_novedad_alert_whatsapp_sync(
     target_phones: list,
     full_name: str,
     reason_type: str,
@@ -73,15 +142,11 @@ def send_novedad_alert_whatsapp(
     total_time: str,
     start_date: str,
     prev_approver=None,
-):
-    """
-    Envía una alerta a los líderes (Coordinador, Jefe, RRHH) informando que
-    el empleado acaba de radicar una nueva solicitud.
-    """
+) -> bool:
+    """Envía alertas a líderes de forma síncrona con timeout de 5 segundos."""
     if not target_phones:
         return False
 
-    # Construir el mensaje
     whatsapp_text = (
         f"⚠️ *Alerta de Nueva Novedad*\n\n"
         f"El empleado *{full_name}* acaba de radicar una nueva solicitud en el portal que requiere revisión.\n\n"
@@ -98,8 +163,9 @@ def send_novedad_alert_whatsapp(
 
     success_count = 0
     for phone in set(target_phones):
-        if not phone: continue
-        
+        if not phone:
+            continue
+
         clean_phone = str(phone).replace("+", "").replace(" ", "").strip()
         if len(clean_phone) == 10:
             clean_phone = f"57{clean_phone}"
@@ -107,16 +173,72 @@ def send_novedad_alert_whatsapp(
         payload = {
             "phone": clean_phone,
             "message": whatsapp_text,
-            "req_id": 0, # 0 indicando que es una alerta general (opcional)
-            "program_id": "zkteco_nomina_app"
+            "req_id": 0,
+            "program_id": "zkteco_nomina_app",
         }
 
         try:
-            res = requests.post(N8N_WEBHOOK_URL, json=payload, timeout=10)
+            target_url = get_n8n_webhook_url()
+            res = requests.post(target_url, json=payload, timeout=5)
             if res.status_code in [200, 201]:
-                print(f"📱 [WHATSAPP ALERT] Enviado a líder {clean_phone}")
+                logger.info("📱 [WHATSAPP ALERT] Enviado a líder %s", clean_phone)
                 success_count += 1
+            else:
+                err_msg = f"HTTP {res.status_code}: {res.text}"
+                logger.error("❌ [WHATSAPP ERROR LÍDER] %s", err_msg)
+                from services.notifications import log_notification_failure
+
+                log_notification_failure("WhatsApp", clean_phone, err_msg)
+        except requests.exceptions.RequestException as e:
+            err_msg = f"Timeout o error de red hacia n8n: {e}"
+            logger.error("❌ [WHATSAPP ERROR LÍDER] %s", err_msg)
+            from services.notifications import log_notification_failure
+
+            log_notification_failure("WhatsApp", clean_phone, err_msg)
         except Exception as e:
-            print(f"❌ [WHATSAPP ERROR LÍDER] {e}")
+            err_msg = f"Error inesperado al enviar WhatsApp a líder: {e}"
+            logger.error("❌ [WHATSAPP ERROR LÍDER] %s", err_msg)
+            from services.notifications import log_notification_failure
+
+            log_notification_failure("WhatsApp", clean_phone, err_msg)
 
     return success_count > 0
+
+
+def send_novedad_alert_whatsapp(
+    target_phones: list,
+    full_name: str,
+    reason_type: str,
+    details: str,
+    total_time: str,
+    start_date: str,
+    prev_approver=None,
+    sync: bool = False,
+):
+    """
+    Envía una alerta a los líderes informando nueva radicación de solicitud.
+    Despachado asíncronamente por defecto para no congelar la UI.
+    """
+    if sync:
+        return _send_novedad_alert_whatsapp_sync(
+            target_phones,
+            full_name,
+            reason_type,
+            details,
+            total_time,
+            start_date,
+            prev_approver,
+        )
+
+    from services.notifications import dispatch_notification_async
+
+    return dispatch_notification_async(
+        _send_novedad_alert_whatsapp_sync,
+        target_phones,
+        full_name,
+        reason_type,
+        details,
+        total_time,
+        start_date,
+        prev_approver,
+    )

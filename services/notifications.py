@@ -1,10 +1,66 @@
+import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
-from database_conn.connection import db_conn
-from services.email_service import _send_email
+from database_conn.connection import db_conn, db_session
+
+logger = logging.getLogger("notifications")
+
+# Pool compartido de workers para despacho asíncrono no bloqueante
+NOTIFICATION_EXECUTOR = ThreadPoolExecutor(
+    max_workers=5, thread_name_prefix="notif_worker"
+)
+
+
+def dispatch_notification_async(target_func, *args, **kwargs):
+    """Despacha una función de notificación en segundo plano utilizando el pool compartido de 5 workers.
+    Garantiza que la UI de Streamlit retorne de inmediato (< 150ms) sin bloquearse por latencias de red en SMTP o n8n.
+    """
+    return NOTIFICATION_EXECUTOR.submit(target_func, *args, **kwargs)
+
+
+def log_audit(action, details, user_id=None):
+    """Registra una acción en la tabla de auditoría usando db_session()."""
+    if not user_id:
+        user_id = "SISTEMA"
+        try:
+            if (
+                hasattr(st, "session_state")
+                and "user" in st.session_state
+                and st.session_state["user"]
+            ):
+                user_id = st.session_state["user"].get("username", "SISTEMA")
+        except Exception:
+            pass
+
+    try:
+        with db_session() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO audit_logs (user_id, action, details, timestamp)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (user_id, action, details, datetime.now().isoformat(timespec="seconds")),
+            )
+    except Exception as e:
+        logger.error("Error escribiendo log de auditoria: %s", e)
+
+
+def log_notification_failure(
+    service_name: str, recipient: str, details: str, req_id: int = None
+):
+    """Registra un fallo de entrega en audit_logs con acción NOTIFICATION_FAILURE."""
+    req_info = f" | Req #{req_id}" if req_id else ""
+    msg = f"[{service_name.upper()}] Fallo de notificación a {recipient}{req_info}: {details}"
+    logger.warning(msg)
+    try:
+        log_audit(action="NOTIFICATION_FAILURE", details=msg)
+    except Exception as e:
+        logger.error("Error registrando NOTIFICATION_FAILURE en audit_logs: %s", e)
 
 
 def send_notification_email(to_email, subject, body):
@@ -12,64 +68,80 @@ def send_notification_email(to_email, subject, body):
     if not to_email:
         return
 
-    # Delegar al enviador de correos real
+    from services.email_service import _send_email
+
     success, msg = _send_email(to_email, subject, body)
     if not success:
-        print(f"Error enviando correo: {msg}")
+        logger.error("Error enviando correo a %s: %s", to_email, msg)
     else:
-        print(f"📧 [EMAIL] Enviado a {to_email} | Asunto: {subject}")
+        logger.info("📧 [EMAIL] Despachado a %s | Asunto: %s", to_email, subject)
 
 
 def notify_employee_status(
-    user_id, full_name, req_id, reason_type, new_status, message, approver_name=None
+    user_id,
+    full_name,
+    req_id,
+    reason_type,
+    new_status,
+    message,
+    approver_name=None,
+    sync: bool = False,
 ):
-    """Busca el correo y teléfono del empleado y le envía una notificación por Email y WhatsApp."""
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT emp_email, emp_phone FROM users_app WHERE username = %s", (user_id,))
-    row = cur.fetchone()
-    conn.close()
-    
-    if row:
-        emp_email = row[0]
-        emp_phone = row[1]
+    """Busca el correo y teléfono del empleado y le envía una notificación por Email y WhatsApp de forma asíncrona."""
 
-        # 1. Notificación por Correo Electrónico
-        if emp_email:
-            from services.email_service import send_status_update_email
-            send_status_update_email(
-                emp_email, full_name, req_id, reason_type, new_status, message, approver_name
+    def _do_notify():
+        try:
+            conn = db_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT emp_email, emp_phone FROM users_app WHERE username = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+            conn.close()
+
+            if row:
+                emp_email = row[0]
+                emp_phone = row[1]
+
+                # 1. Notificación por Correo Electrónico
+                if emp_email:
+                    from services.email_service import send_status_update_email
+
+                    send_status_update_email(
+                        emp_email,
+                        full_name,
+                        req_id,
+                        reason_type,
+                        new_status,
+                        message,
+                        approver_name,
+                    )
+
+                # 2. Notificación por WhatsApp (vía n8n)
+                if emp_phone:
+                    from services.whatsapp_service import send_status_update_whatsapp
+
+                    send_status_update_whatsapp(
+                        emp_phone,
+                        full_name,
+                        req_id,
+                        reason_type,
+                        new_status,
+                        message,
+                        approver_name,
+                        sync=True,
+                    )
+        except Exception as e:
+            logger.error(
+                "Error en notify_employee_status para usuario %s: %s", user_id, e
             )
 
-        # 2. Notificación por WhatsApp (vía n8n)
-        if emp_phone:
-            from services.whatsapp_service import send_status_update_whatsapp
-            send_status_update_whatsapp(
-                emp_phone, full_name, req_id, reason_type, new_status, message, approver_name
-            )
+    if sync:
+        _do_notify()
+        return None
+    return dispatch_notification_async(_do_notify)
 
-
-def log_audit(action, details):
-    """Registra una acción en la tabla de auditoría."""
-    conn = db_conn()
-    cur = conn.cursor()
-    user_id = "SISTEMA"
-    if st.session_state.get("user"):
-        user_id = st.session_state["user"].get("username", "SISTEMA")
-
-    try:
-        cur.execute(
-            """
-            INSERT INTO audit_logs (user_id, action, details, timestamp)
-            VALUES (%s, %s, %s, %s)
-        """,
-            (user_id, action, details, datetime.now().isoformat(timespec="seconds")),
-        )
-        conn.commit()
-    except Exception as e:
-        print(f"Error escribiendo log de auditoria: {e}")
-    finally:
-        conn.close()
 
 
 def generate_fth012_html(req, df_audit):
