@@ -21,16 +21,57 @@ import app
 
 @pytest.fixture(autouse=True)
 def clean_db(tmp_path, monkeypatch):
-    # Apuntar el directorio de datos a una ruta temporal para que las pruebas no interfieran
+    # Apuntar el directorio de datos a una ruta temporal para que las pruebas no interfieran con CSVs locales
     monkeypatch.setattr(app, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(app, "DB_PATH", os.path.join(str(tmp_path), "app.db"))
-    # Asegurar una base de datos limpia para cada prueba
-    if os.path.exists(app.DB_PATH):
-        os.remove(app.DB_PATH)
-    app.init_db()
+
+    # Limpiar todo el caché de Streamlit antes de la prueba
+    try:
+        import streamlit as st
+        st.cache_data.clear()
+    except Exception:
+        pass
+    try:
+        from database_conn.queries import get_cached_dataframe
+        get_cached_dataframe.clear()
+    except Exception:
+        pass
+
+    # Truncar tablas en el esquema aislado de prueba y re-inicializar datos base
+    from database_conn.connection import db_session
+    from database_conn.setup import init_db
+
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DO $$
+                DECLARE
+                    r RECORD;
+                BEGIN
+                    FOR r IN (
+                        SELECT tablename FROM pg_tables 
+                        WHERE schemaname = 'test_run_schema' OR schemaname = current_schema()
+                    ) LOOP
+                        EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' RESTART IDENTITY CASCADE';
+                    END LOOP;
+                END $$;
+                """
+            )
+
+    init_db()
     yield
-    if os.path.exists(app.DB_PATH):
-        os.remove(app.DB_PATH)
+
+    try:
+        import streamlit as st
+        st.cache_data.clear()
+    except Exception:
+        pass
+    try:
+        from database_conn.queries import get_cached_dataframe
+        get_cached_dataframe.clear()
+    except Exception:
+        pass
 
 
 def test_default_user_created():
@@ -109,39 +150,39 @@ def test_upsert_schedule_df_invalid():
         app.upsert_schedule_df(df)
 
 
-def test_ensure_schedules_columns_creates_missing(tmp_path, monkeypatch):
-    # Simular una base de datos creada antes de las columnas adicionales de horarios
-    monkeypatch.setattr(app, "DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(app, "DB_PATH", os.path.join(str(tmp_path), "app.db"))
-    # El fixture autouse ya creó un esquema completo; eliminarlo para poder recrearlo
-    if os.path.exists(app.DB_PATH):
-        os.remove(app.DB_PATH)
+def test_ensure_schedules_columns_creates_missing():
+    from database_conn.connection import db_session
 
-    conn = sqlite3.connect(app.DB_PATH)
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            CREATE TABLE schedules (
-                week_start TEXT NOT NULL,
-                dow INTEGER NOT NULL,
-                start_time TEXT NOT NULL,
-                PRIMARY KEY (week_start, dow)
-            );
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    # Simular una tabla schedules creada sin las columnas adicionales
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS schedules CASCADE;")
+            cur.execute(
+                """
+                CREATE TABLE schedules (
+                    week_start TEXT NOT NULL,
+                    dow INTEGER NOT NULL,
+                    start_time TEXT NOT NULL,
+                    PRIMARY KEY (week_start, dow)
+                );
+                """
+            )
 
-    # Llamar al asistente de migración
+    # Llamar al asistente de migración seguro en PostgreSQL
     app.ensure_schedules_columns()
 
-    conn = sqlite3.connect(app.DB_PATH)
-    cur = conn.cursor()
-    cur.execute("PRAGMA table_info(schedules)")
-    cols = [r[1] for r in cur.fetchall()]
-    conn.close()
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'schedules'
+                  AND table_schema = current_schema();
+                """
+            )
+            cols = [r[0] for r in cur.fetchall()]
+
     for expected in ["end_time", "start_time_2", "end_time_2", "grace_minutes"]:
         assert expected in cols
 
@@ -966,9 +1007,11 @@ def test_exceptions_filtering_and_kpis():
         "Nombre",
         "Fecha",
         "Fecha Fin",
+        "Total Días",
         "Tipo",
         "Observaciones",
         "Registrado El",
+        "Origen",
     ]
 
     # Probar filtro de nombre (Cédula o Nombre)
