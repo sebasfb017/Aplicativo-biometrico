@@ -5,7 +5,20 @@ import pandas as pd
 import streamlit as st
 
 from database_conn.connection import db_session
-from database_conn.queries import assign_shift, get_shifts_df, is_holiday, upsert_shift
+from database_conn.queries import (
+    assign_shift,
+    bulk_process_shifts_db,
+    ensure_schedules_columns,
+    get_all_schedules_summary_df,
+    get_employee_works_holidays,
+    get_schedules_df,
+    get_shift_assignments_for_week,
+    get_shifts_df,
+    is_holiday,
+    resolve_shift_from_code,
+    upsert_schedule_df,
+    upsert_shift,
+)
 from utils.auth import require_role
 
 
@@ -13,29 +26,6 @@ def default_schedules_path():
     from database_conn.connection import DATA_DIR
 
     return os.path.join(DATA_DIR, "default_schedules.csv")
-
-
-def ensure_schedules_columns():
-    with db_session() as conn:
-        cur = conn.cursor()
-        try:
-            cur.execute("PRAGMA table_info(schedules)")
-            existing = {row[1] for row in cur.fetchall()}
-        except Exception:
-            existing = set()
-
-        additions = {
-            "end_time": "end_time TEXT DEFAULT ''",
-            "start_time_2": "start_time_2 TEXT DEFAULT ''",
-            "end_time_2": "end_time_2 TEXT DEFAULT ''",
-            "grace_minutes": "grace_minutes INTEGER NOT NULL DEFAULT 0",
-        }
-        for col, ddl in additions.items():
-            if col not in existing:
-                try:
-                    cur.execute(f"ALTER TABLE schedules ADD COLUMN {ddl}")
-                except Exception:
-                    pass
 
 
 def maybe_load_default_schedules():
@@ -47,98 +37,6 @@ def maybe_load_default_schedules():
         upsert_schedule_df(df)
     except Exception:
         pass
-
-
-def upsert_schedule_df(df: pd.DataFrame):
-    required = {"week_start", "dow", "start_time", "grace_minutes"}
-    if not required.issubset(set(df.columns)):
-        missing = required - set(df.columns)
-        raise ValueError(f"Faltan columnas: {missing}")
-
-    df = df.copy()
-    df["week_start"] = df["week_start"].astype(str)
-    df["dow"] = df["dow"].astype(int)
-    if df["dow"].lt(0).any() or df["dow"].gt(6).any():
-        raise ValueError("La columna 'dow' sólo puede tener valores entre 0 y 6")
-
-    df["start_time"] = df["start_time"].astype(str).str.slice(0, 5)
-    for col in ["end_time", "start_time_2", "end_time_2"]:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.slice(0, 5)
-        else:
-            df[col] = ""
-    df["grace_minutes"] = df["grace_minutes"].fillna(0).astype(int)
-
-    with db_session() as conn:
-        cur = conn.cursor()
-
-        # --- INSERCIÓN EN BLOQUE OPTIMIZADA (BULK INSERT) ---
-        # Convertimos el DataFrame directly en unas tuplas
-        records = df[
-            [
-                "week_start",
-                "dow",
-                "start_time",
-                "end_time",
-                "start_time_2",
-                "end_time_2",
-                "grace_minutes",
-            ]
-        ].itertuples(index=False, name=None)
-
-        cur.executemany(
-            """
-            INSERT INTO schedules(week_start, dow, start_time, end_time, start_time_2, end_time_2, grace_minutes)
-            VALUES(%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT(week_start, dow) DO UPDATE SET
-                start_time=excluded.start_time,
-                end_time=excluded.end_time,
-                start_time_2=excluded.start_time_2,
-                end_time_2=excluded.end_time_2,
-                grace_minutes=excluded.grace_minutes
-        """,
-            records,
-        )
-
-
-def resolve_shift_from_code(user_id: str, shift_code: str, week_start: str, dow: int):
-    with db_session() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT profile_id FROM employees WHERE user_id = %s", (str(user_id),)
-        )
-        row = cur.fetchone()
-
-        if not row or not row[0]:
-            return None
-
-        profile_id = row[0]
-
-        mapping = {
-            (1, "M"): "M - Mañana (Enf)",
-            (1, "T"): "T - Tarde (Enf)",
-            (1, "N"): "N - Noche (Enf)",
-            (2, "M"): "M - Mañana (Adm)",
-            (2, "T"): "T - Tarde (Adm)",
-            (3, "RX1"): "RX1 - Día",
-            (3, "RX2"): "RX2 - Noche",
-            (4, "OFICINA"): "OFICINA - Horario Partido",
-            (4, "C"): "C - Corrido",
-            (1, "L"): "L - Día Libre",
-            (2, "L"): "L - Día Libre",
-            (3, "L"): "L - Día Libre",
-            (4, "L"): "L - Día Libre",
-        }
-
-        shift_name = mapping.get((profile_id, shift_code))
-        if not shift_name:
-            return None
-
-        cur.execute("SELECT id FROM shifts WHERE name = %s", (shift_name,))
-        row = cur.fetchone()
-        return row[0] if row else None
-
-    return row[0] if row else None
 
 
 def upsert_shifts_from_code_csv(df: pd.DataFrame) -> dict:
@@ -171,21 +69,9 @@ def upsert_shifts_from_code_csv(df: pd.DataFrame) -> dict:
             week_date = datetime.fromisoformat(week_start)
             target_date = (week_date + timedelta(days=dow)).date()
             if is_holiday(target_date):
-                with db_session() as conn:
-                    cur = conn.cursor()
-                    cur.execute(
-                        "SELECT profile_id FROM employees WHERE user_id = %s", (user_id,)
-                    )
-                    emp_row = cur.fetchone()
-                    if emp_row and emp_row[0]:
-                        cur.execute(
-                            "SELECT works_holidays FROM profiles WHERE profile_id = %s",
-                            (emp_row[0],),
-                        )
-                        prof_row = cur.fetchone()
-                        if prof_row and not prof_row[0]:
-                            skipped_holidays += 1
-                            continue
+                if not get_employee_works_holidays(user_id):
+                    skipped_holidays += 1
+                    continue
         except Exception:
             pass
 
@@ -250,12 +136,9 @@ def generate_rotating_schedule(
 
 
 def auto_assign_shifts_from_schedules():
-    with db_session() as conn:
-        sched_df = pd.read_sql_query(
-            "SELECT week_start,dow,start_time,grace_minutes FROM schedules", conn
-        )
-        from database_conn.queries import get_cached_full_employees
-        emp_df = get_cached_full_employees()[["user_id"]]
+    sched_df = get_all_schedules_summary_df()
+    from database_conn.queries import get_cached_full_employees
+    emp_df = get_cached_full_employees()[["user_id"]]
     if sched_df.empty or emp_df.empty:
         return 0
 
@@ -292,19 +175,7 @@ def page_schedules():
         )
         load_all = st.checkbox("Cargar todos los registros históricos", value=False)
 
-        with db_session() as conn:
-            if not load_all:
-                cutoff = (date.today() - timedelta(weeks=52)).isoformat()
-                sch = pd.read_sql_query(
-                    "SELECT week_start,dow,start_time,end_time,start_time_2,end_time_2,grace_minutes FROM schedules WHERE week_start >= %s ORDER BY week_start,dow",
-                    conn,
-                    params=(cutoff,),
-                )
-            else:
-                sch = pd.read_sql_query(
-                    "SELECT week_start,dow,start_time,end_time,start_time_2,end_time_2,grace_minutes FROM schedules ORDER BY week_start,dow",
-                    conn,
-                )
+        sch = get_schedules_df(load_all=load_all)
 
         if sch.empty:
             st.warning("No hay horarios configurados en el sistema.")
@@ -773,13 +644,7 @@ def page_assign_shifts():
             source_week - timedelta(days=source_week.weekday())
         ).isoformat()
 
-        with db_session() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT user_id, dow, shift_id FROM shift_assignments WHERE week_start = %s",
-                (ws_source_iso,),
-            )
-            source_assignments = cur.fetchall()
+        source_assignments = get_shift_assignments_for_week(ws_source_iso)
 
         if not source_assignments:
             st.warning(f"No hay turnos asignados en la semana del {ws_source_iso}.")
@@ -1220,125 +1085,15 @@ def process_bulk_shifts(df, year, month, num_days):
         "LNR": "Licencia No Remunerada",
     }
 
-    shift_ids = {}
-    assigned = 0
-    errors = []
-
-    with db_session() as conn:
-        cur = conn.cursor()
-        # 1. Asegurar que los turnos base existen
-        for code, info in SHIFT_CODES_MAP.items():
-            cur.execute("SELECT id FROM shifts WHERE name = %s", (info["name"],))
-            row = cur.fetchone()
-            if row:
-                shift_ids[code] = row[0]
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO shifts (name, start_time, end_time, grace_minutes, has_break, break_start, break_end, is_overnight, shift_code, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                    (
-                        info["name"],
-                        info["start"],
-                        info["end"],
-                        0,
-                        info["has_break"],
-                        info["break_start"],
-                        info["break_end"],
-                        info["is_overnight"],
-                        code,
-                        datetime.now().isoformat(),
-                    ),
-                )
-                shift_ids[code] = cur.lastrowid
-
-        # 2. Cargar todos los empleados válidos
-        cur.execute("SELECT user_id FROM employees")
-        valid_users = {str(r[0]) for r in cur.fetchall()}
-
-        # 3. Iterar cada fila
-        for idx, row in df.iterrows():
-            try:
-                uid = str(row[cedula_col]).strip()
-                uid = uid.removesuffix(".0")
-
-                if uid == "nan" or not uid:
-                    continue
-                if uid not in valid_users:
-                    errors.append(
-                        f"Fila {idx + 2}: Cédula {uid} no encontrada en la base de datos."
-                    )
-                    continue
-
-                for d in range(1, num_days + 1):
-                    # Retrieve value using either int or string key
-                    val = row.get(d)
-                    if val is None or pd.isna(val):
-                        val = row.get(str(d))
-
-                    val = str(val).strip().upper() if pd.notna(val) else ""
-                    if val == "NAN":
-                        val = ""
-
-                    current_date = date(year, month, d)
-                    current_date_iso = current_date.isoformat()
-                    ws_iso = (
-                        current_date - timedelta(days=current_date.weekday())
-                    ).isoformat()
-                    dow = current_date.weekday()
-
-                    # Limpiar asignaciones para este día
-                    cur.execute(
-                        "DELETE FROM shift_assignments WHERE user_id = %s AND week_start = %s AND dow = %s",
-                        (uid, ws_iso, dow),
-                    )
-                    cur.execute(
-                        "DELETE FROM exceptions WHERE user_id = %s AND date = %s",
-                        (uid, current_date_iso),
-                    )
-
-                    if val in shift_ids:
-                        cur.execute(
-                            """
-                            INSERT INTO shift_assignments (user_id, week_start, dow, shift_id, created_at)
-                            VALUES (%s, %s, %s, %s, %s)
-                        """,
-                            (
-                                uid,
-                                ws_iso,
-                                dow,
-                                shift_ids[val],
-                                datetime.now().isoformat(),
-                            ),
-                        )
-                        assigned += 1
-                    elif val in EXCEPTION_CODES_MAP:
-                        cur.execute(
-                            """
-                            INSERT INTO exceptions (user_id, date, type, created_at)
-                            VALUES (%s, %s, %s, %s)
-                        """,
-                            (
-                                uid,
-                                current_date_iso,
-                                EXCEPTION_CODES_MAP[val],
-                                datetime.now().isoformat(),
-                            ),
-                        )
-                        assigned += 1
-                    elif val == "L" or val == "":
-                        # Ya se limpió en los DELETE de arriba, día libre
-                        pass
-                    else:
-                        errors.append(
-                            f"Fila {idx + 2}: Código desconocido '{val}' ignorado el día {d}."
-                        )
-            except Exception as e:
-                errors.append(
-                    f"Fila {idx + 2}: Error procesando los datos. Verifica el formato de la fila - {e}"
-                )
-                continue
+    assigned, errors = bulk_process_shifts_db(
+        df=df,
+        year=year,
+        month=month,
+        num_days=num_days,
+        cedula_col=cedula_col,
+        shift_codes_map=SHIFT_CODES_MAP,
+        exception_codes_map=EXCEPTION_CODES_MAP,
+    )
 
     if errors:
         st.warning("El proceso terminó pero con las siguientes advertencias:")

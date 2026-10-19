@@ -15,4 +15,7 @@ scratch/
 static/*.pdf
 
 .streamlit/secrets.toml
-.streamlit/
+!.streamlit/secrets.toml.example
+.env
+.env.*
+*.env
