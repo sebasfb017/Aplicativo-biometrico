@@ -118,27 +118,17 @@ def edit_employee_dialog(user_id):
             "🗑️ Eliminar Definitivamente", type="primary", disabled=not confirm_del
         ):
             try:
-                with db_session() as conn:
-                    cur = conn.cursor()
-                    cur.execute(
-                        "DELETE FROM employees WHERE user_id = %s", (str(user_id),)
-                    )
-                    cur.execute(
-                        "DELETE FROM users_app WHERE username = %s", (str(user_id),)
-                    )
+                from database_conn.queries import db_delete_employee
 
-                get_all_employees.clear()
-                from database_conn.queries import get_users_by_role
-
-                get_users_by_role.clear()
+                db_delete_employee(str(user_id))
 
                 if "employees_table" in st.session_state:
                     del st.session_state["employees_table"]
 
-                st.toast("🗑️ Empleado eliminado. Cerrando...")
+                st.toast("🗑️ Empleado eliminado correctamente. Actualizando vista...")
                 import time
 
-                time.sleep(0.75)
+                time.sleep(0.5)
                 st.rerun()
             except Exception as exc:
                 st.error(f"Error al eliminar: {exc}")
