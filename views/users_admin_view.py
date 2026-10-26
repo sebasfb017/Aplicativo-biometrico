@@ -4,7 +4,7 @@ import bcrypt
 import pandas as pd
 import streamlit as st
 
-from database_conn.connection import db_conn
+from database_conn.connection import db_conn, db_session
 from database_conn.queries import get_all_employees, get_users_by_role
 from services.email_service import (
     load_smtp_config,
@@ -113,6 +113,25 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
         )
 
     st.markdown("---")
+    st.write("**Enrutamiento Especial de Permisos (Aprobador Directo)**")
+    routing_options = [
+        "Por defecto (Según sub-área / organigrama)",
+        "Coordinación Directa (Angy Jaramillo)",
+        "Jefe Directo (Salta Coordinador)",
+        "RRHH Directo (Salta Coord y Jefe)",
+    ]
+    routing_values = [None, "COORD", "JEFE", "RRHH"]
+    current_dr = u.get("direct_routing")
+    dr_idx = routing_values.index(current_dr) if current_dr in routing_values else 0
+    selected_routing_label = st.selectbox(
+        "Ruta de Aprobación",
+        routing_options,
+        index=dr_idx,
+        help="Permite dirigir las solicitudes de este empleado directamente a un aprobador específico.",
+    )
+    new_direct_routing = routing_values[routing_options.index(selected_routing_label)]
+
+    st.markdown("---")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -158,7 +177,7 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
                 cur.execute(
                     """
                     UPDATE users_app 
-                    SET role = %s, managed_department = %s, active = %s, password_hash = %s, emp_area = %s, emp_subarea = %s, emp_phone = %s, emp_email = %s, managed_area = %s
+                    SET role = %s, managed_department = %s, active = %s, password_hash = %s, emp_area = %s, emp_subarea = %s, emp_phone = %s, emp_email = %s, managed_area = %s, direct_routing = %s
                     WHERE username = %s
                 """,
                     (
@@ -171,6 +190,7 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
                         new_emp_phone,
                         new_emp_email,
                         new_managed_area,
+                        new_direct_routing,
                         username,
                     ),
                 )
@@ -178,7 +198,7 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
                 cur.execute(
                     """
                     UPDATE users_app 
-                    SET role = %s, managed_department = %s, active = %s, emp_area = %s, emp_subarea = %s, emp_phone = %s, emp_email = %s, managed_area = %s
+                    SET role = %s, managed_department = %s, active = %s, emp_area = %s, emp_subarea = %s, emp_phone = %s, emp_email = %s, managed_area = %s, direct_routing = %s
                     WHERE username = %s
                 """,
                     (
@@ -190,6 +210,7 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
                         new_emp_phone,
                         new_emp_email,
                         new_managed_area,
+                        new_direct_routing,
                         username,
                     ),
                 )
@@ -209,19 +230,24 @@ def edit_user_dialog(username: str, emp_df: pd.DataFrame):
             conn.close()
 
     if submit_delete:
-        conn = db_conn()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM users_app WHERE username = %s", (username,))
-        conn.commit()
-        conn.close()
-        log_audit("DELETE_USER", f"Usuario eliminado del sistema: {username}")
-        st.success(f"🗑️ Usuario {username} eliminado del sistema.")
-        get_users_by_role.clear()  # Limpiamos el caché inmediatamente de la base de datos
-        if "admin_users_table" in st.session_state:
-            del st.session_state["admin_users_table"]
-        if "emp_users_table" in st.session_state:
-            del st.session_state["emp_users_table"]
-        st.rerun()
+        try:
+            with db_session() as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM user_sessions WHERE username = %s", (username,))
+                cur.execute("DELETE FROM hr_procedures WHERE user_id = %s", (username,))
+                cur.execute("DELETE FROM users_app WHERE username = %s", (username,))
+            log_audit("DELETE_USER", f"Usuario eliminado del sistema: {username}")
+            st.success(f"🗑️ Usuario {username} eliminado del sistema.")
+            get_users_by_role.clear()
+            from database_conn.queries import get_cached_dataframe
+            get_cached_dataframe.clear()
+            if "admin_users_table" in st.session_state:
+                del st.session_state["admin_users_table"]
+            if "emp_users_table" in st.session_state:
+                del st.session_state["emp_users_table"]
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error eliminando usuario: {e}")
 
 
 def page_users_admin():
