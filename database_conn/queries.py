@@ -173,6 +173,34 @@ def upsert_employees_df(df: pd.DataFrame):
     get_cached_full_employees.clear()
 
 
+def db_delete_employee(user_id: str):
+    """Elimina de forma segura un empleado y sus referencias activas (sesiones, asignaciones, accesos)."""
+    u_str = str(user_id).strip()
+    with db_session() as conn:
+        cur = conn.cursor()
+        # 1. Eliminar sesiones activas (evita violación de clave foránea user_sessions_username_fkey)
+        cur.execute("DELETE FROM user_sessions WHERE username = %s", (u_str,))
+        # 2. Eliminar trámites pendientes si existen (evita violación de clave foránea hr_procedures_user_id_fkey)
+        cur.execute("DELETE FROM hr_procedures WHERE user_id = %s", (u_str,))
+        # 3. Eliminar notificaciones
+        cur.execute("DELETE FROM notifications WHERE user_id = %s", (u_str,))
+        # 4. Eliminar asignaciones de turnos
+        cur.execute("DELETE FROM shift_assignments WHERE user_id = %s", (u_str,))
+        # 5. Eliminar usuario del aplicativo
+        cur.execute("DELETE FROM users_app WHERE username = %s", (u_str,))
+        # 6. Eliminar registro maestro de empleado
+        cur.execute("DELETE FROM employees WHERE user_id = %s", (u_str,))
+
+    log_audit("DELETE_EMPLOYEE", f"Empleado y accesos eliminados: {u_str}")
+
+    # Limpiar todos los cachés relevantes para que la vista se actualice inmediatamente
+    get_all_employees.clear()
+    get_cached_full_employees.clear()
+    get_users_by_role.clear()
+    get_cached_dataframe.clear()
+    return True
+
+
 # --- GESTIÓN DE TURNOS Y ASIGNACIONES ---
 
 
@@ -441,7 +469,10 @@ def db_create_leave_request(
     # Por defecto inicia en el nivel más bajo (Coordinador)
     target_status = "PENDING_COORD"
 
-    if r_type == "Permiso Laboral":
+    if str(user_id) == "102301732":
+        # Luisa Castaño pasa directamente al Jefe de Área (Control Interno - Johann Ramos)
+        target_status = "PENDING_JEFE"
+    elif r_type == "Permiso Laboral":
         if str(user_id) in ["119279359", "111734829", "38795759"]: # Valentina, Helen, Angela van a Coordinador
             target_status = "PENDING_COORD"
         elif role in ["coordinador", "jefe_area", "admin", "nomina"]:
@@ -552,7 +583,10 @@ def db_get_next_approver_info(user_id, reason_type):
 
     target_status = "PENDING_COORD"
 
-    if reason_type == "Permiso Laboral":
+    if str(user_id) == "102301732":
+        # Luisa Castaño pasa directamente al Jefe de Área (Control Interno - Johann Ramos)
+        target_status = "PENDING_JEFE"
+    elif reason_type == "Permiso Laboral":
         if str(user_id) in ["119279359", "111734829", "38795759"]: # Valentina, Helen, Angela van a Coordinador
             target_status = "PENDING_COORD"
         elif role in ["coordinador", "jefe_area", "admin", "nomina"]:
@@ -614,13 +648,21 @@ def db_get_next_approver_info(user_id, reason_type):
             elif subarea == "Orientador":
                 target_coord_dept = "Seguridad"
             
+            if direct_routing == "COORD" or str(user_id) == "100389343":
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT full_name FROM users_app WHERE includes_direct_coord = TRUE AND role = 'coordinador' AND active = 1 LIMIT 1"
+                )
+                dc_row = cur.fetchone()
+                if dc_row:
+                    return f"👤 {dc_row[0]} (Coordinador/a)"
+                return "👤 ANGY JARAMILLO (Coordinador/a)"
+
             df_c = pd.read_sql_query(
                 "SELECT full_name, managed_department FROM users_app WHERE role IN ('coordinador', 'nomina') AND active = 1 AND username != %s",
                 conn,
                 params=(user_id,),
             )
-            if str(user_id) == "100389343":
-                return "👤 ANGY JARAMILLO (Coordinador/a)"
 
             matched_names = []
             for _, r in df_c.iterrows():
@@ -645,6 +687,8 @@ def db_get_next_approver_info(user_id, reason_type):
             
             if str(user_id) in ["119279359", "111304019"]:
                 target_jefe_area = "Financiera"
+            elif str(user_id) == "102301732":
+                target_jefe_area = "Control Interno"
             elif subarea == "Admisiones":
                 target_jefe_area = "Financiera"
             elif any(s in subarea for s in special_ci):
@@ -783,6 +827,10 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
 
         # 2. Notificar a los aprobadores correspondientes
         if status == "PENDING_COORD":
+            # Exclusión explícita: 102301732 nunca notifica a coordinadores
+            if str(requester_id) == "102301732":
+                return
+
             # Retrieve direct_routing
             cur.execute("SELECT direct_routing FROM users_app WHERE username = %s", (requester_id,))
             dr_row = cur.fetchone()
@@ -799,8 +847,8 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                         "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                         (
                             dc_row[0],
-                            "Permiso por Autorizar (Sede Zarzal)",
-                            f"Nueva solicitud #{req_id} ({req_type}) de {req_name} (Sede Zarzal) esperando tu aprobación.<br><b>Justificación:</b> {req_desc}",
+                            "Permiso por Autorizar",
+                            f"Nueva solicitud #{req_id} ({req_type}) de {req_name} ({req_subarea or req_area}) esperando tu aprobación.<br><b>Justificación:</b> {req_desc}",
                             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         ),
                     )
@@ -859,6 +907,8 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
 
             if str(requester_id) in ["119279359", "111304019"]:
                 target_jefe_area = "Financiera"
+            elif str(requester_id) == "102301732":
+                target_jefe_area = "Control Interno"
             elif req_subarea in [
                 "Rehabilitación",
                 "Tecnólogo Rayos X",
@@ -1271,7 +1321,9 @@ def db_cancel_leave_request(req_id, user_id, reason):
                     )
             elif prev_status == "PENDING_JEFE":
                 target_jefe_area = emp_area
-                if emp_subarea in [
+                if str(user_id) == "102301732":
+                    target_jefe_area = "Control Interno"
+                elif emp_subarea in [
                     "Admisiones",
                     "Rehabilitación",
                     "Tecnólogo Rayos X",
