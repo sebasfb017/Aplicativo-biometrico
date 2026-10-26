@@ -1164,7 +1164,9 @@ def page_employee_portal():
                                 )
 
                                 target_jefe_area = area
-                                if subarea in [
+                                if str(user.get("username", "")) == "102301732":
+                                    target_jefe_area = "Control Interno"
+                                elif subarea in [
                                     "Rehabilitación",
                                     "Tecnólogo Rayos X",
                                     "Farmacia",

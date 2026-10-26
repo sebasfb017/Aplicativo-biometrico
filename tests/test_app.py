@@ -1088,3 +1088,199 @@ def test_attendance_deduplication():
     u1002 = df_clean[df_clean["user_id"] == "1002"]
     assert len(u1002) == 1
     assert u1002.iloc[0]["ts"] == "2026-06-22 08:00:10"
+
+
+def test_luisa_castano_direct_routing_control_interno():
+    from database_conn.connection import db_session
+    from database_conn.queries import db_create_leave_request, db_get_next_approver_info
+
+    # 1. Crear a Luisa Castaño y al Jefe de Control Interno
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users_app (username, full_name, role, emp_area, emp_subarea, direct_routing, active, password_hash, created_at)
+                VALUES 
+                    ('102301732', 'LUISA CASTAÑO', 'empleado', 'Administrativo', 'Auditor Médico', 'JEFE', 1, %s, '2026-10-20'),
+                    ('jefe_ci', 'JOHANN RAMOS', 'jefe_area', 'Control Interno', 'Control Interno', NULL, 1, %s, '2026-10-20')
+                ON CONFLICT (username) DO UPDATE 
+                SET role = EXCLUDED.role, emp_area = EXCLUDED.emp_area, emp_subarea = EXCLUDED.emp_subarea, direct_routing = EXCLUDED.direct_routing;
+                """,
+                (b"dummy", b"dummy"),
+            )
+            cur.execute(
+                """
+                INSERT INTO employees (user_id, full_name, department, created_at)
+                VALUES ('102301732', 'LUISA CASTAÑO', 'Auditor Médico', '2026-10-20')
+                ON CONFLICT (user_id) DO NOTHING;
+                """
+            )
+
+    # 2. Validar que la información del próximo aprobador apunte a la Jefatura (Control Interno)
+    approver_info = db_get_next_approver_info("102301732", "Permiso Laboral")
+    assert "JOHANN RAMOS" in approver_info or "Jefe" in approver_info or "Control Interno" in approver_info
+
+    # 3. Crear solicitud de permiso laboral y verificar que quede inmediatamente en PENDING_JEFE
+    req_id = db_create_leave_request(
+        user_id="102301732",
+        leave_start=date(2026, 10, 25),
+        leave_end=date(2026, 10, 25),
+        t_start="08:00",
+        t_end="12:00",
+        total_time="4h",
+        r_type="Permiso Laboral",
+        r_desc="Auditoría médica externa",
+        makeup="No requiere",
+        is_paid=True,
+    )
+    assert req_id is not None and req_id > 0
+
+    # 4. Verificar en base de datos el estado de la solicitud
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT status FROM leave_requests WHERE id = %s", (req_id,)
+            )
+            row = cur.fetchone()
+            assert row is not None
+            assert row[0] == "PENDING_JEFE"
+
+
+def test_delete_employee_cascades_and_clears_cache():
+    from database_conn.connection import db_session
+    from database_conn.queries import (
+        db_delete_employee,
+        get_cached_full_employees,
+        upsert_employees_df,
+    )
+
+    emp_id = "test_del_9999"
+
+    # 1. Crear empleado y usuario con sesión activa en user_sessions
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users_app (username, full_name, role, password_hash, active, created_at)
+                VALUES (%s, 'Empleado Prueba Borrado', 'empleado', %s, 1, '2026-10-22')
+                ON CONFLICT (username) DO NOTHING;
+                """,
+                (emp_id, b"dummy_hash"),
+            )
+            cur.execute(
+                """
+                INSERT INTO employees (user_id, full_name, department, created_at)
+                VALUES (%s, 'Empleado Prueba Borrado', 'Administrativo', '2026-10-22')
+                ON CONFLICT (user_id) DO NOTHING;
+                """,
+                (emp_id,),
+            )
+            cur.execute(
+                """
+                INSERT INTO user_sessions (token, username, created_at, expires_at)
+                VALUES ('tok_del_9999', %s, '2026-10-22 00:00:00', '2026-10-23 00:00:00')
+                ON CONFLICT (token) DO NOTHING;
+                """,
+                (emp_id,),
+            )
+
+    # 2. Verificar que get_cached_full_employees lo incluye
+    df_before = get_cached_full_employees()
+    assert emp_id in df_before["user_id"].values
+
+    # 3. Ejecutar la función de eliminación segura
+    res = db_delete_employee(emp_id)
+    assert res is True
+
+    # 4. Verificar que se eliminó de la base de datos
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM employees WHERE user_id = %s", (emp_id,))
+            assert cur.fetchone()[0] == 0
+            cur.execute("SELECT COUNT(*) FROM users_app WHERE username = %s", (emp_id,))
+            assert cur.fetchone()[0] == 0
+            cur.execute("SELECT COUNT(*) FROM user_sessions WHERE username = %s", (emp_id,))
+            assert cur.fetchone()[0] == 0
+
+    # 5. Verificar que el caché get_cached_full_employees fue invalidado y ya no lo contiene
+    df_after = get_cached_full_employees()
+    assert emp_id not in df_after["user_id"].values
+
+
+def test_valentina_tapasco_routes_to_angy_jaramillo():
+    from database_conn.connection import db_session
+    from database_conn.queries import db_create_leave_request, db_get_next_approver_info
+
+    # 1. Crear / asegurar a Angy Jaramillo como coordinadora directa
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users_app (username, full_name, role, emp_area, emp_subarea, managed_department, includes_direct_coord, active, password_hash, created_at)
+                VALUES ('111644844', 'ANGY JARAMILLO', 'coordinador', 'Administrativo', 'Administrativa', 'Administrativa, Rehabilitación', TRUE, 1, %s, '2026-10-22')
+                ON CONFLICT (username) DO UPDATE 
+                SET managed_department = EXCLUDED.managed_department, includes_direct_coord = TRUE;
+                """,
+                (b"dummy",),
+            )
+            cur.execute(
+                """
+                INSERT INTO users_app (username, full_name, role, emp_area, emp_subarea, direct_routing, active, password_hash, created_at)
+                VALUES ('100643956', 'VALENTINA TAPASCO', 'empleado', 'Asistencial', 'Enfermería', 'COORD', 1, %s, '2026-10-22')
+                ON CONFLICT (username) DO UPDATE 
+                SET direct_routing = 'COORD';
+                """,
+                (b"dummy",),
+            )
+            cur.execute(
+                """
+                INSERT INTO employees (user_id, full_name, department, created_at)
+                VALUES ('100643956', 'VALENTINA TAPASCO', 'Asistencial - Enfermería', '2026-10-22')
+                ON CONFLICT (user_id) DO NOTHING;
+                """
+            )
+
+    # 2. Validar que la información del próximo aprobador apunta a Angy Jaramillo
+    approver_info = db_get_next_approver_info("100643956", "Licencia No Remunerada")
+    assert "ANGY JARAMILLO" in approver_info
+
+    # 3. Crear solicitud
+    req_id = db_create_leave_request(
+        user_id="100643956",
+        leave_start=date(2026, 11, 2),
+        leave_end=date(2026, 11, 2),
+        t_start="08:00",
+        t_end="17:00",
+        total_time="8h",
+        r_type="Licencia No Remunerada",
+        r_desc="Asunto personal",
+        makeup="No aplica",
+        is_paid=False,
+    )
+    assert req_id is not None and req_id > 0
+
+    # 4. Validar que la consulta de solicitudes pendientes de Angy Jaramillo la retorna
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT lr.id, lr.user_id, e.full_name
+                FROM leave_requests lr
+                JOIN employees e ON lr.user_id = e.user_id
+                LEFT JOIN users_app ua ON lr.user_id = ua.username
+                WHERE lr.status = 'PENDING_COORD' AND lr.user_id != %s AND
+                      (
+                          (lr.user_id = '100389343' AND %s = 'Administrativa, Rehabilitación') OR
+                          (lr.user_id NOT IN ('100389343', '102301732') AND (
+                              %s ILIKE '%%' || ua.emp_subarea || '%%'
+                              OR (%s AND ua.emp_subarea = 'Servicios Generales')
+                              OR (%s AND ua.emp_subarea = 'Orientador')
+                              OR (%s AND (SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD')
+                          ))
+                      )
+            """
+            cur.execute(query, ("111644844", "Administrativa, Rehabilitación", "Administrativa, Rehabilitación", False, False, True))
+            pending_ids = [r[0] for r in cur.fetchall()]
+            assert req_id in pending_ids
+
+
+
