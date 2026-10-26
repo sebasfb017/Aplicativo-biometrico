@@ -399,6 +399,7 @@ def render_absence_calendar(user):
             LEFT JOIN users_app ua ON lr.user_id = ua.username
             WHERE lr.status IN (%s, %s, %s, %s)
               AND lr.leave_date_start <= %s AND lr.leave_date_end >= %s
+              AND lr.user_id != '102301732'
               AND (
                   %s LIKE '%%' || ua.emp_subarea || '%%'
                   OR (%s AND ua.emp_subarea = 'Servicios Generales')
@@ -432,7 +433,7 @@ def render_absence_calendar(user):
                   AND lr.leave_date_start <= %s AND lr.leave_date_end >= %s
                   AND (
                       (ua.direct_routing = 'JEFE_ADMIN' AND %s = 'Administrativo') OR
-                      ((ua.direct_routing IS NULL OR ua.direct_routing != 'JEFE_ADMIN') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR
+                      ((ua.direct_routing IS NULL OR ua.direct_routing != 'JEFE_ADMIN') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador') AND lr.user_id != '102301732') OR
                       (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
                       (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
                       ((SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD' AND %s = 'Administrativo')
@@ -725,7 +726,7 @@ def page_exceptions():
                     WHERE lr.status = 'PENDING_COORD' AND lr.user_id != %s AND
                           (
                               (lr.user_id = '100389343' AND %s = 'Administrativa, Rehabilitación') OR
-                              (lr.user_id != '100389343' AND (
+                              (lr.user_id NOT IN ('100389343', '102301732') AND (
                                   %s ILIKE '%%' || ua.emp_subarea || '%%'
                                   OR (%s AND ua.emp_subarea = 'Servicios Generales')
                                   OR (%s AND ua.emp_subarea = 'Orientador')
@@ -770,7 +771,7 @@ def page_exceptions():
                     WHERE lr.status = 'PENDING_JEFE' AND lr.user_id != %s AND 
                           (
                               (ua.direct_routing = 'JEFE_ADMIN' AND %s = 'Administrativo') OR
-                              ((ua.direct_routing IS NULL OR ua.direct_routing != 'JEFE_ADMIN') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador')) OR
+                              ((ua.direct_routing IS NULL OR ua.direct_routing != 'JEFE_ADMIN') AND ua.emp_area = %s AND ua.emp_subarea NOT IN ('Admisiones', 'Enfermería', 'Rehabilitación', 'Tecnólogo Rayos X', 'Auditor Médico', 'Medico', 'Farmacia', 'Control Interno', 'Cirugía', 'Mantenimiento', 'Seguridad', 'Orientador') AND lr.user_id != '102301732') OR
                               (ua.emp_subarea IN ('Rehabilitación', 'Tecnólogo Rayos X', 'Farmacia', 'Mantenimiento', 'Seguridad', 'Orientador') AND %s = 'Administrativo') OR
                               (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
                               (lr.user_id IN ('119279359', '111304019') AND %s = 'Financiera') OR
@@ -1007,6 +1008,7 @@ def page_exceptions():
                 managed_dept_str = user.get("managed_department", "")
                 has_calidad = "Calidad" in managed_dept_str
                 has_seguridad = "Seguridad" in managed_dept_str
+                includes_direct = bool(user.get("includes_direct_coord"))
 
                 query_hist = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -1019,10 +1021,11 @@ def page_exceptions():
                               %s LIKE '%%' || ua.emp_subarea || '%%'
                               OR (%s AND ua.emp_subarea = 'Servicios Generales')
                               OR (%s AND ua.emp_subarea = 'Orientador')
+                              OR (%s AND (SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD')
                           ))
                     ORDER BY lr.id DESC
                 """
-                params_hist = [user["username"], managed_dept_str, has_calidad, has_seguridad]
+                params_hist = [user["username"], managed_dept_str, has_calidad, has_seguridad, includes_direct]
             else:
                 query_hist = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -1035,7 +1038,7 @@ def page_exceptions():
                               ua.emp_area = %s OR 
                               (ua.emp_subarea = 'Admisiones' AND %s = 'Financiera') OR
                               (ua.emp_subarea = 'Auditor Médico' AND %s = 'Auditoria Médica') OR
-                              (ua.emp_subarea = 'Control Interno' AND %s = 'Control Interno') OR
+                              ((ua.emp_subarea = 'Control Interno' OR lr.user_id = '102301732') AND %s = 'Control Interno') OR
                               (lr.user_id IN ('119279359', '111304019') AND %s = 'Financiera')
                           ))
                     ORDER BY lr.id DESC
@@ -2137,6 +2140,8 @@ def page_exceptions():
                             "Farmacia",
                         ]:
                             target_jefe_area = "Administrativo"
+                        elif str(row.get("user_id", "")) == "102301732":
+                            target_jefe_area = "Control Interno"
                         elif subarea == "Admisiones":
                             target_jefe_area = "Financiera"
                         elif subarea in [
