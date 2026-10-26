@@ -196,7 +196,7 @@ DDL_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS hr_procedures (
         id SERIAL PRIMARY KEY,
-        user_id TEXT NOT NULL,
+        user_id TEXT NOT NULL REFERENCES users_app(username) ON DELETE CASCADE,
         procedure_type TEXT NOT NULL,
         details TEXT,
         attachment_path TEXT,
@@ -239,7 +239,7 @@ DDL_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS user_sessions (
         token TEXT PRIMARY KEY,
-        username TEXT NOT NULL,
+        username TEXT NOT NULL REFERENCES users_app(username) ON DELETE CASCADE,
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL
     );
@@ -265,6 +265,26 @@ def init_db():
             # 1. Crear tablas e índices
             for statement in DDL_STATEMENTS:
                 cur.execute(statement)
+
+            # 1.1 Asegurar integridad referencial en cascada para sesiones y trámites
+            cur.execute(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_sessions_username_fkey') THEN
+                        ALTER TABLE user_sessions DROP CONSTRAINT user_sessions_username_fkey;
+                    END IF;
+                    ALTER TABLE user_sessions ADD CONSTRAINT user_sessions_username_fkey 
+                        FOREIGN KEY (username) REFERENCES users_app(username) ON DELETE CASCADE;
+
+                    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'hr_procedures_user_id_fkey') THEN
+                        ALTER TABLE hr_procedures DROP CONSTRAINT hr_procedures_user_id_fkey;
+                    END IF;
+                    ALTER TABLE hr_procedures ADD CONSTRAINT hr_procedures_user_id_fkey 
+                        FOREIGN KEY (user_id) REFERENCES users_app(username) ON DELETE CASCADE;
+                END $$;
+                """
+            )
 
             # 2. Inicializar usuario administrador por defecto si no existe
             cur.execute("SELECT COUNT(*) FROM users_app WHERE role = 'admin'")
