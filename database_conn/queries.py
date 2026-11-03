@@ -469,7 +469,9 @@ def db_create_leave_request(
     # Por defecto inicia en el nivel más bajo (Coordinador)
     target_status = "PENDING_COORD"
 
-    if str(user_id) == "102301732":
+    if r_type == "Incapacidad":
+        target_status = "PENDING_RRHH"
+    elif str(user_id) == "102301732":
         # Luisa Castaño pasa directamente al Jefe de Área (Control Interno - Johann Ramos)
         target_status = "PENDING_JEFE"
     elif r_type == "Permiso Laboral":
@@ -481,8 +483,6 @@ def db_create_leave_request(
             target_status = "PENDING_COORD"
     elif r_type in ["Permiso Personal", "Cambio de Turno"] and str(user_id) in ["119279359", "111734829", "38795759"]:
         target_status = "PENDING_COORD"
-    elif r_type == "Incapacidad":
-        target_status = "PENDING_RRHH"
     elif r_type in ["Licencia Remunerada", "Licencia No Remunerada"] and str(user_id) == "119279359":
         target_status = "PENDING_COORD"
     elif direct_routing:
@@ -583,7 +583,9 @@ def db_get_next_approver_info(user_id, reason_type):
 
     target_status = "PENDING_COORD"
 
-    if str(user_id) == "102301732":
+    if reason_type == "Incapacidad":
+        target_status = "PENDING_RRHH"
+    elif str(user_id) == "102301732":
         # Luisa Castaño pasa directamente al Jefe de Área (Control Interno - Johann Ramos)
         target_status = "PENDING_JEFE"
     elif reason_type == "Permiso Laboral":
@@ -595,8 +597,6 @@ def db_get_next_approver_info(user_id, reason_type):
             target_status = "PENDING_COORD"
     elif reason_type in ["Permiso Personal", "Cambio de Turno"] and str(user_id) in ["119279359", "111734829", "38795759"]:
         target_status = "PENDING_COORD"
-    elif reason_type == "Incapacidad":
-        target_status = "PENDING_RRHH"
     elif reason_type in ["Licencia Remunerada", "Licencia No Remunerada"] and str(user_id) == "119279359":
         target_status = "PENDING_COORD"
     elif direct_routing:
@@ -1022,9 +1022,10 @@ def db_approve_leave_request_coord(req_id, coord_username):
 def db_approve_leave_request_jefe(req_id, jefe_username):
     with db_session() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT user_id FROM leave_requests WHERE id = %s", (req_id,))
+        cur.execute("SELECT user_id, approved_by_rrhh FROM leave_requests WHERE id = %s", (req_id,))
         uid_row = cur.fetchone()
         user_id = uid_row[0] if uid_row else None
+        approved_by_rrhh = uid_row[1] if uid_row else None
 
         cur.execute(
             "SELECT full_name FROM users_app WHERE username = %s", (jefe_username,)
@@ -1032,20 +1033,26 @@ def db_approve_leave_request_jefe(req_id, jefe_username):
         j_row = cur.fetchone()
         jefe_name = j_row[0] if j_row else jefe_username
 
+        # Si ya cuenta con pre-aprobación o revisión de RRHH (flujo donde RRHH remite al Jefe),
+        # la firma del Jefe finaliza la solicitud en APPROVED.
+        # Si NO tiene firma de RRHH (ej. solicitudes de coordinadores o enrutamientos directos a JEFE),
+        # la solicitud debe pasar a PENDING_RRHH para la auditoría, firma y aplicación de nómina.
+        next_status = "APPROVED" if (approved_by_rrhh and str(approved_by_rrhh).strip()) else "PENDING_RRHH"
+
         cur.execute(
             """
             UPDATE leave_requests 
-            SET status = 'APPROVED', approved_by_jefe = %s, jefe_approval_date = %s
+            SET status = %s, approved_by_jefe = %s, jefe_approval_date = %s
             WHERE id = %s AND status = 'PENDING_JEFE'
         """,
-            (jefe_username, datetime.now().isoformat(timespec="seconds"), req_id),
+            (next_status, jefe_username, datetime.now().isoformat(timespec="seconds"), req_id),
         )
 
         update_success = cur.rowcount > 0
         notify = update_success and user_id
 
     if notify:
-        db_notify_next_approvers(req_id, user_id, "APPROVED", jefe_name)
+        db_notify_next_approvers(req_id, user_id, next_status, jefe_name)
     get_cached_dataframe.clear()
     return update_success
 
