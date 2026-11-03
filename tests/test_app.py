@@ -1271,16 +1271,188 @@ def test_valentina_tapasco_routes_to_angy_jaramillo():
                       (
                           (lr.user_id = '100389343' AND %s = 'Administrativa, Rehabilitación') OR
                           (lr.user_id NOT IN ('100389343', '102301732') AND (
-                              %s ILIKE '%%' || ua.emp_subarea || '%%'
-                              OR (%s AND ua.emp_subarea = 'Servicios Generales')
-                              OR (%s AND ua.emp_subarea = 'Orientador')
-                              OR (%s AND (SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD')
+                              (%s AND ua.direct_routing = 'COORD')
+                              OR (NOT %s AND (ua.direct_routing IS NULL OR ua.direct_routing != 'COORD') AND (
+                                  %s ILIKE '%%' || ua.emp_subarea || '%%'
+                                  OR (%s AND ua.emp_subarea = 'Servicios Generales')
+                                  OR (%s AND ua.emp_subarea = 'Orientador')
+                              ))
                           ))
                       )
             """
-            cur.execute(query, ("111644844", "Administrativa, Rehabilitación", "Administrativa, Rehabilitación", False, False, True))
+            # Para Angy Jaramillo (includes_direct_coord = True): SÍ debe aparecer
+            cur.execute(query, ("111644844", "Administrativa, Rehabilitación", True, True, "Administrativa, Rehabilitación", False, False))
             pending_ids = [r[0] for r in cur.fetchall()]
             assert req_id in pending_ids
+
+            # Para un coordinador estándar de Enfermería (includes_direct_coord = False): NO debe aparecer
+            cur.execute(query, ("coord_enf", "Enfermería", False, False, "Enfermería", False, False))
+            pending_standard_ids = [r[0] for r in cur.fetchall()]
+            assert req_id not in pending_standard_ids
+
+
+def test_daniela_aguirre_zarzal_routes_only_to_angy_jaramillo():
+    from database_conn.connection import db_session
+    from database_conn.queries import db_get_next_approver_info, db_create_leave_request
+
+    # 1. Asegurar registro de Daniela Aguirre con direct_routing = 'COORD'
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users_app (username, full_name, role, emp_area, emp_subarea, direct_routing, active, password_hash, created_at)
+                VALUES ('100755003', 'DANIELA AGUIRRE', 'empleado', 'Asistencial', 'Rehabilitación', 'COORD', 1, %s, '2026-10-30')
+                ON CONFLICT (username) DO UPDATE 
+                SET direct_routing = 'COORD', emp_subarea = 'Rehabilitación';
+                """,
+                (b"dummy",),
+            )
+            cur.execute(
+                """
+                INSERT INTO employees (user_id, full_name, department, created_at)
+                VALUES ('100755003', 'DANIELA AGUIRRE', 'Asistencial - Rehabilitación', '2026-10-30')
+                ON CONFLICT (user_id) DO NOTHING;
+                """
+            )
+
+    # 2. Validar que el próximo aprobador sea Angy Jaramillo
+    approver = db_get_next_approver_info("100755003", "Permiso Personal")
+    assert "ANGY JARAMILLO" in approver
+
+    # 3. Crear solicitud de prueba para Daniela Aguirre
+    req_id = db_create_leave_request(
+        user_id="100755003",
+        leave_start=date(2026, 11, 30),
+        leave_end=date(2026, 11, 30),
+        t_start="15:30",
+        t_end="17:30",
+        total_time="2h",
+        r_type="Permiso Personal",
+        r_desc="permiso personal",
+        makeup="acuerdo reposicion",
+        is_paid=True,
+    )
+    assert req_id is not None and req_id > 0
+
+    # 4. Validar que en la consulta de PENDING_COORD solo aparezca a Angy y NO a Luis Herrera (Rehabilitación)
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT lr.id
+                FROM leave_requests lr
+                LEFT JOIN users_app ua ON lr.user_id = ua.username
+                WHERE lr.status = 'PENDING_COORD' AND lr.user_id = '100755003' AND
+                      (
+                          (%s AND ua.direct_routing = 'COORD')
+                          OR (NOT %s AND (ua.direct_routing IS NULL OR ua.direct_routing != 'COORD') AND (
+                              %s ILIKE '%%' || ua.emp_subarea || '%%'
+                              OR (%s AND ua.emp_subarea = 'Servicios Generales')
+                              OR (%s AND ua.emp_subarea = 'Orientador')
+                          ))
+                      )
+            """
+            # Angy Jaramillo (includes_direct_coord = True)
+            cur.execute(query, (True, True, "Administrativa, Rehabilitación", False, False))
+            rows_angy = [r[0] for r in cur.fetchall()]
+            assert req_id in rows_angy
+
+            # Luis Herrera (includes_direct_coord = False, managed_department = 'Rehabilitación')
+            cur.execute(query, (False, False, "Rehabilitación", False, False))
+            rows_luis = [r[0] for r in cur.fetchall()]
+            assert req_id not in rows_luis
+
+
+
+def test_incapacidad_always_routes_to_rrhh_even_with_jefe_routing():
+    from database_conn.connection import db_session
+    from database_conn.queries import db_create_leave_request, db_get_next_approver_info
+
+    # 1. Luisa Castaño tiene direct_routing = 'JEFE'
+    approver_info = db_get_next_approver_info("102301732", "Incapacidad")
+    assert "Gestión Humana" in approver_info or "RRHH" in approver_info
+
+    # 2. Al radicar Incapacidad, debe iniciar en PENDING_RRHH
+    req_id = db_create_leave_request(
+        user_id="102301732",
+        leave_start=date(2026, 11, 10),
+        leave_end=date(2026, 11, 12),
+        t_start="",
+        t_end="",
+        total_time="3 Día(s)",
+        r_type="Incapacidad",
+        r_desc="Reposo médico",
+        makeup="",
+        is_paid=True,
+    )
+    assert req_id is not None and req_id > 0
+
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status FROM leave_requests WHERE id = %s", (req_id,))
+            row = cur.fetchone()
+            assert row is not None
+            assert row[0] == "PENDING_RRHH"
+
+
+def test_jefe_approval_transitions_to_rrhh_or_approved_correctly():
+    from database_conn.connection import db_session
+    from database_conn.queries import db_create_leave_request, db_approve_leave_request_jefe
+
+    # Caso A: Solicitud sin aprobación de RRHH (ej. Coordinador o Jefe Directo)
+    # Al aprobar el Jefe, debe avanzar a PENDING_RRHH
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO leave_requests (
+                    user_id, request_date, leave_date_start, leave_date_end, start_time, end_time,
+                    total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status
+                ) VALUES (
+                    '111623778', '2026-11-01', '2026-11-01', '2026-11-01', '08:00', '12:00',
+                    '4h', 'Permiso Laboral', 'Reunión externa', '', 1, '2026-11-01 08:00:00', 'PENDING_JEFE'
+                ) RETURNING id
+                """
+            )
+            req_id_a = cur.fetchone()[0]
+
+    success_a = db_approve_leave_request_jefe(req_id_a, "111406247")
+    assert success_a is True
+
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status, approved_by_jefe FROM leave_requests WHERE id = %s", (req_id_a,))
+            status_a, jefe_a = cur.fetchone()
+            assert status_a == "PENDING_RRHH"
+            assert jefe_a == "111406247"
+
+    # Caso B: Solicitud que YA contaba con visto bueno de RRHH (ej. Vacaciones enviadas a Jefe)
+    # Al aprobar el Jefe, debe finalizar en APPROVED
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO leave_requests (
+                    user_id, request_date, leave_date_start, leave_date_end, start_time, end_time,
+                    total_time, reason_type, reason_description, how_to_makeup, is_paid, created_at, status, approved_by_rrhh, rrhh_approval_date
+                ) VALUES (
+                    '111623778', '2026-11-01', '2026-11-05', '2026-11-15', '', '',
+                    '10 Día(s)', 'Vacaciones', 'Descanso', '', 1, '2026-11-01 08:00:00', 'PENDING_JEFE', '119279359', '2026-11-01 09:00:00'
+                ) RETURNING id
+                """
+            )
+            req_id_b = cur.fetchone()[0]
+
+    success_b = db_approve_leave_request_jefe(req_id_b, "111406247")
+    assert success_b is True
+
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status, approved_by_jefe, approved_by_rrhh FROM leave_requests WHERE id = %s", (req_id_b,))
+            status_b, jefe_b, rrhh_b = cur.fetchone()
+            assert status_b == "APPROVED"
+            assert jefe_b == "111406247"
+            assert rrhh_b == "119279359"
+
 
 
 

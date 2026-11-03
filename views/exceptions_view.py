@@ -287,19 +287,30 @@ def handle_approve_callback(r_dict, user):
             st.toast("La solicitud ya fue procesada o no se encontró.", icon="⚠️")
             return
 
-        next_status = "PENDING_RRHH"
+        has_rrhh = bool(r_dict.get("rrhh_name") or r_dict.get("approved_by_rrhh"))
+        next_status = "APPROVED" if has_rrhh else "PENDING_RRHH"
 
-        log_audit(
-            "APPROVE_LEAVE_L1",
-            f"Permiso #{r_dict['id']} ({r_dict['reason_type']}) de {r_dict['full_name']} aprobado por Jefe de Área. Pasa a {next_status}",
+        action_name = "APPROVE_LEAVE_FINAL" if has_rrhh else "APPROVE_LEAVE_L1"
+        log_detail = (
+            f"Permiso #{r_dict['id']} ({r_dict['reason_type']}) de {r_dict['full_name']} APROBADO FINAL por Jefe de Área."
+            if has_rrhh
+            else f"Permiso #{r_dict['id']} ({r_dict['reason_type']}) de {r_dict['full_name']} aprobado por Jefe de Área. Pasa a {next_status}"
         )
+        log_audit(action_name, log_detail)
+
+        msg = (
+            "Tu solicitud ha sido aprobada de forma definitiva por tu Jefe de Área."
+            if has_rrhh
+            else "Tu solicitud avanzó en el flujo de firmas hacia RRHH para su revisión y aplicación final."
+        )
+        status_label = "APROBADA" if has_rrhh else "PRE-APROBADA"
         notify_employee_status(
             r_dict["user_id"],
             r_dict["full_name"],
             r_dict["id"],
             r_dict["reason_type"],
-            "PRE-APROBADA",
-            f"Tu solicitud avanzó en el flujo de firmas hacia RRHH para su revisión y aplicación final.",
+            status_label,
+            msg,
             user["full_name"],
         )
 
@@ -401,14 +412,19 @@ def render_absence_calendar(user):
               AND lr.leave_date_start <= %s AND lr.leave_date_end >= %s
               AND lr.user_id != '102301732'
               AND (
-                  %s LIKE '%%' || ua.emp_subarea || '%%'
-                  OR (%s AND ua.emp_subarea = 'Servicios Generales')
-                  OR (%s AND ua.emp_subarea = 'Orientador')
-                  OR (%s AND (SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD')
+                  (lr.user_id = '100389343' AND %s = 'Administrativa, Rehabilitación') OR
+                  (lr.user_id != '100389343' AND (
+                      (%s AND ua.direct_routing = 'COORD')
+                      OR (NOT %s AND (ua.direct_routing IS NULL OR ua.direct_routing != 'COORD') AND (
+                          %s LIKE '%%' || ua.emp_subarea || '%%'
+                          OR (%s AND ua.emp_subarea = 'Servicios Generales')
+                          OR (%s AND ua.emp_subarea = 'Orientador')
+                      ))
+                  ))
               )
             ORDER BY lr.leave_date_start ASC
         """
-        params = (*status_list, last_day_str, first_day_str, managed_dept_str, has_calidad, has_seguridad, includes_direct)
+        params = (*status_list, last_day_str, first_day_str, managed_dept_str, includes_direct, includes_direct, managed_dept_str, has_calidad, has_seguridad)
     elif effective_role == "jefe_area":
         if user.get("managed_area", "") == "Control Interno":
             query = """
@@ -727,15 +743,17 @@ def page_exceptions():
                           (
                               (lr.user_id = '100389343' AND %s = 'Administrativa, Rehabilitación') OR
                               (lr.user_id NOT IN ('100389343', '102301732') AND (
-                                  %s ILIKE '%%' || ua.emp_subarea || '%%'
-                                  OR (%s AND ua.emp_subarea = 'Servicios Generales')
-                                  OR (%s AND ua.emp_subarea = 'Orientador')
-                                  OR (%s AND (SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD')
+                                  (%s AND ua.direct_routing = 'COORD')
+                                  OR (NOT %s AND (ua.direct_routing IS NULL OR ua.direct_routing != 'COORD') AND (
+                                      %s ILIKE '%%' || ua.emp_subarea || '%%'
+                                      OR (%s AND ua.emp_subarea = 'Servicios Generales')
+                                      OR (%s AND ua.emp_subarea = 'Orientador')
+                                  ))
                               ))
                           )
                     ORDER BY lr.leave_date_start ASC, lr.id ASC
                 """
-                params = (user["username"], managed_dept_str, managed_dept_str, has_calidad, has_seguridad, includes_direct)
+                params = (user["username"], managed_dept_str, includes_direct, includes_direct, managed_dept_str, has_calidad, has_seguridad)
             elif _managed_area == "Control Interno":
                 query = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
@@ -1018,14 +1036,19 @@ def page_exceptions():
                     JOIN users_app ua ON lr.user_id = ua.username
                     WHERE lr.approved_by_coord = %s 
                        OR (lr.status = 'REJECTED' AND (
-                              %s LIKE '%%' || ua.emp_subarea || '%%'
-                              OR (%s AND ua.emp_subarea = 'Servicios Generales')
-                              OR (%s AND ua.emp_subarea = 'Orientador')
-                              OR (%s AND (SELECT direct_routing FROM users_app WHERE username = lr.user_id) = 'COORD')
+                              (lr.user_id = '100389343' AND %s = 'Administrativa, Rehabilitación') OR
+                              (lr.user_id NOT IN ('100389343', '102301732') AND (
+                                  (%s AND ua.direct_routing = 'COORD')
+                                  OR (NOT %s AND (ua.direct_routing IS NULL OR ua.direct_routing != 'COORD') AND (
+                                      %s LIKE '%%' || ua.emp_subarea || '%%'
+                                      OR (%s AND ua.emp_subarea = 'Servicios Generales')
+                                      OR (%s AND ua.emp_subarea = 'Orientador')
+                                  ))
+                              ))
                           ))
                     ORDER BY lr.id DESC
                 """
-                params_hist = [user["username"], managed_dept_str, has_calidad, has_seguridad, includes_direct]
+                params_hist = [user["username"], managed_dept_str, includes_direct, includes_direct, managed_dept_str, has_calidad, has_seguridad]
             else:
                 query_hist = """
                     SELECT lr.id, lr.user_id, e.full_name, lr.request_date, lr.leave_date_start, lr.leave_date_end,
