@@ -1133,7 +1133,7 @@ def page_employee_portal():
                                 )
                                 for _, c_row in coord_all.iterrows():
                                     m_dept = c_row.get("managed_department") or ""
-                                    if target_coord_dept in str(m_dept):
+                                    if str(target_coord_dept).lower() in str(m_dept).lower():
                                         if c_row["emp_email"]: target_emails.append(c_row["emp_email"])
                                         if c_row["emp_phone"]: target_phones.append(c_row["emp_phone"])
                             elif target_status == "PENDING_JEFE":
@@ -1204,6 +1204,7 @@ def page_employee_portal():
                                     SELECT emp_email, emp_phone FROM users_app 
                                     WHERE role = 'jefe_area' AND active = 1 
                                     AND managed_area = %s
+                                    ORDER BY CASE WHEN username = '1116250974' THEN 0 ELSE 1 END, full_name ASC
                                 """,
                                     conn,
                                     params=(target_jefe_area,),
@@ -1217,6 +1218,11 @@ def page_employee_portal():
                                 )
                                 target_emails = [e for e in admin_df["emp_email"].tolist() if e]
                                 target_phones = [p for p in admin_df["emp_phone"].tolist() if p]
+
+                            # Si el solicitante es Diego Candamil, no enviar notificaciones por correo/WhatsApp a los jefes
+                            if str(user.get("username", "")) == "111625580":
+                                target_emails = []
+                                target_phones = []
 
                             if target_emails:
                                 ok, msg = send_novedad_alert(

@@ -634,7 +634,10 @@ def db_get_next_approver_info(user_id, reason_type):
                     elif target_subarea == "Orientador":
                         target_subarea = "Seguridad"
 
-                    if target_subarea in managed_dept or subarea in managed_dept:
+                    if (
+                        target_subarea.lower() in managed_dept.lower()
+                        or subarea.lower() in managed_dept.lower()
+                    ):
                         has_coordinator = True
                         break
         if not has_coordinator:
@@ -713,7 +716,7 @@ def db_get_next_approver_info(user_id, reason_type):
             
             
             df_j = pd.read_sql_query(
-                "SELECT full_name FROM users_app WHERE role = 'jefe_area' AND active = 1 AND managed_area = %s AND username != %s",
+                "SELECT full_name FROM users_app WHERE role = 'jefe_area' AND active = 1 AND managed_area = %s AND username != %s ORDER BY CASE WHEN username = '1116250974' THEN 0 ELSE 1 END, full_name ASC",
                 conn,
                 params=(target_jefe_area, user_id),
             )
@@ -872,7 +875,10 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                     elif target_subarea == "Orientador":
                         target_subarea = "Seguridad"
 
-                    if target_subarea in m_dept or req_subarea in m_dept:
+                    if (
+                        target_subarea.lower() in m_dept.lower()
+                        or req_subarea.lower() in m_dept.lower()
+                    ):
                         cur.execute(
                             "INSERT INTO notifications (user_id, title, message, created_at) VALUES (%s, %s, %s, %s)",
                             (
@@ -901,6 +907,10 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
                 )
 
         elif status == "PENDING_JEFE":
+            # Para solicitudes de Diego Candamil, no generar notificaciones automáticas a los jefes
+            if str(requester_id) == "111625580":
+                return
+
             # --- RUTAS DE APROBACIÓN PERSONALIZADAS ---
             # Resolvemos qué Jefatura debe aprobar la solicitud basándonos en la sub-área.
             target_jefe_area = req_area
@@ -965,7 +975,7 @@ def db_notify_next_approvers(req_id, requester_id, status, actor_name=None):
 
             # Find Jefes of these areas
             cur.execute(
-                "SELECT username FROM users_app WHERE role = 'jefe_area' AND managed_area = ANY(%s) AND active = 1",
+                "SELECT username FROM users_app WHERE role = 'jefe_area' AND managed_area = ANY(%s) AND active = 1 ORDER BY CASE WHEN username = '1116250974' THEN 0 ELSE 1 END, full_name ASC",
                 (areas_to_notify,),
             )
             jefes = cur.fetchall()
@@ -1060,15 +1070,20 @@ def db_approve_leave_request_jefe(req_id, jefe_username):
 def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
     with db_session() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT user_id FROM leave_requests WHERE id = %s", (req_id,))
+        cur.execute("SELECT user_id, reason_type FROM leave_requests WHERE id = %s", (req_id,))
         uid_row = cur.fetchone()
         user_id = uid_row[0] if uid_row else None
+        reason_type = uid_row[1] if uid_row else ""
 
         cur.execute(
             "SELECT full_name FROM users_app WHERE username = %s", (approver_user,)
         )
         a_row = cur.fetchone()
         approver_name = a_row[0] if a_row else approver_user
+
+        # Los permisos personales nunca deben escalar al jefe de área
+        if reason_type == "Permiso Personal":
+            is_final = True
 
         # Fix #3: consultar skip_jefe_approval del solicitante para forzar aprobación final
         if not is_final and user_id:
@@ -1199,7 +1214,6 @@ def db_revert_leave_request(req_id, admin_user):
             SET status = 'PENDING_RRHH', 
                 approved_by_rrhh = NULL, rrhh_approval_date = NULL,
                 approved_by_jefe = NULL, jefe_approval_date = NULL,
-                approved_by_coord = NULL, coord_approval_date = NULL,
                 rejection_reason = NULL, cancellation_reason = NULL
             WHERE id = %s
         """,

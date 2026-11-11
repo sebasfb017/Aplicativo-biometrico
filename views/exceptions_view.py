@@ -1768,6 +1768,9 @@ def page_exceptions():
 
                             if _skip_jefe:
                                 requiere_jefe = False
+                            elif r["reason_type"] == "Permiso Personal":
+                                # Los permisos personales nunca deben llegar al jefe de área
+                                requiere_jefe = False
                             elif is_special_user and r["reason_type"] in [
                                 "Permiso Personal",
                                 "Permiso Laboral",
@@ -1778,7 +1781,7 @@ def page_exceptions():
                             else:
                                 requiere_jefe = requiere_jefe_tipo or (
                                     pd.isna(r.get("coord_name"))
-                                    and r["reason_type"] != "Incapacidad"
+                                    and r["reason_type"] not in ["Incapacidad", "Permiso Personal"]
                                 )
 
                             if (
@@ -1981,12 +1984,18 @@ def page_exceptions():
                                         r = options_map[opt]
                                         requiere_jefe_tipo = r["reason_type"] in ["Vacaciones", "Calamidad Doméstica", "Licencia de Luto", "Licencia de Paternidad", "Licencia por Votación", "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"]
                                         is_special_user = str(r["user_id"]) in ["119279359", "111627893"]
-                                        if is_special_user and r["reason_type"] in ["Permiso Personal", "Permiso Laboral"]:
+                                        if r["reason_type"] == "Permiso Personal":
+                                            # Los permisos personales nunca deben llegar al jefe de área
+                                            requiere_jefe = False
+                                        elif is_special_user and r["reason_type"] in ["Permiso Personal", "Permiso Laboral"]:
                                             requiere_jefe = False
                                         elif r.get("requester_role") == "juridico":
                                             requiere_jefe = False
                                         else:
-                                            requiere_jefe = requiere_jefe_tipo or (pd.isna(r.get("coord_name")) and r["reason_type"] != "Incapacidad")
+                                            requiere_jefe = requiere_jefe_tipo or (
+                                                pd.isna(r.get("coord_name"))
+                                                and r["reason_type"] not in ["Incapacidad", "Permiso Personal"]
+                                            )
                                             
                                         if pd.notna(r.get("jefe_name")) and str(r.get("jefe_name")).strip():
                                             requiere_jefe = False
@@ -2143,7 +2152,10 @@ def page_exceptions():
                         matching_coords = []
                         for name, m_depts in coordinators:
                             m_depts_str = m_depts or ""
-                            if (target_subarea in m_depts_str or subarea in m_depts_str) and name != row["full_name"]:
+                            if (
+                                target_subarea.lower() in m_depts_str.lower()
+                                or subarea.lower() in m_depts_str.lower()
+                            ) and name != row["full_name"]:
                                 matching_coords.append(name)
                         if matching_coords:
                             return ", ".join(matching_coords)
