@@ -740,6 +740,223 @@ def test_get_late_punch_ids():
     assert id_on_time not in late_map
 
 
+def test_leave_request_justifies_lateness():
+    """Verifica que un permiso en leave_requests ampare una llegada tarde y no figure como tardanza injustificada."""
+    # 1. Asignar horario a las 08:00
+    sched = pd.DataFrame(
+        [
+            {
+                "week_start": "2025-01-13",
+                "dow": 0,
+                "start_time": "08:00",
+                "grace_minutes": 5,
+            }
+        ]
+    )
+    app.upsert_schedule_df(sched)
+
+    # 2. Insertar marcación a las 08:30 (30 min tarde por horario)
+    rows = [
+        {
+            "device_name": "x",
+            "device_ip": "1.1",
+            "user_id": "emp_just_test",
+            "ts": "2025-01-13 08:30:00",
+            "status": 0,
+            "punch": 0,
+            "uid": 200,
+            "downloaded_at": datetime.now().isoformat(),
+        }
+    ]
+    app.upsert_attendance(rows)
+
+    # 3. Registrar permiso aprobado en leave_requests de 08:00 a 08:30
+    conn = app.db_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO leave_requests (
+            user_id, request_date, leave_date_start, leave_date_end,
+            start_time, end_time, reason_type, reason_description, status, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """,
+        (
+            "emp_just_test",
+            "2025-01-13",
+            "2025-01-13",
+            "2025-01-13",
+            "08:00",
+            "08:30",
+            "Cita Médica",
+            "Examen de laboratorio",
+            "APPROVED",
+            datetime.now().isoformat(),
+        ),
+    )
+    cur.execute("SELECT id FROM attendance_raw WHERE user_id = 'emp_just_test' AND ts = '2025-01-13 08:30:00'")
+    punch_id = cur.fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    # 4. Evaluar con get_late_punch_ids
+    late_map, just_map = app.get_late_punch_ids(
+        date(2025, 1, 13), date(2025, 1, 13), return_justified=True
+    )
+
+    # La marcación NO debe estar en late_map (no es llegada tarde injustificada)
+    assert punch_id not in late_map
+    # La marcación SÍ debe estar en just_map con el motivo
+    assert punch_id in just_map
+    assert just_map[punch_id]["reason"] == "Cita Médica"
+    assert just_map[punch_id]["status"] == "APPROVED"
+
+
+def test_morning_permission_ending_at_break_justifies_afternoon_arrival():
+    """Verifica que un permiso laboral que cubre toda la mañana hasta el almuerzo (ej. 08:00 - 12:30)
+    ampare la jornada de la mañana y que la llegada antes del fin de almuerzo (ej. 13:56 para turno de 14:00)
+    no se compute como tardanza injustificada ni con exceso."""
+    # 1. Crear turno con descanso
+    s_id = app.upsert_shift(
+        name="Turno Manana Con Break Test",
+        start_time="08:00",
+        grace_minutes=0,
+        end_time="17:00",
+        has_break=1,
+        break_start="12:30",
+        break_end="14:00",
+    )
+    test_uid = "emp_andres_test"
+    emp_df = pd.DataFrame([{"user_id": test_uid, "full_name": "Andres Test", "profile_id": 1}])
+    app.upsert_employees_df(emp_df)
+    # Semana de 2026-10-01 (jueves, dow=3) empieza el lunes 2026-09-28
+    app.assign_shift(test_uid, "2026-09-28", 3, s_id)
+
+    # 2. Insertar marcaciones: primera entrada a las 13:56:28 y salida a las 17:02:35
+    rows = [
+        {
+            "device_name": "CASA_GALVEZ",
+            "device_ip": "1.1",
+            "user_id": test_uid,
+            "ts": "2026-10-01 13:56:28",
+            "status": 0,
+            "punch": 0,
+            "uid": 9991,
+            "downloaded_at": datetime.now().isoformat(),
+        },
+        {
+            "device_name": "CASA_GALVEZ",
+            "device_ip": "1.1",
+            "user_id": test_uid,
+            "ts": "2026-10-01 17:02:35",
+            "status": 0,
+            "punch": 1,
+            "uid": 9992,
+            "downloaded_at": datetime.now().isoformat(),
+        },
+    ]
+    app.upsert_attendance(rows)
+
+    # 3. Registrar permiso laboral aprobado de 08:00 a 12:30
+    conn = app.db_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO leave_requests (
+            user_id, request_date, leave_date_start, leave_date_end,
+            start_time, end_time, reason_type, reason_description, status, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """,
+        (
+            test_uid,
+            "2026-09-30",
+            "2026-10-01",
+            "2026-10-01",
+            "08:00",
+            "12:30",
+            "Permiso Laboral",
+            "Capacitacion externa",
+            "APPROVED",
+            datetime.now().isoformat(),
+        ),
+    )
+    cur.execute("SELECT id FROM attendance_raw WHERE user_id = %s AND ts = '2026-10-01 13:56:28'", (test_uid,))
+    punch_id = cur.fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    # 4. Evaluar con get_late_punch_ids
+    late_map, just_map = app.get_late_punch_ids(
+        date(2026, 10, 1), date(2026, 10, 1), return_justified=True
+    )
+
+    assert punch_id not in late_map
+    assert punch_id in just_map
+    assert just_map[punch_id]["reason"] == "Permiso Laboral"
+    assert just_map[punch_id]["status"] == "APPROVED"
+    assert not just_map[punch_id].get("exceeded", False)
+
+
+def test_morning_permission_does_not_falsely_penalize_break_return():
+    """Verifica que un permiso de la mañana (ej. 09:00 - 11:00) no sea asociado por error
+    al reingreso del descanso de almuerzo de las 14:00 inflando la tardanza a horas."""
+    s_id = app.upsert_shift(
+        name="Turno Break Return Test",
+        start_time="08:00",
+        grace_minutes=0,
+        end_time="18:00",
+        has_break=1,
+        break_start="12:30",
+        break_end="14:00",
+    )
+    test_uid = "emp_break_test_2"
+    emp_df = pd.DataFrame([{"user_id": test_uid, "full_name": "Break Test", "profile_id": 1}])
+    app.upsert_employees_df(emp_df)
+    # Semana de 2026-10-06 (martes, dow=1) empieza el lunes 2026-10-05
+    app.assign_shift(test_uid, "2026-10-05", 1, s_id)
+
+    # Marcaciones del día: 08:00, 12:30 (salida), 14:03 (reingreso), 18:00 (salida)
+    rows = [
+        {"device_name": "x", "device_ip": "1.1", "user_id": test_uid, "ts": "2026-10-06 08:00:00", "status": 0, "punch": 0, "uid": 9993, "downloaded_at": datetime.now().isoformat()},
+        {"device_name": "x", "device_ip": "1.1", "user_id": test_uid, "ts": "2026-10-06 12:30:00", "status": 0, "punch": 1, "uid": 9994, "downloaded_at": datetime.now().isoformat()},
+        {"device_name": "x", "device_ip": "1.1", "user_id": test_uid, "ts": "2026-10-06 14:03:00", "status": 0, "punch": 0, "uid": 9995, "downloaded_at": datetime.now().isoformat()},
+        {"device_name": "x", "device_ip": "1.1", "user_id": test_uid, "ts": "2026-10-06 18:00:00", "status": 0, "punch": 1, "uid": 9996, "downloaded_at": datetime.now().isoformat()},
+    ]
+    app.upsert_attendance(rows)
+
+    # Permiso en la mañana de 09:00 a 11:00
+    conn = app.db_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO leave_requests (
+            user_id, request_date, leave_date_start, leave_date_end,
+            start_time, end_time, reason_type, reason_description, status, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """,
+        (
+            test_uid,
+            "2026-10-06",
+            "2026-10-06",
+            "2026-10-06",
+            "09:00",
+            "11:00",
+            "Permiso Laboral",
+            "Diligencia de manana",
+            "APPROVED",
+            datetime.now().isoformat(),
+        ),
+    )
+    cur.execute("SELECT id FROM attendance_raw WHERE user_id = %s AND ts = '2026-10-06 14:03:00'", (test_uid,))
+    punch_return_id = cur.fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    late_map = app.get_late_punch_ids(date(2026, 10, 6), date(2026, 10, 6))
+
+    # El reingreso a las 14:03 (turno break_end 14:00) debe marcar como mucho 3 min tarde, NO 183 min
+    assert late_map.get(punch_return_id) == 3
+
+
 def test_process_bulk_shifts_new_codes():
     """Prueba la importación de nuevos códigos de turno y de excepción mediante process_bulk_shifts."""
     # Asegurar que exista un empleado de prueba en la base de datos
@@ -1452,6 +1669,37 @@ def test_jefe_approval_transitions_to_rrhh_or_approved_correctly():
             assert status_b == "APPROVED"
             assert jefe_b == "111406247"
             assert rrhh_b == "119279359"
+
+
+def test_get_late_punch_ids_with_user_id_filter():
+    """Valida que get_late_punch_ids acepte el parámetro user_id para unificar Expediente 360."""
+    from services.analytics import get_late_punch_ids
+    # Ejecutar para un usuario inexistente debe retornar vacío sin error
+    res = get_late_punch_ids(date(2026, 10, 1), date(2026, 10, 31), return_justified=True, user_id="999999999")
+    late_map, just_map = res
+    assert late_map == {}
+    assert just_map == {}
+
+
+def test_pre_cierre_audit_queries():
+    """Valida las funciones de auditoría pre-cierre en database_conn/queries.py."""
+    from database_conn.queries import (
+        get_pending_leaves_for_month,
+        get_orphan_punches_for_month,
+        get_employee_approved_exceptions_records,
+    )
+    # 1. Pendientes para mes fiscal
+    df_pending = get_pending_leaves_for_month(2026, 10)
+    assert isinstance(df_pending, pd.DataFrame)
+
+    # 2. Marcaciones huérfanas
+    df_orphans = get_orphan_punches_for_month(2026, 10)
+    assert isinstance(df_orphans, pd.DataFrame)
+
+    # 3. Excepciones aprobadas de empleado
+    df_exc = get_employee_approved_exceptions_records("100646556", 2026, 10)
+    assert isinstance(df_exc, pd.DataFrame)
+
 
 
 

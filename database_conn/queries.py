@@ -2294,5 +2294,168 @@ def log_audit(action: str, details: str, user_id: str = None):
         )
 
 
+# --- AUDITORÍA PRE-CIERRE DE NÓMINA Y EXPEDIENTE 360 ---
+
+
+def get_employee_approved_exceptions_records(user_id: str, year: int, month: int):
+    """
+    Obtiene las excepciones directas y permisos aprobados para un empleado en un mes específico.
+    Centraliza la consulta eliminando SQL directo en views.
+    """
+    import calendar
+    from database_conn.queries import is_holiday
+
+    start_date = date(year, month, 1).isoformat()
+    end_date = date(year, month, calendar.monthrange(year, month)[1]).isoformat()
+
+    with db_session() as conn:
+        df_exc = pd.read_sql_query(
+            """
+            SELECT date as fecha, type as tipo, notes as notas, 
+                   NULL as start_time, NULL as end_time, 1 as is_paid 
+            FROM exceptions 
+            WHERE user_id = %s AND date >= %s AND date <= %s 
+              AND (notes NOT LIKE 'Aprobado de Portal:%%' OR notes IS NULL)
+            """,
+            conn,
+            params=(str(user_id), start_date, end_date),
+        )
+
+        df_req = pd.read_sql_query(
+            """
+            SELECT leave_date_start, leave_date_end, reason_type, reason_description, 
+                   specific_dates, start_time, end_time, is_paid 
+            FROM leave_requests 
+            WHERE user_id = %s AND status = 'APPROVED'
+            """,
+            conn,
+            params=(str(user_id),),
+        )
+
+    records = df_exc.to_dict("records")
+
+    if not df_req.empty:
+        for _, r in df_req.iterrows():
+            d_start = date.fromisoformat(str(r["leave_date_start"]).strip())
+            d_end = date.fromisoformat(str(r["leave_date_end"]).strip())
+
+            dates_to_process = []
+            if (
+                "specific_dates" in r
+                and pd.notna(r["specific_dates"])
+                and str(r["specific_dates"]).strip() not in ["None", ""]
+            ):
+                dates_to_process = [
+                    date.fromisoformat(d.strip())
+                    for d in str(r["specific_dates"]).split(",")
+                    if d.strip()
+                ]
+            else:
+                delta = d_end - d_start
+                dates_to_process = [
+                    d_start + timedelta(days=i) for i in range(delta.days + 1)
+                ]
+
+            for curr_date in dates_to_process:
+                if curr_date.year == year and curr_date.month == month:
+                    if r["reason_type"] == "Vacaciones":
+                        if curr_date.weekday() == 6 or is_holiday(curr_date):
+                            continue
+
+                    st_val = r.get("start_time")
+                    et_val = r.get("end_time")
+                    if pd.isna(st_val) or str(st_val).strip() == "":
+                        st_val = None
+                    if pd.isna(et_val) or str(et_val).strip() == "":
+                        et_val = None
+
+                    records.append(
+                        {
+                            "fecha": curr_date.isoformat(),
+                            "tipo": r["reason_type"],
+                            "notas": f"Aprobado de Portal: {r['reason_description']}",
+                            "start_time": st_val,
+                            "end_time": et_val,
+                            "is_paid": (
+                                int(r.get("is_paid", 1))
+                                if pd.notna(r.get("is_paid"))
+                                else 1
+                            ),
+                        }
+                    )
+
+    return pd.DataFrame(records)
+
+
+def get_pending_leaves_for_month(year: int, month: int) -> pd.DataFrame:
+    """
+    Obtiene todas las solicitudes de permisos pendientes de aprobación
+    que afectan el mes seleccionado, para auditoría pre-cierre.
+    """
+    import calendar
+
+    first_day = date(year, month, 1)
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    month_pattern = f"%%{year}-{month:02d}%%"
+
+    with db_session() as conn:
+        return pd.read_sql_query(
+            """
+            SELECT lr.id, lr.user_id, e.full_name, e.department, 
+                   lr.reason_type, lr.status, lr.leave_date_start, lr.leave_date_end, 
+                   lr.specific_dates, lr.start_time, lr.end_time, lr.reason_description,
+                   lr.created_at
+            FROM leave_requests lr
+            LEFT JOIN employees e ON lr.user_id = e.user_id
+            WHERE lr.status LIKE 'PENDING%%'
+              AND (
+                (lr.leave_date_start <= %s AND lr.leave_date_end >= %s)
+                OR (lr.specific_dates ILIKE %s)
+              )
+            ORDER BY lr.leave_date_start, lr.id
+            """,
+            conn,
+            params=(last_day.isoformat(), first_day.isoformat(), month_pattern),
+        )
+
+
+def get_orphan_punches_for_month(year: int, month: int) -> pd.DataFrame:
+    """
+    Detecta empleados que marcaron en el biométrico durante el mes
+    pero no tienen turno asignado en shift_assignments.
+    """
+    import calendar
+
+    first_dt = datetime(year, month, 1, 0, 0, 0)
+    last_day = calendar.monthrange(year, month)[1]
+    end_dt = datetime(year, month, last_day, 23, 59, 59)
+
+    with db_session() as conn:
+        return pd.read_sql_query(
+            """
+            SELECT ar.user_id, COALESCE(e.full_name, 'Sin registrar') as full_name, 
+                   COALESCE(e.department, 'Sin departamento') as department, 
+                   COUNT(ar.id) as total_marcaciones,
+                   MIN(ar.ts) as primera_marcacion,
+                   MAX(ar.ts) as ultima_marcacion
+            FROM attendance_raw ar
+            LEFT JOIN employees e ON ar.user_id = e.user_id
+            WHERE ar.ts >= %s AND ar.ts <= %s AND ar.is_ignored = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM shift_assignments sa
+                WHERE sa.user_id = ar.user_id
+              )
+            GROUP BY ar.user_id, e.full_name, e.department
+            ORDER BY total_marcaciones DESC
+            """,
+            conn,
+            params=(
+                first_dt.isoformat(sep=" ", timespec="seconds"),
+                end_dt.isoformat(sep=" ", timespec="seconds"),
+            ),
+        )
+
+
+
 
 

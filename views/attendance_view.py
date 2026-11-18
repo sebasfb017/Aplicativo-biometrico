@@ -322,18 +322,42 @@ def page_view_attendance():
         df["Área"] = df["Área"].apply(lambda x: [x] if x else [])
         df["Sub-área"] = df["Sub-área"].apply(lambda x: [x] if x else [])
 
-        # Calcular tardanzas
-        late_punch_map = get_late_punch_ids(start_date, end_date)
+        # Calcular tardanzas y justificaciones amparadas (novedades/permisos)
+        late_punch_map, justified_map = get_late_punch_ids(
+            start_date, end_date, return_justified=True
+        )
 
         def get_lateness_label(row):
             rid = int(row["ID"])
+            if rid in justified_map:
+                j = justified_map[rid]
+                if rid in late_punch_map:
+                    return f"⏰ {late_punch_map[rid]} min tarde (Excede {j['reason']})"
+                badge = "✅" if j["status"] == "APPROVED" else "⏳"
+                status_lbl = "Justificado" if j["status"] == "APPROVED" else "En trámite"
+                return f"{badge} {status_lbl}: {j['reason']}"
             if rid in late_punch_map:
                 return f"⏰ {late_punch_map[rid]} min tarde"
             if row["Tipo"] == "Entrada":
                 return "✅ A tiempo"
             return "-"
 
+        def get_justification_detail(row):
+            rid = int(row["ID"])
+            if rid in justified_map:
+                j = justified_map[rid]
+                status_str = "Aprobado" if j["status"] == "APPROVED" else "En trámite"
+                time_str = (
+                    f" ({j['time']})"
+                    if j.get("time") and j["time"] != "Día completo"
+                    else ""
+                )
+                desc_str = f" - {j['desc']}" if j.get("desc") else ""
+                return f"[{status_str}] {j['reason']}{time_str}{desc_str}"
+            return "-"
+
         df["Tardanza"] = df.apply(get_lateness_label, axis=1)
+        df["Justificación / Novedad"] = df.apply(get_justification_detail, axis=1)
 
         # Filtrar si está seleccionado 'Mostrar solo llegadas tarde'
         if show_only_late:
@@ -344,7 +368,7 @@ def page_view_attendance():
                 "💡 No hay llegadas tarde registradas para los filtros seleccionados."
             )
         else:
-            # Reordenar las columnas para colocar Tardanza después de Hora Marcación
+            # Reordenar las columnas para colocar Tardanza y Justificación después de Hora Marcación
             cols_order = [
                 "ID",
                 "Dispositivo",
@@ -355,6 +379,7 @@ def page_view_attendance():
                 "Sub-área",
                 "Hora Marcación",
                 "Tardanza",
+                "Justificación / Novedad",
                 "Status",
                 "Tipo",
                 "Descargado en",
@@ -390,6 +415,11 @@ def page_view_attendance():
                     "Sub-área": st.column_config.ListColumn(
                         "Sub-área", help="Sub-área o cargo específico del empleado"
                     ),
+                    "Justificación / Novedad": st.column_config.TextColumn(
+                        "Justificación / Novedad",
+                        help="Detalle del permiso o justificación amparada",
+                        width="medium",
+                    ),
                 },
             )
 
@@ -411,7 +441,14 @@ def page_view_attendance():
 
             excel_bytes = io.BytesIO()
             # Ordenar ascendente para que los datos más antiguos salgan primero en el Excel
-            df_export = df.sort_values("Hora Marcación", ascending=True)
+            df_export = df.sort_values("Hora Marcación", ascending=True).copy()
+            # Formatear listas de Área y Sub-área para que no aparezcan como corchetes en Excel
+            df_export["Área"] = df_export["Área"].apply(
+                lambda x: ", ".join(x) if isinstance(x, list) else str(x or "")
+            )
+            df_export["Sub-área"] = df_export["Sub-área"].apply(
+                lambda x: ", ".join(x) if isinstance(x, list) else str(x or "")
+            )
             with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
                 df_export.to_excel(writer, index=False, sheet_name="Marcaciones")
             excel_bytes.seek(0)

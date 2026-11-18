@@ -5,67 +5,16 @@ import pandas as pd
 import streamlit as st
 
 from database_conn.connection import db_conn
-from database_conn.queries import get_all_employees, is_holiday
-from services.analytics import fetch_attendance_between, schedule_for_user_date
-
-
-def get_employee_exceptions(year, month, user_id):
-    conn = db_conn()
-    start_date = date(year, month, 1).isoformat()
-    end_date = date(year, month, calendar.monthrange(year, month)[1]).isoformat()
-    
-    df_exc = pd.read_sql_query(
-        "SELECT date as fecha, type as tipo, notes as notas, NULL as start_time, NULL as end_time, 1 as is_paid FROM exceptions WHERE user_id = %s AND date >= %s AND date <= %s AND (notes NOT LIKE 'Aprobado de Portal:%%' OR notes IS NULL)",
-        conn,
-        params=(str(user_id), start_date, end_date),
-    )
-    
-    df_req = pd.read_sql_query(
-        "SELECT leave_date_start, leave_date_end, reason_type, reason_description, specific_dates, start_time, end_time, is_paid FROM leave_requests WHERE user_id = %s AND status = 'APPROVED'",
-        conn,
-        params=(str(user_id),),
-    )
-    conn.close()
-    
-    records = df_exc.to_dict('records')
-    
-    if not df_req.empty:
-        for _, r in df_req.iterrows():
-            d_start = date.fromisoformat(r["leave_date_start"])
-            d_end = date.fromisoformat(r["leave_date_end"])
-            
-            dates_to_process = []
-            if "specific_dates" in r and pd.notna(r["specific_dates"]) and str(r["specific_dates"]).strip() not in ["None", ""]:
-                dates_to_process = [date.fromisoformat(d.strip()) for d in str(r["specific_dates"]).split(",") if d.strip()]
-            else:
-                delta = d_end - d_start
-                dates_to_process = [d_start + timedelta(days=i) for i in range(delta.days + 1)]
-                
-            for curr_date in dates_to_process:
-                if curr_date.year == year and curr_date.month == month:
-                    if r["reason_type"] == "Vacaciones":
-                        if curr_date.weekday() == 6 or is_holiday(curr_date):
-                            continue
-                    
-                    st_val = r.get("start_time")
-                    et_val = r.get("end_time")
-                    # Manejar nulos o cadenas vacías
-                    if pd.isna(st_val) or str(st_val).strip() == "":
-                        st_val = None
-                    if pd.isna(et_val) or str(et_val).strip() == "":
-                        et_val = None
-
-                    records.append({
-                        "fecha": curr_date.isoformat(),
-                        "tipo": r["reason_type"],
-                        "notas": f"Aprobado de Portal: {r['reason_description']}",
-                        "start_time": st_val,
-                        "end_time": et_val,
-                        "is_paid": int(r.get("is_paid", 1)) if pd.notna(r.get("is_paid")) else 1
-                    })
-                    
-    df = pd.DataFrame(records)
-    return df
+from database_conn.queries import (
+    get_all_employees,
+    get_employee_approved_exceptions_records,
+    is_holiday,
+)
+from services.analytics import (
+    fetch_attendance_between,
+    get_late_punch_ids,
+    schedule_for_user_date,
+)
 
 
 def get_employee_raw_punches(year, month, user_id):
@@ -130,8 +79,8 @@ def page_employee_360():
     st.markdown("---")
 
     with st.spinner("Compilando biografía de tiempos..."):
-        exc_df = get_employee_exceptions(
-            selected_year, selected_month, selected_user_id
+        exc_df = get_employee_approved_exceptions_records(
+            selected_user_id, selected_year, selected_month
         )
         exceptions_dict = {
             row["fecha"]: {
@@ -142,7 +91,7 @@ def page_employee_360():
                 "is_paid": row.get("is_paid", 1),
             }
             for _, row in exc_df.iterrows()
-        }
+        } if not exc_df.empty else {}
 
         raw_df = get_employee_raw_punches(
             selected_year, selected_month, selected_user_id
@@ -150,16 +99,29 @@ def page_employee_360():
         if not raw_df.empty:
             raw_df["fecha_str"] = raw_df["ts"].dt.strftime("%Y-%m-%d")
             punches_por_dia = raw_df.groupby("fecha_str")["ts"].apply(list).to_dict()
+            punch_ids_por_dia = (
+                raw_df.groupby("fecha_str")["id"].apply(list).to_dict()
+                if "id" in raw_df.columns
+                else {}
+            )
         else:
             punches_por_dia = {}
+            punch_ids_por_dia = {}
 
         dias_del_mes = calendar.monthrange(selected_year, selected_month)[1]
         start_weekday = date(selected_year, selected_month, 1).weekday()  # 0=Lun, 6=Dom
+        first_day = date(selected_year, selected_month, 1)
+        last_day = date(selected_year, selected_month, dias_del_mes)
+
+        # Motor unificado de tardanzas y justificaciones amparadas
+        late_punch_map, justified_map = get_late_punch_ids(
+            first_day, last_day, return_justified=True, user_id=selected_user_id
+        )
 
         llegadas_tarde_count = 0
         minutos_tarde_acum = 0
         faltas_count = 0
-        novedades_count = len(exc_df)
+        novedades_count = len(exc_df) if not exc_df.empty else 0
 
         calendar_cells = []
         feed_incidentes = []
@@ -174,6 +136,7 @@ def page_employee_360():
             novedad_obj = exceptions_dict.get(date_str)
             novedad = novedad_obj["tipo"] if novedad_obj else "-"
             dia_punches = sorted(punches_por_dia.get(date_str, []))
+            dia_ids = punch_ids_por_dia.get(date_str, [])
 
             # Tipos: normal, retardo, falta, novedad, libre, pendiente, huerfano (marco sin turno)
             tipo_dia = "normal"
@@ -196,31 +159,40 @@ def page_employee_360():
 
             es_festivo = is_holiday(current_date)
 
-            if novedad != "-":
-                tipo_dia = "novedad"
-            elif sched is None:
-                if dia_punches:
+            # Evaluación cruzada con el motor unificado de analytics
+            day_late_mins = sum(
+                late_punch_map[pid] for pid in dia_ids if pid in late_punch_map
+            )
+            day_justifications = [
+                justified_map[pid] for pid in dia_ids if pid in justified_map
+            ]
+
+            if dia_punches:
+                if day_late_mins > 0:
+                    tipo_dia = "retardo"
+                    late_min = day_late_mins
+                    llegadas_tarde_count += 1
+                    minutos_tarde_acum += day_late_mins
+                elif day_justifications or novedad != "-":
+                    tipo_dia = "novedad"
+                    late_min = 0
+                elif sched is None:
                     tipo_dia = "huerfano"
                 else:
-                    tipo_dia = "libre"
+                    tipo_dia = "normal"
+                    late_min = 0
             else:
-                if not dia_punches and current_date < date.today():
-                    if es_festivo:
-                        tipo_dia = "festivo"
-                    else:
-                        tipo_dia = "falta"
-                        faltas_count += 1
-                elif not dia_punches and current_date >= date.today():
-                    tipo_dia = "pendiente"
+                if novedad != "-":
+                    tipo_dia = "novedad"
+                elif sched is None:
+                    tipo_dia = "libre"
+                elif es_festivo:
+                    tipo_dia = "festivo"
+                elif current_date < date.today():
+                    tipo_dia = "falta"
+                    faltas_count += 1
                 else:
-                    primer_punch = dia_punches[0]
-                    sched_start = datetime.combine(current_date, sched["start_time"])
-                    late_min = int((primer_punch - sched_start).total_seconds() // 60)
-
-                    if late_min >= 1:
-                        tipo_dia = "retardo"
-                        llegadas_tarde_count += 1
-                        minutos_tarde_acum += late_min
+                    tipo_dia = "pendiente"
 
             # Guardar para el feed si es anomalia
             if tipo_dia in ["retardo", "falta", "huerfano"]:
@@ -229,15 +201,15 @@ def page_employee_360():
                     if tipo_dia == "retardo"
                     else ("❌" if tipo_dia == "falta" else "⚠️")
                 )
-                desc = (
-                    f"Llegó {late_min} min tarde"
-                    if tipo_dia == "retardo"
-                    else (
-                        "No se presentó al turno"
-                        if tipo_dia == "falta"
-                        else "Marcó en día libre"
-                    )
-                )
+                if tipo_dia == "retardo":
+                    exceeded_info = ""
+                    if day_justifications and day_justifications[0].get("exceeded"):
+                        exceeded_info = f" (Excede {day_justifications[0]['reason']})"
+                    desc = f"Llegó {late_min} min tarde{exceeded_info}"
+                elif tipo_dia == "falta":
+                    desc = "No se presentó al turno"
+                else:
+                    desc = "Marcó en día libre"
                 feed_incidentes.append(
                     {
                         "fecha": current_date.strftime("%d %b"),
