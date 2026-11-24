@@ -1701,6 +1701,89 @@ def test_pre_cierre_audit_queries():
     assert isinstance(df_exc, pd.DataFrame)
 
 
+def test_overnight_permission_crosses_midnight():
+    """Valida que un permiso de amanecida (ej. 14:00 a 02:00 del día siguiente) justifique marcaciones en ambos días."""
+    from datetime import datetime, time
+    from services.analytics import _evaluate_punch_justification
+
+    # Permiso de 14:00 (día 1) a 02:00 (día 2)
+    lr = {
+        "id": 9991,
+        "reason_type": "Permiso Laboral",
+        "reason_desc": "Evento institucional nocturno",
+        "start_time": time(14, 0),
+        "end_time": time(2, 0),
+        "status": "APPROVED",
+        "is_full_day": False,
+        "leave_date_start": "2026-11-24",
+        "leave_date_end": "2026-11-25",
+    }
+    sched = {
+        "start_time": time(14, 0),
+        "end_time": time(22, 0),
+        "grace_minutes": 10,
+    }
+
+    # Caso 1: Marcación día 1 a las 14:30 (excede gracia de 10 min respecto a inicio 14:00, pero está amparado por el evento)
+    punch_day1 = {"ts": datetime(2026, 11, 24, 14, 30, 0)}
+    exp_dt1 = datetime(2026, 11, 24, 14, 0, 0)
+    late1, just1 = _evaluate_punch_justification(
+        punch_day1, exp_dt1, sched, None, [lr], is_break=False
+    )
+    assert late1 is None
+    assert just1 is not None
+    assert just1["reason"] == "Permiso Laboral"
+
+    # Caso 2: Marcación día 2 a las 02:05 de madrugada (turno de noche que iniciaba a las 01:00, amparado por el evento que terminó a las 02:00)
+    punch_day2 = {"ts": datetime(2026, 11, 25, 2, 5, 0)}
+    exp_dt2 = datetime(2026, 11, 25, 1, 0, 0)
+    late2, just2 = _evaluate_punch_justification(
+        punch_day2, exp_dt2, sched, None, [lr], is_break=False
+    )
+    assert late2 is None
+    assert just2 is not None
+    assert just2["reason"] == "Permiso Laboral"
+
+
+def test_overnight_hours_calculation():
+    """Valida el cálculo de horas para permisos que cruzan la medianoche."""
+    from datetime import date, datetime, time, timedelta
+
+    def calc_hours(time_s, time_e):
+        ts_dt = datetime.combine(date.today(), time_s)
+        te_dt = datetime.combine(date.today(), time_e)
+        is_overnight = False
+        if te_dt > ts_dt:
+            diff = te_dt - ts_dt
+        elif te_dt < ts_dt:
+            te_dt += timedelta(days=1)
+            diff = te_dt - ts_dt
+            is_overnight = True
+        else:
+            return "Error: La hora fin no puede ser igual a la inicial"
+
+        total_mins = int(diff.total_seconds() // 60)
+        h, m = divmod(total_mins, 60)
+        parts = []
+        if h > 0:
+            parts.append(f"{h} Hora{'s' if h > 1 else ''}")
+        if m > 0:
+            parts.append(f"{m} Minuto{'s' if m > 1 else ''}")
+        base_calc = " y ".join(parts) if parts else "0 Minutos"
+        return f"{base_calc} (Cruza medianoche)" if is_overnight else base_calc
+
+    # 14:00 a 02:00 (12 horas amanecida)
+    assert calc_hours(time(14, 0), time(2, 0)) == "12 Horas (Cruza medianoche)"
+    # 22:00 a 06:00 (8 horas amanecida)
+    assert calc_hours(time(22, 0), time(6, 0)) == "8 Horas (Cruza medianoche)"
+    # 08:00 a 12:30 (4 horas y 30 minutos diurno)
+    assert calc_hours(time(8, 0), time(12, 30)) == "4 Horas y 30 Minutos"
+    # Misma hora
+    assert "Error" in calc_hours(time(8, 0), time(8, 0))
+
+
+
+
 
 
 
