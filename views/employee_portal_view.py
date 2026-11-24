@@ -786,6 +786,11 @@ def page_employee_portal():
                             key=f"te_temprano_{fk}",
                         )
 
+                    if time_s and time_e and time_e < time_s:
+                        st.info(
+                            "🌙 **Permiso de Amanecida**: El horario seleccionado finaliza en la madrugada del día siguiente (+1 día)."
+                        )
+
                 # --- CÁLCULO DINÁMICO DE TIEMPO ---
                 # Dependiendo de lo que seleccione el usuario, calculamos el tiempo automáticamente.
                 # Las variables time_s y time_e capturan las horas seleccionadas por el usuario.
@@ -855,21 +860,33 @@ def page_employee_portal():
                     if time_s and time_e:
                         ts_dt = datetime.combine(date.today(), time_s)
                         te_dt = datetime.combine(date.today(), time_e)
+                        is_overnight = False
                         if te_dt > ts_dt:
                             diff = te_dt - ts_dt
-                            total_mins = diff.seconds // 60
+                        elif te_dt < ts_dt:
+                            # Permiso de amanecida que cruza medianoche
+                            te_dt += timedelta(days=1)
+                            diff = te_dt - ts_dt
+                            is_overnight = True
+                        else:
+                            diff = None
+
+                        if diff is not None:
+                            total_mins = int(diff.total_seconds() // 60)
                             h, m = divmod(total_mins, 60)
                             parts = []
                             if h > 0:
                                 parts.append(f"{h} Hora{'s' if h > 1 else ''}")
                             if m > 0:
                                 parts.append(f"{m} Minuto{'s' if m > 1 else ''}")
-                            calculated_time = (
-                                " y ".join(parts) if parts else "0 Minutos"
-                            )
+                            base_calc = " y ".join(parts) if parts else "0 Minutos"
+                            if is_overnight:
+                                calculated_time = f"{base_calc} (Cruza medianoche)"
+                            else:
+                                calculated_time = base_calc
                         else:
                             calculated_time = (
-                                "Error: La hora fin debe ser mayor a la inicial"
+                                "Error: La hora fin no puede ser igual a la inicial"
                             )
                     else:
                         calculated_time = "Ingresa ambas horas para calcular fracción"
@@ -1015,11 +1032,12 @@ def page_employee_portal():
                     elif time_s and time_e:
                         ts_dt = datetime.combine(date.today(), time_s)
                         te_dt = datetime.combine(date.today(), time_e)
-                        if te_dt > ts_dt:
-                            diff = te_dt - ts_dt
-                            if (diff.seconds // 60) > 120:
-                                st.error("❌ Los Permisos Personales no pueden exceder un máximo de 2 horas.")
-                                is_valid_form = False
+                        if te_dt <= ts_dt:
+                            te_dt += timedelta(days=1)
+                        diff = te_dt - ts_dt
+                        if (diff.total_seconds() // 60) > 120:
+                            st.error("❌ Los Permisos Personales no pueden exceder un máximo de 2 horas.")
+                            is_valid_form = False
                 else:
                     requires_attachment = categoria == "Incapacidad" or reason_type in [
                         "Licencia por Votación",
@@ -1045,6 +1063,10 @@ def page_employee_portal():
                     if isinstance(leave_dates, (list, tuple)) and len(leave_dates) > 1
                     else d_start
                 )
+                # Si el permiso por horas finaliza en la madrugada del día siguiente (amanecida):
+                if time_s and time_e and time_e < time_s and d_start == d_end:
+                    d_end = d_start + timedelta(days=1)
+
                 if categoria == "Cambio de Turno":
                     str_ts = nuevo_start.strftime("%H:%M") if 'nuevo_start' in locals() and nuevo_start else ""
                     str_te = nuevo_end.strftime("%H:%M") if 'nuevo_end' in locals() and nuevo_end else ""
