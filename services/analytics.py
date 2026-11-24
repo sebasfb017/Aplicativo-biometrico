@@ -286,6 +286,8 @@ def _load_leaves_and_exceptions(
             "end_time": et_t,
             "status": lr["status"],
             "is_full_day": is_full,
+            "leave_date_start": lr.get("leave_date_start"),
+            "leave_date_end": lr.get("leave_date_end"),
         }
         for d in dates:
             if start_date <= d <= end_date:
@@ -344,9 +346,34 @@ def _evaluate_punch_justification(
             }
 
         if lr["start_time"] and lr["end_time"]:
-            pst_dt = datetime.combine(d, lr["start_time"])
-            pet_dt = datetime.combine(d, lr["end_time"])
-            time_str = f"{lr['start_time'].strftime('%H:%M')} - {lr['end_time'].strftime('%H:%M')}"
+            st_val = lr["start_time"]
+            et_val = lr["end_time"]
+            d_start_raw = lr.get("leave_date_start")
+            d_end_raw = lr.get("leave_date_end")
+
+            # Cálculo de límites absolutos datetime considerando amanecida / cruce de medianoche
+            if d_start_raw and d_end_raw:
+                try:
+                    d_start = date.fromisoformat(str(d_start_raw).strip())
+                    d_end = date.fromisoformat(str(d_end_raw).strip())
+                    pst_dt = datetime.combine(d_start, st_val)
+                    pet_dt = datetime.combine(d_end, et_val)
+                    if pet_dt <= pst_dt and (d_start == d_end or et_val < st_val):
+                        pet_dt += timedelta(days=1)
+                except Exception:
+                    pst_dt = datetime.combine(d, st_val)
+                    pet_dt = datetime.combine(d, et_val)
+                    if pet_dt <= pst_dt:
+                        pet_dt += timedelta(days=1)
+            else:
+                pst_dt = datetime.combine(d, st_val)
+                pet_dt = datetime.combine(d, et_val)
+                if pet_dt <= pst_dt:
+                    pet_dt += timedelta(days=1)
+
+            time_str = f"{st_val.strftime('%H:%M')} - {et_val.strftime('%H:%M')}"
+            if pet_dt.date() > pst_dt.date():
+                time_str += " (+1 día)"
 
             # 1. ¿El permiso cubre toda la jornada laboral del turno?
             shift_start = sched.get("start_time")
