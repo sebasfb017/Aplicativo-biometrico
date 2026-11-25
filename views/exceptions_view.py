@@ -37,6 +37,8 @@ def get_reason_icon(reason: str) -> str:
         return "👤"
     if "laboral" in r_lower:
         return "💼"
+    if "estudio" in r_lower or "educa" in r_lower:
+        return "🎓"
     if "remunerada" in r_lower:
         return "📄"
     return "📝"
@@ -1673,6 +1675,7 @@ def page_exceptions():
                         "🏖️ Vacaciones",
                         "🏥 Incapacidad",
                         "⚠️ Permiso Personal",
+                        "🎓 Permiso de Estudio",
                         "💼 Licencia",
                     ],
                     horizontal=True,
@@ -1768,12 +1771,13 @@ def page_exceptions():
 
                             if _skip_jefe:
                                 requiere_jefe = False
-                            elif r["reason_type"] == "Permiso Personal":
-                                # Los permisos personales nunca deben llegar al jefe de área
+                            elif r["reason_type"] in ["Permiso Personal", "Permiso de Estudio"]:
+                                # Los permisos personales o de estudio nunca deben llegar al jefe de área
                                 requiere_jefe = False
                             elif is_special_user and r["reason_type"] in [
                                 "Permiso Personal",
                                 "Permiso Laboral",
+                                "Permiso de Estudio",
                             ]:
                                 requiere_jefe = False
                             elif r.get("requester_role") == "juridico":
@@ -1781,7 +1785,7 @@ def page_exceptions():
                             else:
                                 requiere_jefe = requiere_jefe_tipo or (
                                     pd.isna(r.get("coord_name"))
-                                    and r["reason_type"] not in ["Incapacidad", "Permiso Personal"]
+                                    and r["reason_type"] not in ["Incapacidad", "Permiso Personal", "Permiso de Estudio"]
                                 )
 
                             if (
@@ -1984,17 +1988,17 @@ def page_exceptions():
                                         r = options_map[opt]
                                         requiere_jefe_tipo = r["reason_type"] in ["Vacaciones", "Calamidad Doméstica", "Licencia de Luto", "Licencia de Paternidad", "Licencia por Votación", "Licencia por Jurado de Votación", "Licencia Remunerada", "Licencia No Remunerada"]
                                         is_special_user = str(r["user_id"]) in ["119279359", "111627893"]
-                                        if r["reason_type"] == "Permiso Personal":
-                                            # Los permisos personales nunca deben llegar al jefe de área
+                                        if r["reason_type"] in ["Permiso Personal", "Permiso de Estudio"]:
+                                            # Los permisos personales o de estudio nunca deben llegar al jefe de área
                                             requiere_jefe = False
-                                        elif is_special_user and r["reason_type"] in ["Permiso Personal", "Permiso Laboral"]:
+                                        elif is_special_user and r["reason_type"] in ["Permiso Personal", "Permiso Laboral", "Permiso de Estudio"]:
                                             requiere_jefe = False
                                         elif r.get("requester_role") == "juridico":
                                             requiere_jefe = False
                                         else:
                                             requiere_jefe = requiere_jefe_tipo or (
                                                 pd.isna(r.get("coord_name"))
-                                                and r["reason_type"] not in ["Incapacidad", "Permiso Personal"]
+                                                and r["reason_type"] not in ["Incapacidad", "Permiso Personal", "Permiso de Estudio"]
                                             )
                                             
                                         if pd.notna(r.get("jefe_name")) and str(r.get("jefe_name")).strip():

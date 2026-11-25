@@ -506,11 +506,11 @@ def page_employee_portal():
                     elif categoria == "Permisos":
                         reason_type = st.selectbox(
                             "Detalle",
-                            ["Permiso Personal", "Permiso Laboral"],
+                            ["Permiso Personal", "Permiso Laboral", "Permiso de Estudio"],
                             index=None,
                             placeholder="Selecciona...",
                             key=f"rt_permisos_{fk}",
-                            help="Permiso Personal (Asuntos propios) vs Permiso Laboral (Asuntos de la empresa).",
+                            help="Permiso Personal (Asuntos propios), Permiso Laboral (Asuntos de la empresa) o Permiso de Estudio (Jornada académica o formación).",
                         )
                     elif categoria == "Licencias":
                         reason_type = st.selectbox(

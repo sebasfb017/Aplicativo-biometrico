@@ -474,14 +474,14 @@ def db_create_leave_request(
     elif str(user_id) == "102301732":
         # Luisa Castaño pasa directamente al Jefe de Área (Control Interno - Johann Ramos)
         target_status = "PENDING_JEFE"
-    elif r_type == "Permiso Laboral":
+    elif r_type in ["Permiso Laboral", "Permiso de Estudio"]:
         if str(user_id) in ["119279359", "111734829", "38795759"]: # Valentina, Helen, Angela van a Coordinador
             target_status = "PENDING_COORD"
         elif role in ["coordinador", "jefe_area", "admin", "nomina"]:
             target_status = "PENDING_JEFE"
         else:
             target_status = "PENDING_COORD"
-    elif r_type in ["Permiso Personal", "Cambio de Turno"] and str(user_id) in ["119279359", "111734829", "38795759"]:
+    elif r_type in ["Permiso Personal", "Permiso de Estudio", "Cambio de Turno"] and str(user_id) in ["119279359", "111734829", "38795759"]:
         target_status = "PENDING_COORD"
     elif r_type in ["Licencia Remunerada", "Licencia No Remunerada"] and str(user_id) == "119279359":
         target_status = "PENDING_COORD"
@@ -588,14 +588,14 @@ def db_get_next_approver_info(user_id, reason_type):
     elif str(user_id) == "102301732":
         # Luisa Castaño pasa directamente al Jefe de Área (Control Interno - Johann Ramos)
         target_status = "PENDING_JEFE"
-    elif reason_type == "Permiso Laboral":
+    elif reason_type in ["Permiso Laboral", "Permiso de Estudio"]:
         if str(user_id) in ["119279359", "111734829", "38795759"]: # Valentina, Helen, Angela van a Coordinador
             target_status = "PENDING_COORD"
         elif role in ["coordinador", "jefe_area", "admin", "nomina"]:
             target_status = "PENDING_JEFE"
         else:
             target_status = "PENDING_COORD"
-    elif reason_type in ["Permiso Personal", "Cambio de Turno"] and str(user_id) in ["119279359", "111734829", "38795759"]:
+    elif reason_type in ["Permiso Personal", "Permiso de Estudio", "Cambio de Turno"] and str(user_id) in ["119279359", "111734829", "38795759"]:
         target_status = "PENDING_COORD"
     elif reason_type in ["Licencia Remunerada", "Licencia No Remunerada"] and str(user_id) == "119279359":
         target_status = "PENDING_COORD"
@@ -1009,7 +1009,7 @@ def db_approve_leave_request_coord(req_id, coord_username):
         reason_type = r_type_row[0] if r_type_row else ""
 
         # Solo Valentina/Helen/Angela terminan directamente al ser aprobados por el coordinador para estos tipos de permisos
-        next_status = 'APPROVED' if (reason_type in ['Permiso Laboral', 'Permiso Personal', 'Cambio de Turno'] and str(user_id) in ['119279359', '111734829', '38795759']) else 'PENDING_RRHH'
+        next_status = 'APPROVED' if (reason_type in ['Permiso Laboral', 'Permiso Personal', 'Permiso de Estudio', 'Cambio de Turno'] and str(user_id) in ['119279359', '111734829', '38795759']) else 'PENDING_RRHH'
 
         cur.execute(
             """
@@ -1081,8 +1081,8 @@ def db_approve_leave_request_rrhh(req_id, approver_user, is_final=False):
         a_row = cur.fetchone()
         approver_name = a_row[0] if a_row else approver_user
 
-        # Los permisos personales nunca deben escalar al jefe de área
-        if reason_type == "Permiso Personal":
+        # Los permisos personales o de estudio nunca deben escalar al jefe de área
+        if reason_type in ["Permiso Personal", "Permiso de Estudio"]:
             is_final = True
 
         # Fix #3: consultar skip_jefe_approval del solicitante para forzar aprobación final

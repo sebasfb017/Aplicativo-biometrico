@@ -1782,6 +1782,75 @@ def test_overnight_hours_calculation():
     assert "Error" in calc_hours(time(8, 0), time(8, 0))
 
 
+def test_permiso_de_estudio_workflow():
+    """
+    Verifica que el nuevo 'Permiso de Estudio' siga exactamente el mismo flujo de aprobación
+    que un Permiso Personal / Laboral:
+    1. Creación -> PENDING_COORD
+    2. Aprobación Coordinador -> PENDING_RRHH
+    3. Aprobación RRHH -> APPROVED (Final)
+    """
+    from datetime import date
+    from database_conn.queries import (
+        db_create_leave_request,
+        db_get_next_approver_info,
+        db_approve_leave_request_coord,
+        db_approve_leave_request_rrhh,
+    )
+    from database_conn.connection import db_session
+
+    user_id = "100755003"  # Empleado estándar con coordinador
+    
+    # Próximo aprobador para Permiso de Estudio debe coincidir con el de Permiso Personal y Laboral
+    approver_estudio = db_get_next_approver_info(user_id, "Permiso de Estudio")
+    approver_personal = db_get_next_approver_info(user_id, "Permiso Personal")
+    assert approver_estudio == approver_personal
+
+    # Crear solicitud de Permiso de Estudio
+    req_id = db_create_leave_request(
+        user_id=user_id,
+        leave_start=date(2026, 12, 1),
+        leave_end=date(2026, 12, 1),
+        t_start="14:00",
+        t_end="18:00",
+        total_time="4 Horas",
+        r_type="Permiso de Estudio",
+        r_desc="Asistencia a clase de posgrado",
+        makeup="Sábado en la mañana",
+        is_paid=True,
+    )
+    assert req_id is not None and req_id > 0
+
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status FROM leave_requests WHERE id = %s", (req_id,))
+            status = cur.fetchone()[0]
+            assert status == "PENDING_COORD"
+
+    # Coordinador aprueba -> debe pasar a PENDING_RRHH
+    coord_approved = db_approve_leave_request_coord(req_id, "coord_test")
+    assert coord_approved is True
+
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status, approved_by_coord FROM leave_requests WHERE id = %s", (req_id,))
+            row = cur.fetchone()
+            assert row[0] == "PENDING_RRHH"
+            assert row[1] == "coord_test"
+
+    # RRHH aprueba -> debe ser APPROVED directamente (sin escalar a Jefe)
+    rrhh_approved = db_approve_leave_request_rrhh(req_id, "rrhh_test", is_final=False)
+    assert rrhh_approved is True
+
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status, approved_by_rrhh FROM leave_requests WHERE id = %s", (req_id,))
+            row = cur.fetchone()
+            assert row[0] == "APPROVED"
+            assert row[1] == "rrhh_test"
+
+
+
 
 
 
